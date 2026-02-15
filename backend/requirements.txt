@@ -1,0 +1,7 @@
+cfgrib
+scipy
+numpy
+uvicorn
+fastapi
+xarray
+requests

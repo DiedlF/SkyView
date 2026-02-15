@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ICON-Explorer</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" 
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" 
+          crossorigin=""/>
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="style.css?v=1">
+</head>
+<body>
+    <!-- Info Bar (top-right) -->
+    <div id="info-bar">
+        <div id="model-info">Loading...</div>
+    </div>
+
+    <!-- Sidebar Toggle (mobile) -->
+    <button id="sidebar-toggle" class="mobile-only">☰</button>
+
+    <!-- Left Sidebar -->
+    <div id="sidebar">
+        <div class="sidebar-header">
+            <h1>ICON-Explorer</h1>
+            <p class="subtitle">ICON Weather Data</p>
+        </div>
+
+        <!-- Variable Selector -->
+        <div class="control-group">
+            <label for="variable-select">Variable</label>
+            <select id="variable-select">
+                <option value="">Loading...</option>
+            </select>
+            <div id="variable-info" class="info-text"></div>
+        </div>
+
+        <!-- Palette Selector -->
+        <div class="control-group">
+            <label for="palette-select">Color Palette</label>
+            <select id="palette-select">
+                <option value="viridis">Viridis</option>
+                <option value="plasma">Plasma</option>
+                <option value="inferno">Inferno</option>
+                <option value="coolwarm">Coolwarm</option>
+                <option value="RdBu_r">RdBu (reversed)</option>
+                <option value="Blues">Blues</option>
+                <option value="Greens">Greens</option>
+                <option value="Reds">Reds</option>
+                <option value="YlOrRd">YlOrRd</option>
+            </select>
+        </div>
+
+        <!-- Value Range -->
+        <div class="control-group">
+            <label>
+                <input type="checkbox" id="auto-range" checked>
+                Auto Range
+            </label>
+        </div>
+
+        <div class="control-group range-inputs" id="range-controls">
+            <div class="range-row">
+                <label for="range-min">Min</label>
+                <input type="number" id="range-min" step="any" disabled>
+            </div>
+            <div class="range-row">
+                <label for="range-max">Max</label>
+                <input type="number" id="range-max" step="any" disabled>
+            </div>
+        </div>
+
+        <!-- Opacity Slider -->
+        <div class="control-group">
+            <label for="opacity-slider">
+                Opacity: <span id="opacity-value">60%</span>
+            </label>
+            <input type="range" id="opacity-slider" min="30" max="100" value="60">
+        </div>
+    </div>
+
+    <!-- Map Container -->
+    <div id="map"></div>
+
+    <!-- Color Legend -->
+    <div id="legend">
+        <div id="legend-gradient"></div>
+        <div id="legend-labels">
+            <span id="legend-min">--</span>
+            <span id="legend-max">--</span>
+        </div>
+    </div>
+
+    <!-- Time Controls (bottom) -->
+    <div id="time-controls">
+        <div class="time-header">
+            <button id="step-back" class="time-nav-btn">◀</button>
+            <div id="step-selector">
+                <button class="step-btn active" data-step="1">1h</button>
+                <button class="step-btn" data-step="3">3h</button>
+                <button class="step-btn" data-step="6">6h</button>
+            </div>
+            <button id="step-forward" class="time-nav-btn">▶</button>
+        </div>
+        <div id="time-scroll-container">
+            <div id="time-buttons"></div>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+            crossorigin=""></script>
+    
+    <!-- App JS -->
+    <script src="app.js?v=2"></script>
+</body>
+</html>

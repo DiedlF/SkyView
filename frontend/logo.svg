@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="skyGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#4A90E2;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#87CEEB;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="cloudGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#FFFFFF;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#E8E8E8;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Sky background -->
+  <rect width="64" height="64" fill="url(#skyGradient)" rx="8"/>
+  
+  <!-- Cumulus cloud -->
+  <g>
+    <ellipse cx="32" cy="45" rx="22" ry="12" fill="url(#cloudGradient)" stroke="#CCC" stroke-width="0.5"/>
+    <circle cx="18" cy="40" r="9" fill="url(#cloudGradient)" stroke="#CCC" stroke-width="0.5"/>
+    <circle cx="32" cy="36" r="11" fill="url(#cloudGradient)" stroke="#CCC" stroke-width="0.5"/>
+    <circle cx="46" cy="40" r="9" fill="url(#cloudGradient)" stroke="#CCC" stroke-width="0.5"/>
+  </g>
+  
+  <!-- Lightning bolt (convection indicator) -->
+  <polygon points="34,18 28,32 32,32 30,42 38,28 34,28 36,18" fill="#FFD700" stroke="#FFA500" stroke-width="0.8"/>
+  
+  <!-- Sun rays (partial, behind cloud) -->
+  <g opacity="0.6">
+    <line x1="8" y1="12" x2="12" y2="16" stroke="#FFEB3B" stroke-width="2" stroke-linecap="round"/>
+    <line x1="12" y1="8" x2="12" y2="14" stroke="#FFEB3B" stroke-width="2" stroke-linecap="round"/>
+    <line x1="16" y1="12" x2="20" y2="16" stroke="#FFEB3B" stroke-width="2" stroke-linecap="round"/>
+  </g>
+</svg>

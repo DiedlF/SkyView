@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Skyview - Convection Visualization</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="apple-touch-icon" href="logo.svg">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="style.css?v=22">
+</head>
+<body>
+  <div id="map"></div>
+  <div id="time-controls">
+    <div id="time-toolbar">
+      <button id="prev-1h">◀</button>
+      <div id="step-buttons">
+        <button class="step-btn active" data-step="1">1h</button>
+        <button class="step-btn" data-step="3">3h</button>
+        <button class="step-btn" data-step="6">6h</button>
+      </div>
+      <button id="next-1h">▶</button>
+      <span id="utc-label">UTC</span>
+    </div>
+    <div id="timeline-wrapper">
+      <div id="date-strip"></div>
+      <div id="timeline" class="timeline"></div>
+    </div>
+    <div id="info-bar">
+      <span><span class="info-label">Model:</span> <span id="model">--</span></span>
+      <span class="info-sep">·</span>
+      <span><span class="info-label">Run:</span> <span id="run-time">Loading...</span></span>
+      <span class="info-sep">·</span>
+      <span><span class="info-label">Zoom:</span> <span id="zoom-grid">--</span></span>
+    </div>
+  </div>
+  <div id="layers">
+    <div class="layer-controls-header">
+      <div class="layer-title">Layers</div>
+      <button id="layers-toggle" class="layers-toggle" title="Toggle layers">▼</button>
+    </div>
+    <div id="layers-content">
+    <label><input type="checkbox" id="layer-convection" checked> Convection</label>
+    <label style="display:flex;align-items:center;gap:6px;">
+      <input type="checkbox" id="layer-wind"> Wind
+      <select id="wind-level" style="font-size:11px;background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 4px;">
+        <option value="10m" selected>10m</option>
+        <option value="950">950 hPa (~500m)</option>
+        <option value="850">850 hPa (~1500m)</option>
+        <option value="700">700 hPa (~3000m)</option>
+        <option value="500">500 hPa (~5500m)</option>
+        <option value="300">300 hPa (~9000m)</option>
+      </select>
+    </label>
+    <div class="layer-divider"></div>
+    <div class="layer-subtitle">Overlay (ICON)</div>
+    <label><input type="radio" name="overlay" value="none" checked> None</label>
+    <label><input type="radio" name="overlay" value="total_precip"> Total Precip</label>
+    <label><input type="radio" name="overlay" value="rain"> Rain</label>
+    <label><input type="radio" name="overlay" value="snow"> Snow</label>
+    <label><input type="radio" name="overlay" value="hail"> Hail/Graupel</label>
+    <label><input type="radio" name="overlay" value="sigwx"> Sig. Weather</label>
+    <label><input type="radio" name="overlay" value="clouds"> Cloud Cover</label>
+    <label><input type="radio" name="overlay" value="ceiling"> Ceiling</label>
+    <label><input type="radio" name="overlay" value="cloud_base"> Cloud Base (SC)</label>
+    <div class="layer-divider"></div>
+    <div class="layer-subtitle">Soaring (calculated)</div>
+    <label><input type="radio" name="overlay" value="climb_rate"> Climb Rate</label>
+    <label><input type="radio" name="overlay" value="lcl"> Cloud Base (LCL)</label>
+  </div>
+  </div>
+  
+  <div id="legend" style="display: none;"></div>
+
+  <!-- Feedback button -->
+  <button id="feedback-btn" title="Send feedback">
+    <svg width="22" height="22" viewBox="0 0 36 32" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M2 5a3 3 0 0 1 3-3h26a3 3 0 0 1 3 3v16a3 3 0 0 1-3 3H21l-4 5-4-5H5a3 3 0 0 1-3-3V5z"/>
+      <line x1="6" y1="9" x2="14" y2="9"/>
+      <line x1="6" y1="14" x2="12" y2="14"/>
+      <line x1="6" y1="19" x2="16" y2="19"/>
+      <path d="M20 17l4-10 6 3-4 10z"/>
+      <path d="M20 17l-1.5 3 3.5-0.5"/>
+    </svg>
+  </button
+
+  <!-- Feedback modal -->
+  <div id="feedback-overlay" style="display:none;">
+    <div id="feedback-modal">
+      <div class="feedback-header">
+        <span>Feedback</span>
+        <button id="feedback-close">✕</button>
+      </div>
+      <div class="feedback-body">
+        <label for="feedback-type" class="feedback-label">Type</label>
+        <select id="feedback-type">
+          <option value="bug">🐛 Bug Report</option>
+          <option value="feature">💡 Feature Request</option>
+          <option value="general">💬 General Feedback</option>
+        </select>
+        <label for="feedback-text" class="feedback-label">Message</label>
+        <textarea id="feedback-text" placeholder="Describe the issue or idea..." rows="5"></textarea>
+        <div id="feedback-context" class="feedback-context"></div>
+        <button id="feedback-submit">Send</button>
+        <div id="feedback-status"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="symbols.js?v=13"></script>
+  <script src="windbarbs.js?v=1"></script>
+  <script src="app.js?v=23"></script>
+</body>
+</html>

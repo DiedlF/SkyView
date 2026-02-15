@@ -1,0 +1,126 @@
+# Skyview Ingest Configuration
+# Controls which variables are downloaded and how grids are handled.
+
+region:
+  icon-d2: full          # Use native grid (no crop) — 746×1215
+  icon-eu: crop-to-d2    # Crop to ICON-D2 bounds (43.18–58.08°N, -3.94–20.34°E)
+
+# D2 full domain bounds (used for EU cropping)
+d2_bounds:
+  lat_min: 43.18
+  lat_max: 58.08
+  lon_min: -3.94
+  lon_max: 20.34
+
+retention:
+  keep_runs: 1           # Latest run only
+
+groups:
+  aviation:
+    enabled: true
+    variables:
+      - ww
+      - cape_ml
+      - cin_ml
+      - htop_dc
+      - hbas_sc
+      - htop_sc
+      - lpi
+      - ceiling
+      - clcl
+      - clcm
+      - clch
+      - clct
+      - clct_mod
+      - cldepth
+      - vis
+      - hzerocl
+      - snowlmt
+      - mh
+
+  surface_weather:
+    enabled: true
+    variables:
+      - t_2m
+      - td_2m
+      - tmax_2m
+      - tmin_2m
+      - relhum_2m
+      - pmsl
+      - ps
+      - u_10m
+      - v_10m
+      - vmax_10m
+      - tot_prec
+      - prr_gsp
+      - prs_gsp
+      - prg_gsp
+      - rain_gsp
+      - rain_con
+      - snow_gsp
+      - snow_con
+      - grau_gsp
+      - h_snow
+      - freshsnw
+      - t_g
+
+  severe_weather:
+    enabled: true
+    variables:
+      - dbz_cmax
+      - dbz_ctmax
+      - dbz_850
+      - lpi_max
+      - sdi_2
+      - vorw_ctmax
+      - w_ctmax
+      - uh_max
+      - uh_max_low
+      - uh_max_med
+      - echotop
+      - tcond_max
+      - tcond10_mx
+
+  soaring:
+    enabled: true
+    variables:
+      - ashfl_s
+
+static_variables:
+  - hsurf
+
+pressure_levels:
+  variables: [u, v]
+  levels: [950, 850, 700, 500, 300]
+
+# Variables that may not exist in ICON-EU (will be skipped gracefully)
+d2_only_variables:
+  - cldepth
+  - grau_gsp
+  - dbz_cmax
+  - dbz_ctmax
+  - dbz_850
+  - sdi_2
+  - vorw_ctmax
+  - w_ctmax
+  - uh_max
+  - uh_max_low
+  - uh_max_med
+  - echotop
+  - tcond_max
+  - tcond10_mx
+  - lpi_max
+
+# ICON-EU variable name overrides (where EU uses different names)
+eu_variable_map:
+  hbas_sc: hbas_con
+  htop_sc: htop_con
+  lpi: lpi_con_max
+
+# Variables not available in ICON-EU (will be filled with zeros)
+eu_optional_variables:
+  - lpi
+  - prr_gsp
+  - prs_gsp
+  - prg_gsp
+  - freshsnw

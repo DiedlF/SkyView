@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    body {
+      margin: 0;
+      padding: 60px;
+      background: #1a1a2e;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 60px;
+    }
+    .preview {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      color: rgba(255,255,255,0.6);
+      font-family: sans-serif;
+      font-size: 13px;
+    }
+    button {
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      border: none;
+      background: rgba(40,50,80,0.92);
+      color: white;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .large-preview {
+      width: 160px;
+      height: 160px;
+      background: rgba(40,50,80,0.92);
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="preview">
+    <button>
+      <svg width="22" height="22" viewBox="0 0 36 32" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+        <!-- Wide rounded rect bubble -->
+        <path d="M2 5a3 3 0 0 1 3-3h26a3 3 0 0 1 3 3v16a3 3 0 0 1-3 3H21l-4 5-4-5H5a3 3 0 0 1-3-3V5z"/>
+        <!-- Text lines (left side, short) -->
+        <line x1="6" y1="9" x2="14" y2="9"/>
+        <line x1="6" y1="14" x2="12" y2="14"/>
+        <line x1="6" y1="19" x2="16" y2="19"/>
+        <!-- Bold pencil (right side) - parallelogram shape -->
+        <path d="M20 17l4-10 6 3-4 10z"/>
+        <path d="M20 17l-1.5 3 3.5-0.5"/>
+      </svg>
+    </button>
+    <span>Button size</span>
+  </div>
+  <div class="preview">
+    <div class="large-preview">
+      <svg width="90" height="80" viewBox="0 0 36 32" fill="none" stroke="white" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2 5a3 3 0 0 1 3-3h26a3 3 0 0 1 3 3v16a3 3 0 0 1-3 3H21l-4 5-4-5H5a3 3 0 0 1-3-3V5z"/>
+        <line x1="6" y1="9" x2="14" y2="9"/>
+        <line x1="6" y1="14" x2="12" y2="14"/>
+        <line x1="6" y1="19" x2="16" y2="19"/>
+        <path d="M20 17l4-10 6 3-4 10z"/>
+        <path d="M20 17l-1.5 3 3.5-0.5"/>
+      </svg>
+    </div>
+    <span>Large preview</span>
+  </div>
+</body>
+</html>

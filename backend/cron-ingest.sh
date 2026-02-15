@@ -1,0 +1,45 @@
+#!/bin/bash
+# Skyview data ingestion cron script
+# Run every 10 minutes to check for new data
+# ICON-D2 and ICON-EU are checked independently — they publish at different times
+# D2: runs every 3h, ~2h publication delay
+# EU: runs every 6h, ~4h publication delay
+#
+# Config-driven: reads ingest_config.yaml for variable groups.
+# D2: full grid (746×1215), EU: cropped to D2 bounds.
+# Retention: latest run only (configurable in ingest_config.yaml).
+
+cd "$(dirname "$0")"
+
+LOCKFILE="/tmp/skyview-ingest.lock"
+LOCKFILE_AGE_MAX=3600  # 60 minutes (increased for larger download set)
+
+# Check for stale lock (process died without cleanup)
+if [ -f "$LOCKFILE" ]; then
+    LOCK_AGE=$(($(date +%s) - $(stat -c %Y "$LOCKFILE" 2>/dev/null || echo 0)))
+    if [ $LOCK_AGE -gt $LOCKFILE_AGE_MAX ]; then
+        echo "WARNING: Removing stale lock (age: ${LOCK_AGE}s)" >&2
+        rm -f "$LOCKFILE"
+    else
+        # Lock is fresh, another instance is running (silent exit)
+        exit 0
+    fi
+fi
+
+# Acquire lock
+touch "$LOCKFILE"
+trap "rm -f $LOCKFILE" EXIT
+
+# Check and ingest ICON-D2 (2.2km, 48h, full grid)
+python3 ingest.py --model icon-d2 --check-only 2>/dev/null
+if [ $? -eq 0 ]; then
+    python3 ingest.py --model icon-d2 --steps all
+fi
+
+# Check and ingest ICON-EU (6.5km, 120h, cropped to D2 bounds)
+python3 ingest.py --model icon-eu --check-only 2>/dev/null
+if [ $? -eq 0 ]; then
+    python3 ingest.py --model icon-eu --steps all
+fi
+
+# Lock automatically removed by trap on exit
