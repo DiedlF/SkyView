@@ -97,6 +97,7 @@ function createWindBarbIcon(speedKt, dirDeg) {
     html: html,
     className: 'wind-barb',
     iconSize: [BARB_SIZE, BARB_SIZE],
-    iconAnchor: [BARB_SIZE / 2, BARB_SIZE / 2],
+    // Anchor at observation point (base dot at x=20,y=36), not icon center
+    iconAnchor: [BARB_SIZE / 2, 36],
   });
 }

@@ -55,16 +55,35 @@
     <div class="layer-divider"></div>
     <div class="layer-subtitle">Overlay (ICON)</div>
     <label><input type="radio" name="overlay" value="none" checked> None</label>
-    <label><input type="radio" name="overlay" value="total_precip"> Total Precip</label>
-    <label><input type="radio" name="overlay" value="rain"> Rain</label>
-    <label><input type="radio" name="overlay" value="snow"> Snow</label>
-    <label><input type="radio" name="overlay" value="hail"> Hail/Graupel</label>
-    <label><input type="radio" name="overlay" value="sigwx"> Sig. Weather</label>
-    <label><input type="radio" name="overlay" value="clouds"> Cloud Cover</label>
-    <label><input type="radio" name="overlay" value="ceiling"> Ceiling</label>
-    <label><input type="radio" name="overlay" value="cloud_base"> Cloud Base (SC)</label>
+    <label style="display:flex;align-items:center;gap:6px;">
+      <input type="radio" name="overlay" value="precip"> Precipitation
+      <select id="precip-type" style="font-size:11px;background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 4px;">
+        <option value="total_precip" selected>Total</option>
+        <option value="rain">Rain</option>
+        <option value="snow">Snow</option>
+        <option value="hail">Hail/Graupel</option>
+      </select>
+    </label>
+    <label style="display:flex;align-items:center;gap:6px;">
+      <input type="radio" name="overlay" value="clouds"> Cloud Cover
+      <select id="clouds-type" style="font-size:11px;background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 4px;">
+        <option value="clouds_low">Low</option>
+        <option value="clouds_mid">Mid</option>
+        <option value="clouds_high">High</option>
+        <option value="clouds_total" selected>Total</option>
+        <option value="clouds_total_mod">Total_mod</option>
+      </select>
+    </label>
     <div class="layer-divider"></div>
-    <div class="layer-subtitle">Soaring (calculated)</div>
+    <div class="layer-subtitle">Diagnostic</div>
+    <label><input type="radio" name="overlay" value="cloud_base"> Cloud base (convective)</label>
+    <label><input type="radio" name="overlay" value="dry_conv_top"> Dry Convection Top</label>
+    <label><input type="radio" name="overlay" value="sigwx"> Significant weather</label>
+    <label><input type="radio" name="overlay" value="ceiling"> Ceiling</label>
+    <label><input type="radio" name="overlay" value="conv_thickness"> Cloud thickness (convective)</label>
+    <label><input type="radio" name="overlay" value="thermals"> CAPE_ml</label>
+    <div class="layer-divider"></div>
+    <div class="layer-subtitle">Experimental</div>
     <label><input type="radio" name="overlay" value="climb_rate"> Climb Rate</label>
     <label><input type="radio" name="overlay" value="lcl"> Cloud Base (LCL)</label>
   </div>
@@ -108,8 +127,8 @@
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="symbols.js?v=13"></script>
+  <script src="symbols.js?v=16"></script>
   <script src="windbarbs.js?v=1"></script>
-  <script src="app.js?v=23"></script>
+  <script src="app.js?v=33"></script>
 </body>
 </html>

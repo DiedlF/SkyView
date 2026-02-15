@@ -5,6 +5,10 @@
     box-sizing: border-box;
 }
 
+ :root {
+    --sidebar-width: 300px;
+}
+
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
     background: #0a0a0a;
@@ -30,23 +34,47 @@ body {
     opacity: 0.4;
 }
 
-/* Info Bar (Top-Right) */
+/* Info bar — inline below timeline (Skyview-style) */
 #info-bar {
-    position: absolute;
-    top: 20px;
-    right: 20px;
-    background: rgba(20, 20, 20, 0.92);
-    padding: 12px 20px;
-    border-radius: 8px;
-    z-index: 1000;
-    backdrop-filter: blur(10px);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-    font-size: 14px;
-    line-height: 1.6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 4px 12px;
+    background: rgba(30, 35, 55, 0.9);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 10px;
+    border-radius: 0 0 8px 8px;
 }
 
-#model-info {
-    white-space: nowrap;
+#info-bar .info-label {
+    opacity: 0.5;
+    font-size: 9px;
+    text-transform: uppercase;
+}
+
+#info-bar .info-sep {
+    opacity: 0.3;
+}
+
+
+/* Leaflet zoom control — always visible, bottom left, above time controls */
+.leaflet-bottom.leaflet-left {
+    z-index: 1002 !important;
+    bottom: 90px !important;
+}
+
+.leaflet-control-zoom {
+    margin-bottom: 0 !important;
+    margin-left: 10px !important;
+}
+
+.leaflet-control-zoom a {
+    width: 36px !important;
+    height: 36px !important;
+    line-height: 36px !important;
+    font-size: 20px !important;
 }
 
 /* Sidebar */
@@ -200,7 +228,8 @@ input[type="range"]::-moz-range-thumb {
 #legend {
     position: absolute;
     top: 20px;
-    left: 320px;
+    right: 20px;
+    left: auto;
     background: rgba(20, 20, 20, 0.92);
     backdrop-filter: blur(10px);
     padding: 12px;
@@ -224,142 +253,181 @@ input[type="range"]::-moz-range-thumb {
     color: rgba(255, 255, 255, 0.8);
 }
 
-/* Time Controls */
+/* Time Controls (Skyview-style) */
 #time-controls {
     position: absolute;
-    bottom: 20px;
-    left: 50%;
+    bottom: 10px;
+    left: calc(50% + (var(--sidebar-width) / 2));
     transform: translateX(-50%);
-    background: rgba(20, 20, 20, 0.92);
-    backdrop-filter: blur(10px);
-    border-radius: 12px;
-    padding: 16px;
+    background: rgba(40, 50, 80, 0.95);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
     z-index: 1000;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-    max-width: 90vw;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+    max-width: 95vw;
+    width: 700px;
+    overflow: hidden;
 }
 
-.time-header {
+#time-toolbar {
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-bottom: 12px;
     justify-content: center;
+    gap: 8px;
+    padding: 5px 12px;
+    background: rgba(60, 70, 100, 0.9);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.time-nav-btn {
-    background: rgba(74, 158, 255, 0.2);
-    border: 1px solid rgba(74, 158, 255, 0.4);
-    color: #4a9eff;
-    padding: 8px 16px;
-    border-radius: 6px;
-    font-size: 16px;
+#time-toolbar button {
+    background: rgba(80, 90, 120, 0.8);
+    color: white;
+    border: none;
+    padding: 4px 12px;
+    border-radius: 4px;
     cursor: pointer;
-    transition: all 0.2s;
-    font-weight: 600;
+    font-size: 14px;
+    font-weight: bold;
 }
 
-.time-nav-btn:hover {
-    background: rgba(74, 158, 255, 0.3);
-    border-color: rgba(74, 158, 255, 0.6);
+#time-toolbar button:hover {
+    background: rgba(100, 110, 140, 0.9);
 }
 
-.time-nav-btn:active {
-    transform: scale(0.95);
+#time-toolbar button:active {
+    background: rgba(120, 130, 160, 1);
 }
 
 #step-selector {
     display: flex;
-    gap: 4px;
-    background: rgba(40, 40, 40, 0.6);
-    padding: 4px;
-    border-radius: 6px;
+    gap: 2px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+    padding: 2px;
 }
 
 .step-btn {
-    background: transparent;
+    background: transparent !important;
     border: none;
-    color: rgba(255, 255, 255, 0.6);
-    padding: 6px 12px;
-    border-radius: 4px;
-    font-size: 13px;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 11px !important;
+    padding: 3px 10px !important;
+    border-radius: 3px !important;
+    font-weight: 600 !important;
     cursor: pointer;
-    transition: all 0.2s;
-    font-weight: 500;
-}
-
-.step-btn:hover {
-    color: rgba(255, 255, 255, 0.9);
 }
 
 .step-btn.active {
-    background: #4a9eff;
-    color: #ffffff;
+    background: rgba(70, 130, 220, 0.8) !important;
+    color: white;
 }
 
-#time-scroll-container {
+.step-btn:hover:not(.active) {
+    background: rgba(255, 255, 255, 0.1) !important;
+    color: rgba(255, 255, 255, 0.8);
+}
+
+#utc-label {
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 10px;
+    font-weight: bold;
+    margin-left: 4px;
+}
+
+#timeline-wrapper {
+    position: relative;
+    overflow: hidden;
+}
+
+#date-strip {
+    position: relative;
+    height: 16px;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.date-label {
+    position: absolute;
+    top: 0;
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+    user-select: none;
+    padding: 1px 6px;
+}
+
+.timeline {
+    display: flex;
+    gap: 2px;
     overflow-x: auto;
-    max-width: 600px;
+    overflow-y: hidden;
+    padding: 2px 8px 5px;
     scrollbar-width: thin;
     scrollbar-color: rgba(255, 255, 255, 0.3) transparent;
 }
 
-#time-scroll-container::-webkit-scrollbar {
-    height: 6px;
+.timeline::-webkit-scrollbar {
+    height: 4px;
 }
 
-#time-scroll-container::-webkit-scrollbar-track {
+.timeline::-webkit-scrollbar-track {
     background: transparent;
 }
 
-#time-scroll-container::-webkit-scrollbar-thumb {
+.timeline::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.3);
-    border-radius: 3px;
-}
-
-#time-buttons {
-    display: flex;
-    gap: 8px;
-    padding: 4px 0;
-}
-
-.time-slot {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    min-width: 60px;
-}
-
-.date-label {
-    font-size: 10px;
-    color: rgba(255, 255, 255, 0.5);
-    margin-bottom: 4px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    border-radius: 2px;
 }
 
 .hour-btn {
-    background: rgba(60, 60, 60, 0.6);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    color: #ffffff;
-    padding: 10px 16px;
-    border-radius: 6px;
-    font-size: 14px;
+    border: none;
+    color: rgba(255, 255, 255, 0.5);
+    background: transparent;
+    font-size: 11px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s;
+    padding: 2px 6px;
+    border-radius: 3px;
     white-space: nowrap;
+    flex-shrink: 0;
+    transition: all 0.15s;
+    user-select: none;
 }
 
 .hour-btn:hover {
-    background: rgba(80, 80, 80, 0.7);
-    border-color: rgba(255, 255, 255, 0.3);
+    color: rgba(255, 255, 255, 0.9);
+    background: rgba(255, 255, 255, 0.1);
 }
 
 .hour-btn.active {
-    background: #4a9eff;
-    border-color: #4a9eff;
-    box-shadow: 0 0 12px rgba(74, 158, 255, 0.4);
+    color: white;
+    background: rgba(70, 130, 220, 0.8);
+    font-weight: bold;
+}
+
+.hour-btn.day-start {
+    margin-left: 6px;
+    border-left: 1px solid rgba(255, 255, 255, 0.15);
+    padding-left: 8px;
+}
+
+.hour-btn.model-switch {
+    border-left: 2px solid rgba(100, 180, 255, 0.6);
+    padding-left: 8px;
+    margin-left: 6px;
+    position: relative;
+}
+
+.hour-btn.model-switch::before {
+    content: '◆';
+    position: absolute;
+    left: -6px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: rgba(100, 180, 255, 0.8);
+    font-size: 8px;
 }
 
 /* Sidebar Toggle (Mobile) */
@@ -383,18 +451,40 @@ input[type="range"]::-moz-range-thumb {
 .leaflet-popup-content-wrapper {
     background: rgba(20, 20, 20, 0.95);
     color: #ffffff;
-    border-radius: 8px;
+    border-radius: 6px;
     padding: 0;
+    overflow: hidden;
 }
 
 .leaflet-popup-content {
     margin: 16px;
+    margin-right: 26px;
     font-size: 13px;
     line-height: 1.6;
 }
 
 .leaflet-popup-tip {
     background: rgba(20, 20, 20, 0.95);
+}
+
+
+ .leaflet-container a.leaflet-popup-close-button {
+    top: 4px !important;
+    right: 4px !important;
+    padding: 0 !important;
+    width: 18px !important;
+    height: 18px !important;
+    line-height: 18px !important;
+    text-align: center;
+    color: rgba(255,255,255,0.8) !important;
+    font-size: 16px !important;
+    border-radius: 4px;
+    background: rgba(0,0,0,0.25);
+}
+
+.leaflet-container a.leaflet-popup-close-button:hover {
+    color: #fff !important;
+    background: rgba(255,255,255,0.14);
 }
 
 .popup-group {
@@ -442,6 +532,9 @@ input[type="range"]::-moz-range-thumb {
 
 /* Mobile Responsive */
 @media (max-width: 768px) {
+    .leaflet-bottom.leaflet-left {
+        bottom: 130px !important;
+    }
     #sidebar {
         transform: translateX(-100%);
     }
@@ -463,41 +556,47 @@ input[type="range"]::-moz-range-thumb {
     }
     
     #legend {
-        left: 20px;
         top: 20px;
+        right: 20px;
+        left: auto;
         bottom: auto;
         min-width: 200px;
+        z-index: 950;
+    }
+
+    /* If sidebar is visible, place legend within sidebar background area */
+    #sidebar.open ~ #legend {
+        right: calc(100vw - var(--sidebar-width) + 20px);
+        z-index: 999;
     }
     
     #time-controls {
-        max-width: calc(100vw - 40px);
+        left: 50%;
+        max-width: 98vw;
+        width: auto;
+        bottom: 5px;
+        min-width: 180px;
     }
-    
-    #time-scroll-container {
-        max-width: calc(100vw - 120px);
+
+    #time-toolbar {
+        padding: 4px 8px;
+        gap: 6px;
     }
-    
-    #info-bar {
-        right: 10px;
-        top: 80px;
+
+    #time-toolbar button {
+        padding: 3px 8px;
         font-size: 12px;
-        padding: 10px 14px;
     }
+
+    .hour-btn {
+        font-size: 10px;
+        padding: 2px 5px;
+    }
+    
 }
 
 @media (max-width: 480px) {
     .sidebar-header h1 {
         font-size: 20px;
-    }
-    
-    .time-nav-btn {
-        padding: 6px 12px;
-        font-size: 14px;
-    }
-    
-    .hour-btn {
-        padding: 8px 12px;
-        font-size: 13px;
-        min-width: 50px;
     }
 }

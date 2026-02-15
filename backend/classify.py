@@ -32,15 +32,13 @@ def crop_to_bbox(arrays_dict, lat, lon, bbox):
 
 
 def classify_cloud_type(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling):
-    """Classify cloud type per decision tree, only where ww <= 3.
-    
-    All input arrays should be pre-cropped to the region of interest
-    (callers should bbox-slice before calling this function).
-    
-    Returns 2D array of strings."""
+    """Classify cloud type for ww<=3 grid points.
+
+    Non-convective class is determined solely from ceiling.
+    """
     height, width = ww.shape
     logger.debug(f"Classifying cloud types for grid: {height}x{width}")
-    
+
     cloud_type = np.full((height, width), "clear", dtype=object)
     mask = (ww <= 3) & np.isfinite(ww)
     is_convective = (cape_ml > 50)
@@ -55,11 +53,12 @@ def classify_cloud_type(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc
     cu_hum_mask = conv_mask & (cloud_type == "clear")
     cloud_type[cu_hum_mask] = "cu_hum"
 
-    # Stratiform
+    # Non-convective (ceiling only)
     strat_mask = mask & ~is_convective
-    cloud_type[strat_mask & (clcl > 30) & (clcm < 20)] = "st"
-    cloud_type[strat_mask & (clcm > 30) & (clcl < 20)] = "ac"
-    cloud_type[strat_mask & (clcl < 10) & (clcm < 10) & (clch > 30)] = "ci"
+    valid_ceiling = strat_mask & np.isfinite(ceiling) & (ceiling > 0) & (ceiling < 20000)
+    cloud_type[valid_ceiling & (ceiling < 2500)] = "st"
+    cloud_type[valid_ceiling & (ceiling > 7000)] = "ci"
+    cloud_type[valid_ceiling & (ceiling >= 2500) & (ceiling <= 7000)] = "ac"
     
     # Log classification summary
     unique, counts = np.unique(cloud_type, return_counts=True)

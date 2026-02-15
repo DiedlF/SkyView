@@ -4,9 +4,12 @@
 import os
 import sys
 import math
+import time
+from time import perf_counter
 import numpy as np
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
+from collections import OrderedDict, deque
 
 from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -72,6 +75,92 @@ FRONTEND_DIR = os.path.join(SCRIPT_DIR, "..", "frontend")
 
 data_cache: Dict[str, Dict[str, Any]] = {}
 
+# Overlay tile cache (desktop/mobile split, LRU + TTL)
+TILE_CACHE_MAX_ITEMS_DESKTOP = 1400
+TILE_CACHE_MAX_ITEMS_MOBILE = 700
+TILE_CACHE_TTL_SECONDS = 900
+
+tile_cache_desktop = OrderedDict()  # key -> (png_bytes, ts)
+tile_cache_mobile = OrderedDict()
+cache_stats = {"hits": 0, "misses": 0, "evictions": 0, "expired": 0}
+
+# Overlay tile performance telemetry
+perf_recent = deque(maxlen=400)  # [{'ms':..., 'hit':0/1, 'ts':...}, ...]
+perf_totals = {
+    'requests': 0,
+    'hits': 0,
+    'misses': 0,
+    'totalMs': 0.0,
+}
+
+def _perf_record(ms: float, cache_hit: bool):
+    now = time.time()
+    perf_recent.append({'ms': float(ms), 'hit': 1 if cache_hit else 0, 'ts': now})
+    perf_totals['requests'] += 1
+    perf_totals['totalMs'] += float(ms)
+    if cache_hit:
+        perf_totals['hits'] += 1
+    else:
+        perf_totals['misses'] += 1
+
+# Cache for expensive full-grid computed overlay fields (run/step/layer scoped)
+COMPUTED_FIELD_CACHE_MAX_ITEMS = 48
+computed_field_cache = OrderedDict()  # key -> ndarray
+
+def _computed_cache_get(key: str):
+    arr = computed_field_cache.get(key)
+    if arr is None:
+        return None
+    computed_field_cache.move_to_end(key)
+    return arr
+
+def _computed_cache_set(key: str, arr):
+    computed_field_cache[key] = arr
+    computed_field_cache.move_to_end(key)
+    while len(computed_field_cache) > COMPUTED_FIELD_CACHE_MAX_ITEMS:
+        computed_field_cache.popitem(last=False)
+
+def _cache_for_class(client_class: str):
+    if client_class == "mobile":
+        return tile_cache_mobile, TILE_CACHE_MAX_ITEMS_MOBILE
+    return tile_cache_desktop, TILE_CACHE_MAX_ITEMS_DESKTOP
+
+def _tile_cache_prune(client_class: str):
+    cache, max_items = _cache_for_class(client_class)
+    now = time.time()
+    while cache:
+        _, (_, ts) = next(iter(cache.items()))
+        if (now - ts) <= TILE_CACHE_TTL_SECONDS:
+            break
+        cache.popitem(last=False)
+        cache_stats["expired"] += 1
+    while len(cache) > max_items:
+        cache.popitem(last=False)
+        cache_stats["evictions"] += 1
+
+def _tile_cache_get(client_class: str, key: str):
+    cache, _ = _cache_for_class(client_class)
+    _tile_cache_prune(client_class)
+    item = cache.get(key)
+    if item is None:
+        cache_stats["misses"] += 1
+        return None
+    png, ts = item
+    if (time.time() - ts) > TILE_CACHE_TTL_SECONDS:
+        del cache[key]
+        cache_stats["expired"] += 1
+        cache_stats["misses"] += 1
+        return None
+    cache.move_to_end(key)
+    cache_stats["hits"] += 1
+    return png
+
+def _tile_cache_set(client_class: str, key: str, png: bytes):
+    cache, _ = _cache_for_class(client_class)
+    cache[key] = (png, time.time())
+    cache.move_to_end(key)
+    _tile_cache_prune(client_class)
+
 # ─── Grid / Bbox helpers ───
 
 def _get_grid_bounds(lat, lon):
@@ -130,7 +219,21 @@ def ww_to_symbol(ww: int) -> Optional[str]:
     if ww == 56: return "freezing_drizzle"
     if ww == 45: return "fog"
     if ww == 48: return "rime_fog"
-    return None  # ww 0-3: use cloud classification
+    return None  # ww below significant range uses cloud classification
+
+
+def ww_severity_rank(ww: int) -> int:
+    """Aviation-oriented ww severity ordering for aggregation."""
+    if 95 <= ww <= 99: return 100
+    if 71 <= ww <= 77: return 90
+    if 85 <= ww <= 86: return 85
+    if 66 <= ww <= 67: return 80
+    if 56 <= ww <= 57: return 75
+    if 61 <= ww <= 65: return 70
+    if 80 <= ww <= 84: return 65
+    if 51 <= ww <= 55: return 60
+    if 45 <= ww <= 48: return 50
+    return ww
 
 
 # Cloud type priority for cloud-only fallback aggregation
@@ -146,8 +249,15 @@ CLOUD_PRIORITY = {
 }
 
 
-def classify_point(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi):
-    """Classify a single grid point's cloud type using SPEC-aligned rules."""
+def classify_point(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling):
+    """Classify a single grid point's cloud type.
+
+    Non-convective cloud classification is based solely on ceiling:
+    - no valid ceiling (>0): clear
+    - ceiling < 2500m: st
+    - 2500..7000m: ac
+    - >7000m: ci
+    """
     # Convective branch
     is_conv = cape_ml > 50
     if is_conv:
@@ -160,14 +270,14 @@ def classify_point(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi):
             return "cu_con"
         return "cu_hum"
 
-    # Stratiform branch (no convection)
-    if clcl > 30 and clcm < 20:
+    # Non-convective: ceiling-only logic
+    if not np.isfinite(ceiling) or ceiling <= 0 or ceiling >= 20000:
+        return "clear"
+    if ceiling < 2500:
         return "st"
-    if clcm > 30 and clcl < 20:
-        return "ac"
-    if clcl < 10 and clcm < 10 and clch > 30:
+    if ceiling > 7000:
         return "ci"
-    return "clear"
+    return "ac"
 
 
 def load_data(run: str, step: int, model: str, keys: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -417,8 +527,10 @@ async def api_symbols(
     lat = d["lat"]  # 1D
     lon = d["lon"]  # 1D
 
-    # Bbox-slice BEFORE heavy computation: find indices within requested bbox
-    li, lo = _bbox_indices(lat, lon, lat_min, lon_min, lat_max, lon_max)
+    # Bbox-slice BEFORE heavy computation.
+    # Use one-cell padding around viewport to stabilize aggregation at screen borders during pan.
+    pad = cell_size
+    li, lo = _bbox_indices(lat, lon, lat_min - pad, lon_min - pad, lat_max + pad, lon_max + pad)
     if li is not None and len(li) == 0:
         return {"symbols": [], "run": run, "model": model_used, "validTime": d["validTime"], "cellSize": cell_size, "count": 0}
 
@@ -441,6 +553,11 @@ async def api_symbols(
     # Align grid to global anchor (data origin) but start from bbox for performance
     anchor_lat = float(lat.min())
     anchor_lon = float(lon.min())
+    # At highest zoom, shift anchor by half cell so symbol centers match native pixel centers
+    # while preserving strict equidistant spacing.
+    if zoom >= 12:
+        anchor_lat -= cell_size / 2.0
+        anchor_lon -= cell_size / 2.0
     lat_start = anchor_lat + np.floor((lat_min - anchor_lat) / cell_size) * cell_size
     lon_start = anchor_lon + np.floor((lon_min - anchor_lon) / cell_size) * cell_size
     lat_edges = np.arange(lat_start, lat_max + cell_size, cell_size)
@@ -465,98 +582,128 @@ async def api_symbols(
             clo = np.where(lon_mask)[0]
 
             if len(cli) == 0 or len(clo) == 0:
-                continue
+                # Avoid artificial "clear stripes" from boundary/rounding gaps:
+                # fall back to nearest available data index per axis.
+                if len(c_lat) == 0 or len(c_lon) == 0:
+                    continue
+                if len(cli) == 0:
+                    cli = np.array([int(np.argmin(np.abs(c_lat - lat_c)))], dtype=int)
+                if len(clo) == 0:
+                    clo = np.array([int(np.argmin(np.abs(c_lon - lon_c)))], dtype=int)
 
             # Extract cell data
             cell_ww = ww[np.ix_(cli, clo)]
             max_ww = int(np.nanmax(cell_ww)) if not np.all(np.isnan(cell_ww)) else 0
 
-            # Determine symbol
-            # If there is significant weather (>10), always show the worst ww symbol.
-            sig_mask = cell_ww > 10
-            sym = None
+            # Determine aggregated symbol
+            # Rule set:
+            # 1) if any ww>10 is present -> show worst ww by severity grading
+            # 2) else if convection exists -> show convective cloud type tied to highest hbas_sc
+            #    (or htop_dc for blue thermal)
+            # 3) else -> average ceiling and derive non-convective cloud type from that average
+            sym = "clear"
+            cb_hm = None
+            label = None
             best_ii = int(cli[len(cli) // 2])
             best_jj = int(clo[len(clo) // 2])
 
-            if np.any(sig_mask):
-                ww_sig = cell_ww[sig_mask]
-                max_sig = int(np.nanmax(ww_sig))
-                sym = ww_to_symbol(max_sig)
-                # anchor click point at a location where this worst ww occurs
-                sig_positions = np.argwhere(cell_ww == max_sig)
-                if len(sig_positions) > 0:
-                    i0, j0 = sig_positions[0]
-                    best_ii = int(cli[i0])
-                    best_jj = int(clo[j0])
+            # 1) Significant weather aggregation (ww > 10)
+            sig_positions = []
+            for i_local, ii in enumerate(cli):
+                for j_local, jj in enumerate(clo):
+                    ww_raw = cell_ww[i_local, j_local]
+                    ww_val = int(ww_raw) if np.isfinite(ww_raw) else 0
+                    if ww_val > 10:
+                        sig_positions.append((ii, jj, ww_val))
+
+            if sig_positions:
+                # Highest severity rank wins; tie-break on larger ww code
+                best_sig = max(sig_positions, key=lambda x: (ww_severity_rank(x[2]), x[2]))
+                best_ii, best_jj, best_ww = best_sig
+                sym = ww_to_symbol(best_ww) or "clear"
+
             else:
-                # Cloud-only cell:
-                # - prefer strongest convective symbol by highest convective top
-                # - otherwise use lowest cloud-base stratiform type (St > Ac > Ci > clear)
-                best_conv_top = -1.0
-                best_strat_alt = float("inf")
-                best_strat_type = "clear"
+                # Build cloud candidates for all points in this aggregate cell
+                cumulus_candidates = []   # (hbas_sc, ct, ii, jj)
+                blue_candidates = []      # (htop_dc, ct, ii, jj)
+                ceil_vals = []
 
                 for ii in cli:
                     for jj in clo:
+                        ceil_v = float(ceil_arr[ii, jj]) if np.isfinite(ceil_arr[ii, jj]) else float("nan")
                         ct = classify_point(
                             float(c_clcl[ii, jj]), float(c_clcm[ii, jj]),
                             float(c_clch[ii, jj]), float(c_cape[ii, jj]),
                             float(c_htop_dc[ii, jj]), float(c_hbas_sc[ii, jj]),
-                            float(c_htop_sc[ii, jj]), float(c_lpi[ii, jj])
+                            float(c_htop_sc[ii, jj]), float(c_lpi[ii, jj]),
+                            ceil_v
                         )
 
-                        if ct in ("blue_thermal", "cu_hum", "cu_con", "cb"):
-                            conv_top = float(c_htop_dc[ii, jj]) if np.isfinite(c_htop_dc[ii, jj]) else 0.0
-                            if conv_top <= 0 and np.isfinite(c_htop_sc[ii, jj]):
-                                conv_top = float(c_htop_sc[ii, jj])
-                            if conv_top > best_conv_top:
-                                best_conv_top = conv_top
-                                sym = ct
-                                best_ii, best_jj = int(ii), int(jj)
+                        if ct in ("cu_hum", "cu_con", "cb"):
+                            hbas = float(c_hbas_sc[ii, jj])
+                            if np.isfinite(hbas) and hbas > 0:
+                                cumulus_candidates.append((hbas, ct, int(ii), int(jj)))
+                        elif ct == "blue_thermal":
+                            htop = float(c_htop_dc[ii, jj])
+                            if not np.isfinite(htop) or htop <= 0:
+                                htop = float(c_htop_sc[ii, jj]) if np.isfinite(c_htop_sc[ii, jj]) else -1.0
+                            if htop > 0:
+                                blue_candidates.append((htop, ct, int(ii), int(jj)))
+
+                        if np.isfinite(ceil_v) and 0 < ceil_v < 20000:
+                            ceil_vals.append(ceil_v)
+
+                # 2) Convective aggregation
+                # Priority rule:
+                # - if any cumulus exists, show highest hbas_sc cumulus type
+                # - only if no cumulus exists, allow blue thermal (highest htop_dc)
+                if cumulus_candidates:
+                    best_metric, best_ct, best_ii, best_jj = max(cumulus_candidates, key=lambda x: x[0])
+                    sym = best_ct
+                    cb_hm = int(best_metric / 100) if best_metric > 0 else None
+                elif blue_candidates:
+                    best_metric, best_ct, best_ii, best_jj = max(blue_candidates, key=lambda x: x[0])
+                    sym = best_ct
+                    cb_hm = int(best_metric / 100) if best_metric > 0 else None
+
+                # 3) Non-convective aggregation by average ceiling
+                else:
+                    if len(ceil_vals) == 0:
+                        sym = "clear"
+                    else:
+                        avg_ceil = float(np.mean(ceil_vals))
+                        if avg_ceil < 2500:
+                            sym = "st"
+                        elif avg_ceil > 7000:
+                            sym = "ci"
                         else:
-                            # stratiform fallback: lowest altitude is most restrictive
-                            alt = float(ceil_arr[ii, jj]) if np.isfinite(ceil_arr[ii, jj]) else float("inf")
-                            if alt <= 0 or alt >= 20000:
-                                alt = float(c_hbas_sc[ii, jj]) if np.isfinite(c_hbas_sc[ii, jj]) else float("inf")
-                            if alt < best_strat_alt:
-                                best_strat_alt = alt
-                                best_strat_type = ct
-                                best_ii, best_jj = int(ii), int(jj)
-                            elif alt == best_strat_alt and CLOUD_PRIORITY.get(ct, 0) > CLOUD_PRIORITY.get(best_strat_type, 0):
-                                best_strat_type = ct
-                                best_ii, best_jj = int(ii), int(jj)
+                            sym = "ac"
+                        cb_hm = int(avg_ceil / 100)
 
-                if sym is None:
-                    sym = best_strat_type
-
-            # Cloud base logic
-            cb_hm = None
-            label = None
-            if sym in ("st", "ac", "ci", "cu_hum", "cu_con", "cb"):
-                cell_ceil = ceil_arr[np.ix_(cli, clo)]
-                valid_ceil = cell_ceil[(cell_ceil > 0) & (cell_ceil < 20000)]
-                if len(valid_ceil) > 0:
-                    cb_hm = int(np.min(valid_ceil) / 100)
-            elif sym == "blue_thermal":
-                cell_htop = c_htop_dc[np.ix_(cli, clo)]
-                valid_htop = cell_htop[cell_htop > 0]
-                if len(valid_htop) > 0:
-                    cb_hm = int(np.max(valid_htop) / 100)
+            # Label formatting
             if cb_hm is not None:
                 if cb_hm > 99:
-                    cb_hm = 99  # Cap at 9900m
+                    cb_hm = 99
                 label = str(cb_hm)
 
+            # Placement strategy:
+            # Render symbols on equidistant aggregation grid centers at all zoom levels.
+            # (At z12, grid anchor is half-cell shifted above to align centers with native pixels.)
+            rep_lat = float(c_lat[best_ii])
+            rep_lon = float(c_lon[best_jj])
+            plot_lat = float(lat_c)
+            plot_lon = float(lon_c)
+
             symbols.append({
-                "lat": round(lat_c, 4),
-                "lon": round(lon_c, 4),
-                "clickLat": round(float(c_lat[best_ii]), 4),
-                "clickLon": round(float(c_lon[best_jj]), 4),
+                "lat": round(plot_lat, 4),
+                "lon": round(plot_lon, 4),
+                "clickLat": round(rep_lat, 4),
+                "clickLon": round(rep_lon, 4),
                 "type": sym,
                 "ww": max_ww,
                 "cloudBase": cb_hm,
                 "label": label,
-                "clickable": sym != "clear"
+                "clickable": True
             })
 
     return {
@@ -602,8 +749,10 @@ async def api_wind(
     if u_key not in d or v_key not in d:
         return {"barbs": [], "run": run, "model": model_used, "validTime": d["validTime"], "level": level, "count": 0}
 
-    # Bbox-slice before computation
-    li, lo = _bbox_indices(lat, lon, lat_min, lon_min, lat_max, lon_max)
+    # Bbox-slice before computation.
+    # Use one-cell padding around viewport to stabilize border cells during pan.
+    pad = cell_size
+    li, lo = _bbox_indices(lat, lon, lat_min - pad, lon_min - pad, lat_max + pad, lon_max + pad)
     if li is not None and len(li) == 0:
         return {"barbs": [], "run": run, "model": model_used, "validTime": d["validTime"], "level": level, "count": 0}
 
@@ -616,6 +765,9 @@ async def api_wind(
     # Align grid to global anchor (data origin) but start from bbox for performance
     anchor_lat = float(lat.min())
     anchor_lon = float(lon.min())
+    if zoom >= 12:
+        anchor_lat -= cell_size / 2.0
+        anchor_lon -= cell_size / 2.0
     lat_start = anchor_lat + np.floor((lat_min - anchor_lat) / cell_size) * cell_size
     lon_start = anchor_lon + np.floor((lon_min - anchor_lon) / cell_size) * cell_size
     lat_edges = np.arange(lat_start, lat_max + cell_size, cell_size)
@@ -659,9 +811,16 @@ async def api_wind(
             if speed_kt < 1:  # Calm wind
                 continue
 
+            # Match symbol placement strategy:
+            # - highest zoom: representative data point
+            # - lower zoom: strict equidistant aggregation grid
+            rep_i = int(cli[len(cli) // 2])
+            rep_j = int(clo[len(clo) // 2])
+            plot_lat = float(c_lat[rep_i]) if zoom >= 12 else float(lat_c)
+            plot_lon = float(c_lon[rep_j]) if zoom >= 12 else float(lon_c)
             barbs.append({
-                "lat": round(lat_c, 4),
-                "lon": round(lon_c, 4),
+                "lat": round(plot_lat, 4),
+                "lon": round(plot_lon, 4),
                 "speed_kt": round(speed_kt, 1),
                 "dir_deg": round(dir_deg, 0),
                 "speed_ms": round(speed_ms, 1),
@@ -683,6 +842,8 @@ async def api_point(
     lon: float = Query(...),
     time: str = Query("latest"),
     model: Optional[str] = Query(None),
+    wind_level: str = Query("10m"),
+    zoom: Optional[int] = Query(None, ge=5, le=12),
 ):
     # Load all keys for point endpoint (needs many variables for overlay_values)
     run, step, model_used = resolve_time(time, model)
@@ -725,7 +886,8 @@ async def api_point(
     htop_sc = scalar("htop_sc") or 0.0
     lpi = scalar("lpi") or 0.0
 
-    best_type = classify_point(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi)
+    ceiling_val = scalar("ceiling") or 0.0
+    best_type = classify_point(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling_val)
     result["cloudType"] = best_type
 
     ww_max = int(scalar("ww") or 0)
@@ -735,11 +897,16 @@ async def api_point(
     result["cloudTypeName"] = sym.title()
     result["ww"] = ww_max
 
-    # Cloud base: mirror symbols (min ceil or max htop_dc in cell)
+    # Cloud base: mirror symbol label logic
     ceil_cell = d["ceiling"][np.ix_(li, lo)] if "ceiling" in d else np.array([])
     htop_cell = d["htop_dc"][np.ix_(li, lo)] if "htop_dc" in d else np.array([])
+    hbas_cell = d["hbas_sc"][np.ix_(li, lo)] if "hbas_sc" in d else np.array([])
     valid_ceil = ceil_cell[(ceil_cell > 0) & (ceil_cell < 20000)] if ceil_cell.size else np.array([])
-    if sym in ("st", "ac", "ci", "cu_hum", "cu_con", "cb", "fog", "rime_fog") and len(valid_ceil) > 0:
+    valid_hbas = hbas_cell[(hbas_cell > 0) & np.isfinite(hbas_cell)] if hbas_cell.size else np.array([])
+
+    if sym in ("cu_hum", "cu_con", "cb") and len(valid_hbas) > 0:
+        result["cloudBaseHm"] = int(np.min(valid_hbas) / 100)
+    elif sym in ("st", "ac", "ci", "fog", "rime_fog") and len(valid_ceil) > 0:
         result["cloudBaseHm"] = int(np.min(valid_ceil) / 100)
     elif sym == "blue_thermal" and htop_cell.size and np.any(htop_cell > 0):
         result["cloudBaseHm"] = int(np.max(htop_cell[htop_cell > 0]) / 100)
@@ -764,8 +931,20 @@ async def api_point(
     except Exception:
         pass
 
+    if "clcl" in d:
+        overlay_values["clouds_low"] = round(float(np.nanmean(d["clcl"][np.ix_(li, lo)])), 1)
+    if "clcm" in d:
+        overlay_values["clouds_mid"] = round(float(np.nanmean(d["clcm"][np.ix_(li, lo)])), 1)
+    if "clch" in d:
+        overlay_values["clouds_high"] = round(float(np.nanmean(d["clch"][np.ix_(li, lo)])), 1)
     if "clct" in d:
-        overlay_values["clouds"] = round(float(np.nanmean(d["clct"][np.ix_(li, lo)])), 1)
+        overlay_values["clouds_total"] = round(float(np.nanmean(d["clct"][np.ix_(li, lo)])), 1)
+    if "clct_mod" in d:
+        clct_mod_val = float(np.nanmean(d["clct_mod"][np.ix_(li, lo)]))
+        # Normalize to percent if data appears to be fractional (0..1)
+        if np.isfinite(clct_mod_val) and clct_mod_val <= 1.5:
+            clct_mod_val *= 100.0
+        overlay_values["clouds_total_mod"] = round(clct_mod_val, 1) if np.isfinite(clct_mod_val) else None
     if "cape_ml" in d:
         overlay_values["thermals"] = round(float(np.nanmax(d["cape_ml"][np.ix_(li, lo)])), 1)
 
@@ -775,6 +954,14 @@ async def api_point(
         hbas_vals = d["hbas_sc"][np.ix_(li, lo)]
         hbas_valid = hbas_vals[hbas_vals > 0]
         overlay_values["cloud_base"] = round(float(np.min(hbas_valid)), 0) if len(hbas_valid) > 0 else None
+    if "htop_dc" in d:
+        htop_dc_vals = d["htop_dc"][np.ix_(li, lo)]
+        htop_dc_valid = htop_dc_vals[htop_dc_vals > 0]
+        overlay_values["dry_conv_top"] = round(float(np.max(htop_dc_valid)), 0) if len(htop_dc_valid) > 0 else None
+    if "htop_sc" in d and "hbas_sc" in d:
+        thick = np.maximum(0, d["htop_sc"][np.ix_(li, lo)] - d["hbas_sc"][np.ix_(li, lo)])
+        thick_valid = thick[thick > 0]
+        overlay_values["conv_thickness"] = round(float(np.max(thick_valid)), 0) if len(thick_valid) > 0 else None
 
     # Soaring data
     if "ashfl_s" in d and "mh" in d and "t_2m" in d:
@@ -794,14 +981,37 @@ async def api_point(
             overlay_values["lcl"] = round(float(np.nanmean(lcl)), 0)
             overlay_values["reachable"] = round(float(np.nanmean(reachable)), 1)
 
-    # Wind data
-    if "u_10m" in d and "v_10m" in d:
-        u_cell = d["u_10m"][np.ix_(li, lo)]
-        v_cell = d["v_10m"][np.ix_(li, lo)]
+    # Wind data (match selected wind level and aggregation cell used by wind symbols when zoom is provided)
+    if wind_level == "10m":
+        u_key, v_key = "u_10m", "v_10m"
+    else:
+        u_key, v_key = f"u_{wind_level}hpa", f"v_{wind_level}hpa"
+
+    if u_key in d and v_key in d:
+        if zoom is not None:
+            cell_sizes = {5: 2.0, 6: 1.0, 7: 0.5, 8: 0.25, 9: 0.12, 10: 0.06, 11: 0.03, 12: 0.02}
+            cell_size = cell_sizes.get(int(zoom), 0.25)
+            anchor_lat = float(lat_arr.min())
+            anchor_lon = float(lon_arr.min())
+            lat_lo = anchor_lat + math.floor((lat - anchor_lat) / cell_size) * cell_size
+            lon_lo = anchor_lon + math.floor((lon - anchor_lon) / cell_size) * cell_size
+            lat_hi = lat_lo + cell_size
+            lon_hi = lon_lo + cell_size
+
+            wli = np.where((lat_arr >= lat_lo) & (lat_arr < lat_hi))[0]
+            wlo = np.where((lon_arr >= lon_lo) & (lon_arr < lon_hi))[0]
+            if len(wli) == 0 or len(wlo) == 0:
+                wli, wlo = li, lo
+        else:
+            wli, wlo = li, lo
+
+        u_cell = d[u_key][np.ix_(wli, wlo)]
+        v_cell = d[v_key][np.ix_(wli, wlo)]
         u_mean = float(np.nanmean(u_cell))
         v_mean = float(np.nanmean(v_cell))
-        overlay_values["wind_speed"] = round(math.sqrt(u_mean**2 + v_mean**2) * 1.94384, 1)  # knots
-        overlay_values["wind_dir"] = round((math.degrees(math.atan2(-u_mean, -v_mean)) + 360) % 360, 0)
+        if np.isfinite(u_mean) and np.isfinite(v_mean):
+            overlay_values["wind_speed"] = round(math.sqrt(u_mean**2 + v_mean**2) * 1.94384, 1)  # knots
+            overlay_values["wind_dir"] = round((math.degrees(math.atan2(-u_mean, -v_mean)) + 360) % 360, 0)
     result["overlay_values"] = overlay_values
 
     # Closest point lat/lon for precision
@@ -883,6 +1093,7 @@ async def api_feedback_list():
 
 # Colormaps for overlay layers
 import io
+import colorsys
 from PIL import Image
 
 def colormap_total_precip(total_rate):
@@ -936,64 +1147,80 @@ def colormap_hail(graupel_rate):
 def colormap_sigwx(val):
     """Significant weather coloring by ww code.
 
-    - ww < 10: gray shades
-    - ww >= 10: distinct per-code colors while preserving broad weather-group hue families
+    Rules:
+    - ww <= 3: transparent
+    - ww 4..9: gray shades
+    - ww >= 10: unique color per ww code (deterministic), grouped by broad weather family
     """
     ww = int(val)
-    if ww <= 3:
+    # Low ww classes in grayscale with explicit contrast for 0..3
+    if ww == 0:
         return None
-
+    if ww == 1:
+        return (205, 205, 205, 165)  # slight gray
+    if ww == 2:
+        return (145, 145, 145, 175)  # middle gray
+    if ww == 3:
+        return (85, 85, 85, 190)     # dark gray
     if ww < 10:
-        # deterministic gray shades for low/non-sig codes
-        g = 180 - (ww * 10)
-        return (max(90, g), max(90, g), max(90, g), 150)
+        # ww 4..9 continue darker grayscale ramp
+        g = int(120 - (ww - 4) * 8)  # 120 -> 80
+        g = max(75, min(130, g))
+        return (g, g, g, 185)
 
-    # Grouped hue families with per-code variation
-    if ww in (45, 48):  # fog
-        base = (190, 150, 40)
-    elif 50 <= ww <= 59:  # drizzle/freezing drizzle
-        base = (110, 190, 110)
-    elif 60 <= ww <= 69:  # rain/freezing rain
-        base = (20, 160, 40)
-    elif 70 <= ww <= 79:  # solid snow
-        base = (140, 110, 230)
-    elif 80 <= ww <= 84:  # rain showers
-        base = (0, 150, 120)
-    elif 85 <= ww <= 86:  # snow showers
-        base = (120, 90, 240)
-    elif 95 <= ww <= 99:  # thunderstorms
-        base = (220, 20, 60)
+    # Broad group base hues (keeps weather-family feel)
+    if ww in (45, 48):          # fog
+        base_h = 45 / 360.0
+    elif 50 <= ww <= 59:        # drizzle/freezing drizzle
+        base_h = 95 / 360.0
+    elif 60 <= ww <= 69:        # rain/freezing rain
+        base_h = 130 / 360.0
+    elif 70 <= ww <= 79:        # snow
+        base_h = 265 / 360.0
+    elif 80 <= ww <= 84:        # rain showers
+        base_h = 175 / 360.0
+    elif 85 <= ww <= 86:        # snow showers
+        base_h = 280 / 360.0
+    elif 95 <= ww <= 99:        # thunderstorm
+        base_h = 350 / 360.0
     else:
-        base = (130, 130, 130)
+        base_h = 210 / 360.0
 
-    # Per-code tint for visual separation inside each group
-    offset = (ww * 17) % 36 - 18
-    r = max(0, min(255, base[0] + offset))
-    g = max(0, min(255, base[1] - offset // 2))
-    b = max(0, min(255, base[2] + offset // 2))
-    alpha = 185 if ww >= 95 else 170
+    # Unique per-code hue jitter: golden-angle style distribution
+    hue = (base_h + ((ww * 0.61803398875) % 1.0) * 0.18) % 1.0
+    sat = 0.82 if ww >= 95 else 0.78
+    val_v = 0.95 if ww >= 95 else 0.88
+    r_f, g_f, b_f = colorsys.hsv_to_rgb(hue, sat, val_v)
+    r, g, b = int(r_f * 255), int(g_f * 255), int(b_f * 255)
+    alpha = 210 if ww >= 95 else 190
     return (r, g, b, alpha)
 
+
 def colormap_clouds(val):
-    """Cloud cover 0-100% → gray gradient with constant opacity."""
+    """Cloud cover 0-100% → high-contrast grayscale with constant opacity."""
     pct = float(val)
     if pct < 1:
         return None
     t = min(pct / 100.0, 1.0)
-    grey = int(170 - 130 * t)  # light gray -> dark gray
-    alpha = 180  # fixed opacity (no opacity encoding)
+    # Increased contrast: very light gray (low cloud) -> dark gray (overcast)
+    grey = int(225 - 180 * t)  # 225 -> 45
+    alpha = 210  # fixed opacity (no opacity encoding)
     return (grey, grey, grey, alpha)
 
 def colormap_thermals(val):
-    """Thermal strength based on CAPE (J/kg). 0→transparent, >2000→deep red."""
+    """Thermal strength based on CAPE (J/kg).
+
+    Show only CAPE >= 50 J/kg.
+    Clamp color scale to 50..1000 J/kg (values above use max color).
+    """
     cape = float(val)
-    if cape < 10: return None
-    # Scale: 10-2000 J/kg
-    t = min(cape / 2000.0, 1.0)
+    if cape < 50:
+        return None
+    t = min(max((cape - 50.0) / 950.0, 0.0), 1.0)  # 50..1000
     r = int(50 + 205 * t)
     g = int(180 * (1 - t))
     b = int(50 * (1 - t))
-    alpha = int(80 + 140 * t)
+    alpha = int(90 + 130 * t)
     return (r, g, b, alpha)
 
 def colormap_ceiling(ceiling_m):
@@ -1064,20 +1291,41 @@ def colormap_reachable(val):
     alpha = int(120 + 100 * t)
     return (r, g, b, alpha)
 
+def colormap_conv_thickness(val):
+    """Convective cloud thickness (htop_sc - hbas_sc), 0-6000m."""
+    if val is None:
+        return None
+    d = float(val)
+    if d <= 0:
+        return None
+    t = min(d / 6000.0, 1.0)
+    r = int(240 * t + 40 * (1 - t))
+    g = int(220 * (1 - t) + 80 * t)
+    b = int(60 * (1 - t) + 40 * t)
+    alpha = 190
+    return (r, g, b, alpha)
+
+
 OVERLAY_CONFIGS = {
-    "total_precip":  {"var": "total_precip", "cmap": colormap_total_precip, "computed": True},
-    "rain":          {"var": "prr_gsp", "cmap": colormap_rain},
-    "snow":          {"var": "prs_gsp", "cmap": colormap_snow},
-    "hail":          {"var": "prg_gsp", "cmap": colormap_hail},
-    "sigwx":         {"var": "ww", "cmap": colormap_sigwx},
-    "clouds":        {"var": "clct", "cmap": colormap_clouds},
-    "thermals":      {"var": "cape_ml", "cmap": colormap_thermals},
-    "ceiling":       {"var": "ceiling", "cmap": colormap_ceiling},
-    "cloud_base":    {"var": "hbas_sc", "cmap": colormap_hbas_sc},
-    "wstar":         {"var": "wstar", "cmap": colormap_wstar, "computed": True},
-    "climb_rate":    {"var": "climb_rate", "cmap": colormap_climb_rate, "computed": True},
-    "lcl":           {"var": "lcl", "cmap": colormap_lcl, "computed": True},
-    "reachable":     {"var": "reachable", "cmap": colormap_reachable, "computed": True},
+    "total_precip":    {"var": "total_precip", "cmap": colormap_total_precip, "computed": True},
+    "rain":            {"var": "prr_gsp", "cmap": colormap_rain},
+    "snow":            {"var": "prs_gsp", "cmap": colormap_snow},
+    "hail":            {"var": "prg_gsp", "cmap": colormap_hail},
+    "clouds_low":      {"var": "clcl", "cmap": colormap_clouds},
+    "clouds_mid":      {"var": "clcm", "cmap": colormap_clouds},
+    "clouds_high":     {"var": "clch", "cmap": colormap_clouds},
+    "clouds_total":    {"var": "clct", "cmap": colormap_clouds},
+    "clouds_total_mod": {"var": "clct_mod", "cmap": colormap_clouds},
+    "dry_conv_top":    {"var": "htop_dc", "cmap": colormap_ceiling},
+    "sigwx":           {"var": "ww", "cmap": colormap_sigwx},
+    "ceiling":         {"var": "ceiling", "cmap": colormap_ceiling},
+    "cloud_base":      {"var": "hbas_sc", "cmap": colormap_hbas_sc},
+    "conv_thickness":  {"var": "conv_thickness", "cmap": colormap_conv_thickness, "computed": True},
+    "thermals":        {"var": "cape_ml", "cmap": colormap_thermals},
+    "wstar":           {"var": "wstar", "cmap": colormap_wstar, "computed": True},
+    "climb_rate":      {"var": "climb_rate", "cmap": colormap_climb_rate, "computed": True},
+    "lcl":             {"var": "lcl", "cmap": colormap_lcl, "computed": True},
+    "reachable":       {"var": "reachable", "cmap": colormap_reachable, "computed": True},
 }
 
 
@@ -1103,6 +1351,8 @@ async def api_overlay(
     if cfg.get("computed"):
         if cfg["var"] == "total_precip":
             overlay_keys += ["prr_gsp", "prs_gsp", "prg_gsp"]
+        elif cfg["var"] == "conv_thickness":
+            overlay_keys += ["htop_sc", "hbas_sc"]
         elif cfg["var"] in ("wstar", "climb_rate"):
             overlay_keys += ["ashfl_s", "mh", "t_2m"]
         elif cfg["var"] in ("lcl", "reachable"):
@@ -1151,15 +1401,18 @@ async def api_overlay(
         raise HTTPException(404, "No data in bbox")
 
     # Calculate actual grid cell bounds
-    # Grid coordinates are cell centers; we need cell edges for image bounds
-    lat_res = float(lat[1] - lat[0]) if len(lat) > 1 else 0.02
-    lon_res = float(lon[1] - lon[0]) if len(lon) > 1 else 0.02
-    
+    # Grid coordinates are cell centers; we need cell edges for image bounds.
+    # Use abs() and min/max to remain correct for either coordinate ordering.
+    lat_res = abs(float(lat[1] - lat[0])) if len(lat) > 1 else 0.02
+    lon_res = abs(float(lon[1] - lon[0])) if len(lon) > 1 else 0.02
+    c_lat = lat[li]
+    c_lon = lon[lo]
+
     # Actual bounds = edges of selected cells (not requested bbox)
-    actual_lat_min = float(lat[li[0]]) - lat_res / 2
-    actual_lat_max = float(lat[li[-1]]) + lat_res / 2
-    actual_lon_min = float(lon[lo[0]]) - lon_res / 2
-    actual_lon_max = float(lon[lo[-1]]) + lon_res / 2
+    actual_lat_min = float(np.min(c_lat)) - lat_res / 2
+    actual_lat_max = float(np.max(c_lat)) + lat_res / 2
+    actual_lon_min = float(np.min(c_lon)) - lon_res / 2
+    actual_lon_max = float(np.max(c_lon)) + lon_res / 2
 
     # Handle computed variables
     if cfg.get("computed"):
@@ -1168,6 +1421,10 @@ async def api_overlay(
             prs = d["prs_gsp"][np.ix_(li, lo)]
             prg = d["prg_gsp"][np.ix_(li, lo)]
             cropped = prr + prs + prg
+        elif cfg["var"] == "conv_thickness":
+            htop_sc = d["htop_sc"][np.ix_(li, lo)] if "htop_sc" in d else np.zeros((len(li), len(lo)))
+            hbas_sc = d["hbas_sc"][np.ix_(li, lo)] if "hbas_sc" in d else np.zeros((len(li), len(lo)))
+            cropped = np.maximum(0, htop_sc - hbas_sc)
         elif cfg["var"] in ("wstar", "climb_rate", "lcl", "reachable"):
             # Soaring calculations require specific variables
             if "ashfl_s" not in d or "mh" not in d or "t_2m" not in d:
@@ -1202,29 +1459,73 @@ async def api_overlay(
             raise HTTPException(400, f"Unknown computed variable: {cfg['var']}")
         h, w = cropped.shape
     else:
-        var_data = d[cfg["var"]]
+        var_name = cfg["var"]
+        if var_name not in d and layer == "clouds_total_mod" and "clct" in d:
+            var_name = "clct"  # fallback when modified total cloud is unavailable
+        if var_name not in d:
+            raise HTTPException(404, f"Variable {cfg['var']} not available for this timestep")
+        var_data = d[var_name]
         cropped = var_data[np.ix_(li, lo)]
+        if layer == "clouds_total_mod":
+            # Normalize to percent if clct_mod is fractional (0..1)
+            vmax_local = float(np.nanmax(cropped)) if np.size(cropped) else float("nan")
+            if np.isfinite(vmax_local) and vmax_local <= 1.5:
+                cropped = cropped * 100.0
         h, w = cropped.shape
 
-    # Compute output dimensions preserving aspect ratio
-    # Use actual cell bounds (not requested bbox) for correct aspect ratio
-    aspect = (actual_lon_max - actual_lon_min) / (actual_lat_max - actual_lat_min) if (actual_lat_max - actual_lat_min) > 0 else 1
+    # Reproject rows to Web-Mercator spacing before rasterization.
+    # Without this, a lat/lon-spaced raster in an EPSG:3857 map appears to drift
+    # slightly relative to basemap during zoom/pan.
+    lat_src = np.asarray(c_lat, dtype=np.float64)
+    data_src = np.asarray(cropped, dtype=np.float64)
+
+    # Ensure south->north ordering for interpolation
+    if lat_src[0] > lat_src[-1]:
+        lat_src = lat_src[::-1]
+        data_src = data_src[::-1, :]
+
+    def merc_y(lat_deg: np.ndarray) -> np.ndarray:
+        lat_clamped = np.clip(lat_deg, -85.05112878, 85.05112878)
+        lat_rad = np.deg2rad(lat_clamped)
+        return np.log(np.tan(np.pi / 4.0 + lat_rad / 2.0))
+
+    y_src = merc_y(lat_src)
+    y_min = float(merc_y(np.array([actual_lat_min]))[0])
+    y_max = float(merc_y(np.array([actual_lat_max]))[0])
+
+    # Keep row count, remap to equal Web-Mercator Y spacing
+    target_rows = max(2, data_src.shape[0])
+    y_tgt = np.linspace(y_min, y_max, target_rows)
+    nearest_idx = np.searchsorted(y_src, y_tgt)
+    nearest_idx = np.clip(nearest_idx, 0, len(y_src) - 1)
+    left_idx = np.clip(nearest_idx - 1, 0, len(y_src) - 1)
+    choose_left = np.abs(y_tgt - y_src[left_idx]) <= np.abs(y_tgt - y_src[nearest_idx])
+    row_idx = np.where(choose_left, left_idx, nearest_idx)
+    cropped_merc = data_src[row_idx, :]
+
+    # Compute output dimensions using Web-Mercator aspect ratio
+    x_min = math.radians(actual_lon_min)
+    x_max = math.radians(actual_lon_max)
+    x_span = max(1e-9, x_max - x_min)
+    y_span = max(1e-9, y_max - y_min)
+    aspect = x_span / y_span
     out_w = width
     out_h = max(1, int(out_w / aspect))
 
-    # Create RGBA image at native resolution, then resize
-    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    # Create RGBA image at native mercator-reprojected resolution, then resize
+    h_merc, w_merc = cropped_merc.shape
+    img = Image.new("RGBA", (w_merc, h_merc), (0, 0, 0, 0))
     pixels = img.load()
-    
+
     # Single variable rendering
-    for y in range(h):
-        for x in range(w):
-            val = cropped[y, x]
+    for y in range(h_merc):
+        for x in range(w_merc):
+            val = cropped_merc[y, x]
             if np.isnan(val):
                 continue
             color = cmap_fn(val)
             if color:
-                pixels[x, h - 1 - y] = color
+                pixels[x, h_merc - 1 - y] = color
 
     # Resize to output — always nearest-neighbor for crisp pixelated look
     img = img.resize((out_w, out_h), Image.NEAREST)
@@ -1245,6 +1546,362 @@ async def api_overlay(
             "Access-Control-Expose-Headers": "X-Bbox, X-Run, X-ValidTime, X-Model",
         }
     )
+
+
+def _tile_bounds_3857(z: int, x: int, y: int):
+    origin = 20037508.342789244
+    world = origin * 2.0
+    tile_size = world / (2 ** z)
+    minx = -origin + x * tile_size
+    maxx = minx + tile_size
+    maxy = origin - y * tile_size
+    miny = maxy - tile_size
+    return minx, miny, maxx, maxy
+
+
+def _merc_to_lonlat(mx, my):
+    lon = (mx / 20037508.342789244) * 180.0
+    lat = np.degrees(2.0 * np.arctan(np.exp(my / 6378137.0)) - np.pi / 2.0)
+    return lon, lat
+
+
+def _regular_grid_indices(vals: np.ndarray, q: np.ndarray) -> np.ndarray:
+    if len(vals) < 2:
+        return np.zeros_like(q, dtype=np.int32)
+    step = float(vals[1] - vals[0])
+    if step == 0:
+        return np.zeros_like(q, dtype=np.int32)
+    idx = np.rint((q - float(vals[0])) / step).astype(np.int32)
+    return np.clip(idx, 0, len(vals) - 1)
+
+
+def _colorize_layer_vectorized(layer: str, sampled: np.ndarray, valid: np.ndarray) -> np.ndarray:
+    """Fast vectorized RGBA colorization for common Skyview overlay layers."""
+    h, w = sampled.shape
+    rgba = np.zeros((h, w, 4), dtype=np.uint8)
+
+    if not np.any(valid):
+        return rgba
+
+    v = sampled
+
+    def set_rgba(mask, r, g, b, a):
+        if np.any(mask):
+            rgba[..., 0][mask] = np.clip(r[mask] if isinstance(r, np.ndarray) else r, 0, 255).astype(np.uint8) if isinstance(r, np.ndarray) else np.uint8(r)
+            rgba[..., 1][mask] = np.clip(g[mask] if isinstance(g, np.ndarray) else g, 0, 255).astype(np.uint8) if isinstance(g, np.ndarray) else np.uint8(g)
+            rgba[..., 2][mask] = np.clip(b[mask] if isinstance(b, np.ndarray) else b, 0, 255).astype(np.uint8) if isinstance(b, np.ndarray) else np.uint8(b)
+            rgba[..., 3][mask] = np.clip(a[mask] if isinstance(a, np.ndarray) else a, 0, 255).astype(np.uint8) if isinstance(a, np.ndarray) else np.uint8(a)
+
+    if layer in ("total_precip", "rain", "snow", "hail"):
+        mmh = v * 3600.0
+        m = valid & (mmh >= 0.1)
+        if np.any(m):
+            t = np.clip(mmh / 5.0, 0.0, 1.0)
+            if layer == "total_precip":
+                r = 150 * (1 - t)
+                g = 180 + 75 * (1 - t)
+                b = np.full_like(t, 255.0)
+                a = 120 + 135 * t
+            elif layer == "rain":
+                r = 180 - 160 * t
+                g = 220 - 160 * t
+                b = 255 - 75 * t
+                a = 130 + 125 * t
+            elif layer == "snow":
+                r = 255 - 135 * t
+                g = 200 - 160 * t
+                b = 255 - 95 * t
+                a = 130 + 125 * t
+            else:  # hail
+                r = 200 + 55 * t
+                g = 80 + 80 * (1 - t)
+                b = 20 * (1 - t)
+                a = 130 + 125 * t
+            set_rgba(m, r, g, b, a)
+        return rgba
+
+    if layer.startswith("clouds_"):
+        m = valid & (v >= 1)
+        if np.any(m):
+            t = np.clip(v / 100.0, 0.0, 1.0)
+            grey = 225 - 180 * t
+            set_rgba(m, grey, grey, grey, 210)
+        return rgba
+
+    if layer in ("ceiling", "dry_conv_top"):
+        m = valid & (v > 0) & (v < 9900)
+        if np.any(m):
+            t = np.clip(v / 9900.0, 0.0, 1.0)
+            r = 220 * (1 - t)
+            g = 60 + 180 * t
+            b = 30 + 50 * t
+            a = 200 - 60 * t
+            set_rgba(m, r, g, b, a)
+        return rgba
+
+    if layer == "cloud_base":
+        m = valid & (v > 0)
+        if np.any(m):
+            t = np.clip(v / 5000.0, 0.0, 1.0)
+            r = 220 * (1 - t)
+            g = 60 + 180 * t
+            b = 30 + 50 * t
+            a = 200 - 60 * t
+            set_rgba(m, r, g, b, a)
+        return rgba
+
+    if layer == "conv_thickness":
+        m = valid & (v > 0)
+        if np.any(m):
+            t = np.clip(v / 6000.0, 0.0, 1.0)
+            r = 240 * t + 40 * (1 - t)
+            g = 220 * (1 - t) + 80 * t
+            b = 60 * (1 - t) + 40 * t
+            set_rgba(m, r, g, b, 190)
+        return rgba
+
+    if layer == "thermals":
+        # CAPE_ml coloring only from 50 J/kg upwards; clamp scale at 1000 J/kg
+        m = valid & (v >= 50)
+        if np.any(m):
+            t = np.clip((v - 50.0) / 950.0, 0.0, 1.0)
+            r = 50 + 205 * t
+            g = 180 * (1 - t)
+            b = 50 * (1 - t)
+            a = 90 + 130 * t
+            set_rgba(m, r, g, b, a)
+        return rgba
+
+    if layer in ("wstar", "climb_rate"):
+        th = 0.2 if layer == "wstar" else 0.1
+        m = valid & (v >= th)
+        if np.any(m):
+            t = np.clip(v / 5.0, 0.0, 1.0)
+            r = 50 + 205 * t
+            g = 200 - 80 * t
+            b = 50 * (1 - t)
+            a = 100 + 130 * t
+            set_rgba(m, r, g, b, a)
+        return rgba
+
+    if layer == "lcl":
+        m = valid & (v >= 50)
+        if np.any(m):
+            t = np.clip(v / 5000.0, 0.0, 1.0)
+            r = 220 * (1 - t)
+            g = 60 + 180 * t
+            b = 30 + 50 * t
+            a = 180 - 40 * t
+            set_rgba(m, r, g, b, a)
+        return rgba
+
+    if layer == "reachable":
+        m = valid & (v >= 1)
+        if np.any(m):
+            t = np.clip(v / 200.0, 0.0, 1.0)
+            r = 220 * (1 - t)
+            g = 80 + 160 * t
+            b = np.full_like(t, 50.0)
+            a = 120 + 100 * t
+            set_rgba(m, r, g, b, a)
+        return rgba
+
+    # sigwx and any uncommon/fallback layers: keep exact semantics via existing per-pixel cmap.
+    cmap_fn = OVERLAY_CONFIGS[layer]["cmap"]
+    for yy in range(h):
+        for xx in range(w):
+            if not valid[yy, xx]:
+                continue
+            color = cmap_fn(v[yy, xx])
+            if color:
+                rgba[yy, xx] = color
+    return rgba
+
+
+@app.get("/api/cache_stats")
+async def api_cache_stats():
+    _tile_cache_prune("desktop")
+    _tile_cache_prune("mobile")
+    return {
+        "tileCache": {
+            "desktopItems": len(tile_cache_desktop),
+            "desktopMax": TILE_CACHE_MAX_ITEMS_DESKTOP,
+            "mobileItems": len(tile_cache_mobile),
+            "mobileMax": TILE_CACHE_MAX_ITEMS_MOBILE,
+            "ttlSeconds": TILE_CACHE_TTL_SECONDS,
+        },
+        "metrics": cache_stats,
+        "computedFieldCacheItems": len(computed_field_cache),
+    }
+
+
+@app.get("/api/perf_stats")
+async def api_perf_stats(reset: bool = Query(False, description="Reset perf counters after returning stats")):
+    recent = list(perf_recent)
+    recent_n = len(recent)
+    if recent_n:
+        recent_avg_ms = sum(r['ms'] for r in recent) / recent_n
+        recent_hit_rate = sum(r['hit'] for r in recent) / recent_n
+    else:
+        recent_avg_ms = None
+        recent_hit_rate = None
+
+    total_req = perf_totals['requests']
+    total_avg_ms = (perf_totals['totalMs'] / total_req) if total_req else None
+    total_hit_rate = (perf_totals['hits'] / total_req) if total_req else None
+
+    payload = {
+        'recentWindow': {
+            'size': recent_n,
+            'maxSize': perf_recent.maxlen,
+            'avgMs': recent_avg_ms,
+            'hitRate': recent_hit_rate,
+        },
+        'totals': {
+            'requests': total_req,
+            'hits': perf_totals['hits'],
+            'misses': perf_totals['misses'],
+            'avgMs': total_avg_ms,
+            'hitRate': total_hit_rate,
+        }
+    }
+
+    if reset:
+        perf_recent.clear()
+        perf_totals['requests'] = 0
+        perf_totals['hits'] = 0
+        perf_totals['misses'] = 0
+        perf_totals['totalMs'] = 0.0
+        payload['reset'] = True
+
+    return payload
+
+
+@app.get("/api/overlay_tile/{z}/{x}/{y}.png")
+async def api_overlay_tile(
+    z: int,
+    x: int,
+    y: int,
+    layer: str = Query(...),
+    time: str = Query("latest"),
+    model: Optional[str] = Query(None),
+    clientClass: str = Query("desktop"),
+):
+    t0 = perf_counter()
+
+    if layer not in OVERLAY_CONFIGS:
+        raise HTTPException(400, f"Unknown layer: {layer}")
+
+    client_class = "mobile" if clientClass == "mobile" else "desktop"
+    cfg = OVERLAY_CONFIGS[layer]
+
+    overlay_keys = ["lat", "lon"]
+    if cfg.get("computed"):
+        if cfg["var"] == "total_precip":
+            overlay_keys += ["prr_gsp", "prs_gsp", "prg_gsp"]
+        elif cfg["var"] == "conv_thickness":
+            overlay_keys += ["htop_sc", "hbas_sc"]
+        elif cfg["var"] in ("wstar", "climb_rate"):
+            overlay_keys += ["ashfl_s", "mh", "t_2m"]
+        elif cfg["var"] in ("lcl", "reachable"):
+            overlay_keys += ["ashfl_s", "mh", "t_2m", "td_2m", "hsurf"]
+    else:
+        overlay_keys.append(cfg["var"])
+
+    run, step, model_used = resolve_time(time, model)
+    d = load_data(run, step, model_used, keys=overlay_keys)
+    lat = d["lat"]
+    lon = d["lon"]
+
+    cache_key = f"{client_class}|{model_used}|{run}|{step}|{layer}|{z}|{x}|{y}"
+    cached = _tile_cache_get(client_class, cache_key)
+    if cached is not None:
+        _perf_record((perf_counter() - t0) * 1000.0, True)
+        return Response(content=cached, media_type="image/png", headers={
+            "Cache-Control": "public, max-age=300",
+            "X-Run": run,
+            "X-ValidTime": d["validTime"],
+            "X-Model": model_used,
+            "X-Cache": "HIT",
+            "Access-Control-Expose-Headers": "X-Run, X-ValidTime, X-Model, X-Cache",
+        })
+
+    minx, miny, maxx, maxy = _tile_bounds_3857(z, x, y)
+    lon0, lat0 = _merc_to_lonlat(minx, miny)
+    lon1, lat1 = _merc_to_lonlat(maxx, maxy)
+    lon_min, lon_max = min(lon0, lon1), max(lon0, lon1)
+    lat_min, lat_max = min(lat0, lat1), max(lat0, lat1)
+
+    data_lat_min, data_lat_max = float(np.min(lat)), float(np.max(lat))
+    data_lon_min, data_lon_max = float(np.min(lon)), float(np.max(lon))
+    if lat_max < data_lat_min or lat_min > data_lat_max or lon_max < data_lon_min or lon_min > data_lon_max:
+        empty = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+        b = io.BytesIO(); empty.save(b, format="PNG", optimize=True); png = b.getvalue()
+        _tile_cache_set(client_class, cache_key, png)
+        _perf_record((perf_counter() - t0) * 1000.0, False)
+        return Response(content=png, media_type="image/png", headers={"Cache-Control": "public, max-age=300", "X-Cache": "MISS"})
+
+    # source field (full grid), with memoization for expensive computed layers
+    if cfg.get("computed"):
+        comp_key = f"{model_used}|{run}|{step}|{layer}"
+        src = _computed_cache_get(comp_key)
+        if src is None:
+            v = cfg["var"]
+            if v == "total_precip":
+                src = d["prr_gsp"] + d["prs_gsp"] + d["prg_gsp"]
+            elif v == "conv_thickness":
+                src = np.maximum(0, d["htop_sc"] - d["hbas_sc"])
+            elif v in ("wstar", "climb_rate"):
+                wstar = calc_wstar(d["ashfl_s"], None, d["mh"], d["t_2m"], dt_seconds=3600)
+                src = wstar if v == "wstar" else calc_climb_rate(wstar)
+            elif v in ("lcl", "reachable"):
+                lcl_amsl = calc_lcl(d["t_2m"], d["td_2m"], d["hsurf"])
+                if v == "lcl":
+                    src = lcl_amsl
+                else:
+                    thermal_agl = calc_thermal_height(d["mh"], lcl_amsl, d["hsurf"])
+                    src = calc_reachable_distance(thermal_agl)
+            else:
+                raise HTTPException(400, f"Unsupported computed layer: {v}")
+            _computed_cache_set(comp_key, src)
+    else:
+        vname = cfg["var"]
+        if vname not in d and layer == "clouds_total_mod" and "clct" in d:
+            vname = "clct"
+        if vname not in d:
+            raise HTTPException(404, f"Variable {cfg['var']} unavailable")
+        src = d[vname]
+        if layer == "clouds_total_mod":
+            vmax_local = float(np.nanmax(src)) if np.size(src) else float("nan")
+            if np.isfinite(vmax_local) and vmax_local <= 1.5:
+                src = src * 100.0
+
+    xs = np.linspace(minx, maxx, 256, endpoint=False) + (maxx - minx) / 512.0
+    ys = np.linspace(maxy, miny, 256, endpoint=False) - (maxy - miny) / 512.0
+    mx, my = np.meshgrid(xs, ys)
+    qlon, qlat = _merc_to_lonlat(mx, my)
+
+    inside = ((qlat >= data_lat_min) & (qlat <= data_lat_max) & (qlon >= data_lon_min) & (qlon <= data_lon_max))
+    li = _regular_grid_indices(lat, qlat)
+    lo = _regular_grid_indices(lon, qlon)
+    sampled = src[li, lo]
+    valid = inside & np.isfinite(sampled)
+
+    rgba = _colorize_layer_vectorized(layer, sampled, valid)
+
+    img = Image.fromarray(rgba, mode="RGBA")
+    b = io.BytesIO(); img.save(b, format="PNG", optimize=True); png = b.getvalue()
+    _tile_cache_set(client_class, cache_key, png)
+    _perf_record((perf_counter() - t0) * 1000.0, False)
+
+    return Response(content=png, media_type="image/png", headers={
+        "Cache-Control": "public, max-age=300",
+        "X-Run": run,
+        "X-ValidTime": d["validTime"],
+        "X-Model": model_used,
+        "X-Cache": "MISS",
+        "Access-Control-Expose-Headers": "X-Run, X-ValidTime, X-Model, X-Cache",
+    })
 
 
 # ─── Static Frontend (must be LAST) ───

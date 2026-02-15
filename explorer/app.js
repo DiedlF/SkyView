@@ -17,7 +17,12 @@ const STATE = {
     rangeMin: null,
     rangeMax: null,
     opacity: 0.6,
-    stepSize: 1
+    stepSize: 1,
+    dayMeta: [],
+    mergedRunTime: null,
+    mergedLabel: null,
+    overlayReady: false,
+    pendingOverlayUpdate: false
 };
 
 // Initialize app on DOM load
@@ -26,6 +31,19 @@ document.addEventListener('DOMContentLoaded', () => {
     initControls();
     loadVariables();
     loadTimesteps();
+
+    // Overlay-ready gate: prevent first render until layout/map metrics are stable.
+    window.addEventListener('load', () => {
+        setTimeout(() => {
+            if (!STATE.map) return;
+            STATE.map.invalidateSize();
+            STATE.overlayReady = true;
+            if (STATE.pendingOverlayUpdate || (STATE.selectedVariable && STATE.selectedTime)) {
+                STATE.pendingOverlayUpdate = false;
+                updateOverlay();
+            }
+        }, 120);
+    }, { once: true });
 });
 
 // ===== MAP INITIALIZATION =====
@@ -150,6 +168,11 @@ function initControls() {
         });
     });
 
+    // Date strip follows horizontal timeline scroll
+    const timeline = document.getElementById('time-buttons');
+    timeline.addEventListener('scroll', updateDateStrip);
+    window.addEventListener('resize', updateDateStrip);
+
     // Sidebar toggle (mobile)
     document.getElementById('sidebar-toggle').addEventListener('click', () => {
         document.getElementById('sidebar').classList.toggle('open');
@@ -179,11 +202,17 @@ async function loadTimesteps() {
         if (merged && merged.steps) {
             STATE.timesteps = merged.steps.map(s => s.validTime);
             STATE._mergedSteps = merged.steps;  // keep model/run info per step
+            STATE.mergedRunTime = merged.runTime || null;
+            STATE.mergedLabel = "ICON-D2 + EU";
         } else {
             STATE.timesteps = data.timesteps || [];
+            STATE._mergedSteps = null;
+            STATE.mergedRunTime = null;
+            STATE.mergedLabel = null;
         }
         populateTimeButtons();
-        updateModelInfo(data);
+        updateModelInfo();
+
     } catch (error) {
         console.error('Failed to load timesteps:', error);
         showError('Failed to load timesteps');
@@ -210,7 +239,7 @@ function populateVariableSelect() {
         grouped[group].forEach(v => {
             const option = document.createElement('option');
             option.value = v.name;
-            option.textContent = `${v.name} (${v.unit})`;
+            option.textContent = (v.unit && v.unit !== 'code') ? `${v.name} (${v.unit})` : `${v.name}`;
             optgroup.appendChild(option);
         });
         select.appendChild(optgroup);
@@ -225,37 +254,62 @@ function populateVariableSelect() {
 }
 
 function populateTimeButtons() {
-    const container = document.getElementById('time-buttons');
-    container.innerHTML = '';
+    const timeline = document.getElementById('time-buttons');
+    timeline.innerHTML = '';
+    STATE.dayMeta = [];
 
     let lastDate = null;
+    let lastModel = null;
 
     STATE.timesteps.forEach((ts, index) => {
         const date = new Date(ts);
-        const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-        const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+        const day = String(date.getUTCDate()).padStart(2, '0');
+        const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+        const dateKey = `${day}.${month}.`;
+        const hourStr = String(date.getUTCHours()).padStart(2, '0');
 
-        const slot = document.createElement('div');
-        slot.className = 'time-slot';
-
-        // Add date label if date changed
-        if (dateStr !== lastDate) {
-            const dateLabel = document.createElement('div');
-            dateLabel.className = 'date-label';
-            dateLabel.textContent = dateStr;
-            slot.appendChild(dateLabel);
-            lastDate = dateStr;
+        if (dateKey !== lastDate) {
+            const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+            STATE.dayMeta.push({
+                dateStr: `${dayNames[date.getUTCDay()]} ${dateKey}`,
+                firstIdx: index,
+                noonIdx: null
+            });
+            lastDate = dateKey;
         }
+
+        const curDay = STATE.dayMeta[STATE.dayMeta.length - 1];
+        if (date.getUTCHours() === 12) curDay.noonIdx = index;
 
         const btn = document.createElement('button');
         btn.className = 'hour-btn';
-        btn.textContent = timeStr;
+        btn.textContent = hourStr;
         btn.dataset.time = ts;
-        btn.addEventListener('click', () => selectTime(ts));
+        btn.dataset.index = index;
 
-        slot.appendChild(btn);
-        container.appendChild(slot);
+        if (index === curDay.firstIdx && index > 0) {
+            btn.classList.add('day-start');
+        }
+
+        const stepInfo = STATE._mergedSteps?.[index];
+        if (stepInfo?.model && lastModel && stepInfo.model !== lastModel) {
+            btn.classList.add('model-switch');
+            btn.title = `Model switch: ${lastModel.toUpperCase().replace('_', '-')} → ${stepInfo.model.toUpperCase().replace('_', '-')}`;
+        }
+        lastModel = stepInfo?.model || lastModel;
+
+        btn.addEventListener('click', () => selectTime(ts));
+        timeline.appendChild(btn);
     });
+
+    STATE.dayMeta.forEach((dm, i) => {
+        if (dm.noonIdx === null) {
+            const nextStart = i < STATE.dayMeta.length - 1 ? STATE.dayMeta[i + 1].firstIdx : STATE.timesteps.length;
+            dm.noonIdx = Math.floor((dm.firstIdx + nextStart) / 2);
+        }
+    });
+
+    updateDateStrip();
 
     // Select first timestep
     if (STATE.timesteps.length > 0) {
@@ -264,6 +318,49 @@ function populateTimeButtons() {
 }
 
 // ===== TIME SELECTION =====
+
+function updateDateStrip() {
+    const timeline = document.getElementById('time-buttons');
+    const dateStrip = document.getElementById('date-strip');
+    dateStrip.innerHTML = '';
+
+    const hours = timeline.querySelectorAll('.hour-btn');
+    if (!hours.length || !STATE.dayMeta.length) return;
+
+    const wrapperRect = timeline.parentElement.getBoundingClientRect();
+    const wrapperLeft = wrapperRect.left;
+    const wrapperRight = wrapperRect.right;
+    const wrapperWidth = wrapperRect.width;
+
+    STATE.dayMeta.forEach((dm, i) => {
+        const label = document.createElement('div');
+        label.className = 'date-label';
+        label.textContent = dm.dateStr;
+        dateStrip.appendChild(label);
+
+        const noonEl = hours[dm.noonIdx];
+        const firstEl = hours[dm.firstIdx];
+        const lastIdx = i < STATE.dayMeta.length - 1 ? STATE.dayMeta[i + 1].firstIdx - 1 : hours.length - 1;
+        const lastEl = hours[lastIdx];
+        if (!noonEl || !firstEl || !lastEl) return;
+
+        const noonRect = noonEl.getBoundingClientRect();
+        const firstRect = firstEl.getBoundingClientRect();
+        const lastRect = lastEl.getBoundingClientRect();
+        const labelWidth = label.offsetWidth;
+
+        let idealLeft = noonRect.left + noonRect.width / 2 - wrapperLeft - labelWidth / 2;
+        const minLeft = firstRect.left - wrapperLeft;
+        const maxLeft = lastRect.right - wrapperLeft - labelWidth;
+        let finalLeft = Math.max(0, Math.min(wrapperWidth - labelWidth, Math.max(minLeft, Math.min(maxLeft, idealLeft))));
+
+        if (lastRect.right < wrapperLeft || firstRect.left > wrapperRight) {
+            label.style.display = 'none';
+        } else {
+            label.style.left = `${finalLeft}px`;
+        }
+    });
+}
 
 function selectTime(time) {
     STATE.selectedTime = time;
@@ -278,6 +375,7 @@ function selectTime(time) {
     const activeBtn = document.querySelector('.hour-btn.active');
     if (activeBtn) {
         activeBtn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+        setTimeout(updateDateStrip, 100);
     }
 
     updateModelInfo();
@@ -288,9 +386,40 @@ function stepTime(direction) {
     const currentIndex = STATE.timesteps.indexOf(STATE.selectedTime);
     if (currentIndex === -1) return;
 
-    const newIndex = currentIndex + (direction * STATE.stepSize);
-    if (newIndex >= 0 && newIndex < STATE.timesteps.length) {
-        selectTime(STATE.timesteps[newIndex]);
+    if (STATE.stepSize === 1) {
+        const newIndex = currentIndex + direction;
+        if (newIndex >= 0 && newIndex < STATE.timesteps.length) {
+            selectTime(STATE.timesteps[newIndex]);
+        }
+        return;
+    }
+
+    const currentMs = new Date(STATE.timesteps[currentIndex]).getTime();
+    const targetMs = currentMs + (direction * STATE.stepSize * 3600000);
+    let bestIdx = currentIndex;
+
+    if (direction > 0) {
+        for (let i = currentIndex + 1; i < STATE.timesteps.length; i++) {
+            const t = new Date(STATE.timesteps[i]).getTime();
+            if (t >= targetMs) {
+                bestIdx = i;
+                break;
+            }
+            if (i === STATE.timesteps.length - 1) bestIdx = i;
+        }
+    } else {
+        for (let i = currentIndex - 1; i >= 0; i--) {
+            const t = new Date(STATE.timesteps[i]).getTime();
+            if (t <= targetMs) {
+                bestIdx = i;
+                break;
+            }
+            if (i === 0) bestIdx = i;
+        }
+    }
+
+    if (bestIdx !== currentIndex) {
+        selectTime(STATE.timesteps[bestIdx]);
     }
 }
 
@@ -309,37 +438,39 @@ function updateVariableInfo() {
     }
 }
 
-function updateModelInfo(data) {
-    const infoDiv = document.getElementById('model-info');
-    if (!STATE.selectedTime) {
-        infoDiv.textContent = 'Loading...';
-        return;
-    }
+function formatDateShortUTC(date) {
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const dd = String(date.getUTCDate()).padStart(2, '0');
+    const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const hh = String(date.getUTCHours()).padStart(2, '0');
+    return `${days[date.getUTCDay()]}, ${dd}.${mm}., ${hh} UTC`;
+}
 
-    const validTime = new Date(STATE.selectedTime);
-    const validStr = validTime.toLocaleString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        timeZoneName: 'short'
-    });
+function updateModelInfo() {
+    const modelEl = document.getElementById('model-name');
+    const runEl = document.getElementById('run-time');
+    const validEl = document.getElementById('valid-time');
+    if (!modelEl || !runEl || !validEl) return;
 
-    let modelText = '';
-    if (data && data.merged && data.merged.runTime) {
-        const runTime = new Date(data.merged.runTime);
-        const runStr = runTime.toLocaleString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-        });
-        modelText = `Model: ICON-D2/EU<br>Run: ${runStr}<br>Valid: ${validStr}`;
+    const currentIndex = STATE.timesteps.indexOf(STATE.selectedTime);
+    const currentStep = currentIndex >= 0 ? STATE._mergedSteps?.[currentIndex] : null;
+
+    const model = currentStep?.model
+        ? currentStep.model.toUpperCase().replace('_', '-')
+        : (STATE.mergedLabel || '--');
+    modelEl.textContent = model;
+
+    if (STATE.mergedRunTime) {
+        runEl.textContent = formatDateShortUTC(new Date(STATE.mergedRunTime));
     } else {
-        modelText = `Valid: ${validStr}`;
+        runEl.textContent = 'N/A';
     }
 
-    infoDiv.innerHTML = modelText;
+    if (STATE.selectedTime) {
+        validEl.textContent = formatDateShortUTC(new Date(STATE.selectedTime));
+    } else {
+        validEl.textContent = '--';
+    }
 }
 
 // ===== OVERLAY UPDATE =====
@@ -347,16 +478,20 @@ function updateModelInfo(data) {
 async function updateOverlay() {
     if (!STATE.selectedVariable || !STATE.selectedTime || !STATE.map) return;
 
+    if (!STATE.overlayReady) {
+        STATE.pendingOverlayUpdate = true;
+        return;
+    }
+
     const reqId = ++STATE.overlayRequestSeq;
 
-    // Cancel previous in-flight request
+    // Cancel previous in-flight request (range fetch)
     if (STATE.overlayAbortCtrl) {
         STATE.overlayAbortCtrl.abort();
     }
     STATE.overlayAbortCtrl = new AbortController();
 
     try {
-        // Get map bounds
         const bounds = STATE.map.getBounds();
         const bbox = [
             bounds.getSouth(),
@@ -365,66 +500,73 @@ async function updateOverlay() {
             bounds.getEast()
         ].join(',');
 
-        // Get map width for resolution
-        const width = STATE.map.getSize().x;
-
-        // Build URL
-        const params = new URLSearchParams({
+        // Resolve color range once per viewport so all fetched tiles share one scale
+        // (prevents tile seams and keeps legend/range UI in sync).
+        const rangeParams = new URLSearchParams({
             var: STATE.selectedVariable.name,
             bbox: bbox,
             time: STATE.selectedTime,
-            width: width,
-            palette: STATE.selectedPalette
+            palette: STATE.selectedPalette,
         });
 
-        // Add range if not auto
         if (!STATE.autoRange && STATE.rangeMin !== null && STATE.rangeMax !== null) {
-            params.append('vmin', STATE.rangeMin);
-            params.append('vmax', STATE.rangeMax);
+            rangeParams.append('vmin', STATE.rangeMin);
+            rangeParams.append('vmax', STATE.rangeMax);
         }
 
-        const url = `/api/overlay?${params}`;
+        let effectiveMin = STATE.rangeMin;
+        let effectiveMax = STATE.rangeMax;
 
-        const response = await fetch(url, { signal: STATE.overlayAbortCtrl.signal });
-        if (!response.ok) return;
+        if (STATE.autoRange) {
+            const rangeRes = await fetch(`/api/overlay_range?${rangeParams.toString()}`, {
+                signal: STATE.overlayAbortCtrl.signal
+            });
+            if (!rangeRes.ok) return;
+            const rangeData = await rangeRes.json();
+            effectiveMin = rangeData.vmin;
+            effectiveMax = rangeData.vmax;
 
-        const bboxHeader = response.headers.get('x-bbox');
-        const vminHeader = response.headers.get('x-vmin');
-        const vmaxHeader = response.headers.get('x-vmax');
+            updateLegend(effectiveMin, effectiveMax);
+            const minInput = document.getElementById('range-min');
+            const maxInput = document.getElementById('range-max');
+            if (minInput) minInput.value = Number.isFinite(effectiveMin) ? effectiveMin.toFixed(3) : '';
+            if (maxInput) maxInput.value = Number.isFinite(effectiveMax) ? effectiveMax.toFixed(3) : '';
+        } else {
+            if (Number.isFinite(effectiveMin) && Number.isFinite(effectiveMax)) {
+                updateLegend(effectiveMin, effectiveMax);
+            }
+        }
 
-        const blob = await response.blob();
-
-        // Ignore out-of-order stale responses
+        // Ignore stale async result
         if (reqId !== STATE.overlayRequestSeq) return;
 
-        const imageUrl = URL.createObjectURL(blob);
+        const clientClass = window.innerWidth <= 768 ? 'mobile' : 'desktop';
+        const tileParams = new URLSearchParams({
+            var: STATE.selectedVariable.name,
+            time: STATE.selectedTime,
+            palette: STATE.selectedPalette,
+            clientClass,
+        });
+        if (Number.isFinite(effectiveMin)) tileParams.append('vmin', String(effectiveMin));
+        if (Number.isFinite(effectiveMax)) tileParams.append('vmax', String(effectiveMax));
 
-        // Remove old overlay only when new one is ready
+        const tileUrl = `/api/overlay_tile/{z}/{x}/{y}.png?${tileParams.toString()}`;
+
+        // Replace overlay layer atomically
         if (STATE.overlay) {
             STATE.map.removeLayer(STATE.overlay);
             STATE.overlay = null;
         }
-        if (STATE.overlayObjectUrl) {
-            URL.revokeObjectURL(STATE.overlayObjectUrl);
-            STATE.overlayObjectUrl = null;
-        }
 
-        if (bboxHeader) {
-            const [latMin, lonMin, latMax, lonMax] = bboxHeader.split(',').map(Number);
-            const overlayBounds = [[latMin, lonMin], [latMax, lonMax]];
-
-            STATE.overlayObjectUrl = imageUrl;
-            STATE.overlay = L.imageOverlay(imageUrl, overlayBounds, {
-                opacity: STATE.opacity,
-                interactive: false
-            }).addTo(STATE.map);
-
-            if (vminHeader && vmaxHeader) {
-                updateLegend(parseFloat(vminHeader), parseFloat(vmaxHeader));
-            }
-        } else {
-            URL.revokeObjectURL(imageUrl);
-        }
+        STATE.overlay = L.tileLayer(tileUrl, {
+            tileSize: 256,
+            opacity: STATE.opacity,
+            updateWhenZooming: false,
+            updateWhenIdle: true,
+            keepBuffer: 1,
+            crossOrigin: true,
+            zIndex: 250,
+        }).addTo(STATE.map);
     } catch (error) {
         if (error.name !== 'AbortError') {
             console.error('Failed to update overlay:', error);
@@ -456,6 +598,24 @@ function updateLegendGradient() {
     document.getElementById('legend-gradient').style.background = gradient;
 }
 
+
+function wwInterpretation(code) {
+    if (!Number.isFinite(code)) return null;
+    const ww = Math.round(code);
+    if (ww === 0) return 'None';
+    if (ww >= 1 && ww <= 3) return 'Cloud dev.';
+    if (ww >= 4 && ww <= 9) return 'Haze/smoke/dust';
+    if (ww === 45) return 'Fog';
+    if (ww === 48) return 'Rime fog';
+    if (ww >= 50 && ww <= 59) return 'Drizzle';
+    if (ww >= 60 && ww <= 69) return 'Rain / freezing';
+    if (ww >= 70 && ww <= 79) return 'Snow';
+    if (ww >= 80 && ww <= 84) return 'Rain showers';
+    if (ww >= 85 && ww <= 86) return 'Snow showers';
+    if (ww >= 95 && ww <= 99) return 'Thunderstorm';
+    return 'Other';
+}
+
 // ===== MAP CLICK HANDLER =====
 
 async function handleMapClick(e) {
@@ -483,11 +643,33 @@ function showPointPopup(latlng, values) {
     const selected = STATE.selectedVariable;
     if (!selected) return;
 
-    // Keep popup concise and synced to current selected variable.
     const value = values[selected.name];
-    const valueText = (value === null || value === undefined)
-        ? 'n/a'
-        : `${Number(value).toFixed(2)} ${selected.unit}`;
+
+    function formatValue(v, variable) {
+        if (v === null || v === undefined || Number.isNaN(Number(v))) return 'n/a';
+        const n = Number(v);
+        const unit = variable.unit || '';
+
+        let digits = 1;
+        if (variable.name === 'ww' || unit === 'code' || unit === 'index') digits = 0;
+        else if (unit === 'm' || unit === 'Pa' || unit === '%') digits = 0;
+        else if (unit === 'K') digits = 1;
+        else if (unit === 'm/s' || unit === 'J/kg') digits = 1;
+
+        const valueStr = digits === 0 ? String(Math.round(n)) : n.toFixed(digits);
+        if (variable.name === 'ww' || unit === 'code') return valueStr;
+        return unit ? `${valueStr} ${unit}` : valueStr;
+    }
+
+    const valueText = formatValue(value, selected);
+
+    let extra = '';
+    if (selected.name === 'ww' && value !== null && value !== undefined) {
+        const wwText = wwInterpretation(Number(value));
+        if (wwText) {
+            extra = `<div class="popup-meta"><strong>WW:</strong> ${wwText}</div>`;
+        }
+    }
 
     const html = `
         <div class="popup-group">
@@ -497,6 +679,7 @@ function showPointPopup(latlng, values) {
                 <span class="popup-var-value">${valueText}</span>
             </div>
             <div class="popup-meta">${selected.desc || ''}</div>
+            ${extra}
         </div>
     `;
 

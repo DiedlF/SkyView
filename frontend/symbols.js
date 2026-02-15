@@ -92,6 +92,17 @@ function createSymbolIcon(type, cloudBase) {
   const hasLabel = cloudBase != null && cloudBase > 0;
   const totalHeight = hasLabel ? SYM_SIZE + LABEL_OFFSET : SYM_SIZE;
 
+  // Clear sky: blank but clickable hit area
+  if (type === 'clear') {
+    return L.divIcon({
+      // Very large transparent hit area to avoid unclickable gaps in the grid.
+      html: `<div style="width:36px;height:36px;background:transparent;"></div>`,
+      className: 'weather-symbol clear-symbol',
+      iconSize: [36, 36],
+      iconAnchor: [18, 18],
+    });
+  }
+
   // Check if it's a cloud type symbol
   const cloud = CLOUD_SYMBOLS[type];
   if (cloud) {
@@ -105,7 +116,8 @@ function createSymbolIcon(type, cloudBase) {
       html: html,
       className: 'weather-symbol',
       iconSize: [SYM_SIZE, totalHeight],
-      iconAnchor: [SYM_SIZE / 2, totalHeight / 2],
+      // Georeference to symbol center (ignore lower label extension)
+      iconAnchor: [SYM_SIZE / 2, SYM_SIZE / 2],
     });
   }
 
@@ -120,7 +132,8 @@ function createSymbolIcon(type, cloudBase) {
       html: html,
       className: 'weather-symbol',
       iconSize: [SYM_SIZE, totalHeight],
-      iconAnchor: [SYM_SIZE / 2, totalHeight / 2],
+      // Georeference to symbol center (ignore lower label extension)
+      iconAnchor: [SYM_SIZE / 2, SYM_SIZE / 2],
     });
   }
 

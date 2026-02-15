@@ -1,4 +1,5 @@
 data/icon-d2/
 data/icon-eu/
 data/tmp/
-
+backend/logs/
+backend/logs/skyview.log

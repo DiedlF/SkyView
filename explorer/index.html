@@ -11,14 +11,9 @@
           crossorigin=""/>
     
     <!-- Custom CSS -->
-    <link rel="stylesheet" href="style.css?v=1">
+    <link rel="stylesheet" href="style.css?v=6">
 </head>
 <body>
-    <!-- Info Bar (top-right) -->
-    <div id="info-bar">
-        <div id="model-info">Loading...</div>
-    </div>
-
     <!-- Sidebar Toggle (mobile) -->
     <button id="sidebar-toggle" class="mobile-only">☰</button>
 
@@ -96,17 +91,26 @@
 
     <!-- Time Controls (bottom) -->
     <div id="time-controls">
-        <div class="time-header">
-            <button id="step-back" class="time-nav-btn">◀</button>
+        <div id="time-toolbar">
+            <button id="step-back">◀</button>
             <div id="step-selector">
                 <button class="step-btn active" data-step="1">1h</button>
                 <button class="step-btn" data-step="3">3h</button>
                 <button class="step-btn" data-step="6">6h</button>
             </div>
-            <button id="step-forward" class="time-nav-btn">▶</button>
+            <button id="step-forward">▶</button>
+            <span id="utc-label">UTC</span>
         </div>
-        <div id="time-scroll-container">
-            <div id="time-buttons"></div>
+        <div id="timeline-wrapper">
+            <div id="date-strip"></div>
+            <div id="time-buttons" class="timeline"></div>
+        </div>
+        <div id="info-bar">
+            <span><span class="info-label">Model:</span> <span id="model-name">--</span></span>
+            <span class="info-sep">·</span>
+            <span><span class="info-label">Run:</span> <span id="run-time">Loading...</span></span>
+            <span class="info-sep">·</span>
+            <span><span class="info-label">Valid:</span> <span id="valid-time">--</span></span>
         </div>
     </div>
 
@@ -116,6 +120,6 @@
             crossorigin=""></script>
     
     <!-- App JS -->
-    <script src="app.js?v=2"></script>
+    <script src="app.js?v=11"></script>
 </body>
 </html>

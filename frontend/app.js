@@ -9,73 +9,25 @@ let windEnabled = false;
 let windLevel = '10m';
 let modelCapabilities = {};  // Store model capabilities from API
 
-// Legend definitions for each overlay
+// Legend definitions for each effective backend overlay layer
 const LEGEND_CONFIGS = {
-  total_precip: {
-    title: 'Total Precipitation',
-    gradient: 'linear-gradient(to right, rgb(150,255,255), rgb(100,200,255), rgb(50,150,255), rgb(0,100,255))',
-    labels: ['0.1 mm/h', '5+ mm/h']
-  },
-  rain: {
-    title: 'Rain',
-    gradient: 'linear-gradient(to right, rgb(180,220,255), rgb(100,160,230), rgb(20,60,180))',
-    labels: ['0.1 mm/h', '5+ mm/h']
-  },
-  snow: {
-    title: 'Snow',
-    gradient: 'linear-gradient(to right, rgb(255,200,255), rgb(210,120,230), rgb(120,40,160))',
-    labels: ['0.1 mm/h', '5+ mm/h']
-  },
-  hail: {
-    title: 'Hail/Graupel',
-    gradient: 'linear-gradient(to right, rgb(200,160,20), rgb(240,100,30), rgb(255,80,20))',
-    labels: ['0.1 mm/h', '5+ mm/h']
-  },
-  sigwx: {
-    title: 'Significant Weather',
-    gradient: 'linear-gradient(to right, rgb(180,150,0), rgb(100,200,100), rgb(0,170,0), rgb(160,120,255), rgb(220,0,50))',
-    labels: ['Fog', 'Drizzle', 'Rain', 'Snow', 'T-Storm']
-  },
-  clouds: {
-    title: 'Cloud Cover',
-    gradient: 'linear-gradient(to right, rgb(140,140,140), rgb(40,40,40))',
-    labels: ['5%', '100%']
-  },
-  thermals: {
-    title: 'Thermal Activity (CAPE)',
-    gradient: 'linear-gradient(to right, rgb(50,180,50), rgb(150,150,50), rgb(220,100,30), rgb(255,50,50))',
-    labels: ['10 J/kg', '2000+ J/kg']
-  },
-  ceiling: {
-    title: 'Ceiling Height',
-    gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))',
-    labels: ['0m', '9900m']
-  },
-  cloud_base: {
-    title: 'Cloud Base (SC)',
-    gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))',
-    labels: ['0m', '5000m']
-  },
-  wstar: {
-    title: 'Thermal Strength (W*)',
-    gradient: 'linear-gradient(to right, rgb(50,200,50), rgb(180,200,50), rgb(220,150,30), rgb(255,50,50))',
-    labels: ['0.2 m/s', '5+ m/s']
-  },
-  climb_rate: {
-    title: 'Climb Rate',
-    gradient: 'linear-gradient(to right, rgb(50,200,50), rgb(180,200,50), rgb(220,150,30), rgb(255,50,50))',
-    labels: ['0 m/s', '5 m/s']
-  },
-  lcl: {
-    title: 'Cloud Base (LCL) MSL',
-    gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))',
-    labels: ['0m', '5000m MSL']
-  },
-  reachable: {
-    title: 'Reachable Distance (L/D 40)',
-    gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,180,50), rgb(80,240,80))',
-    labels: ['0 km', '200 km']
-  }
+  total_precip: { title: 'Precipitation: Total', gradient: 'linear-gradient(to right, rgb(150,255,255), rgb(100,200,255), rgb(50,150,255), rgb(0,100,255))', labels: ['0.1 mm/h', '5+ mm/h'] },
+  rain: { title: 'Precipitation: Rain', gradient: 'linear-gradient(to right, rgb(180,220,255), rgb(100,160,230), rgb(20,60,180))', labels: ['0.1 mm/h', '5+ mm/h'] },
+  snow: { title: 'Precipitation: Snow', gradient: 'linear-gradient(to right, rgb(255,200,255), rgb(210,120,230), rgb(120,40,160))', labels: ['0.1 mm/h', '5+ mm/h'] },
+  hail: { title: 'Precipitation: Hail/Graupel', gradient: 'linear-gradient(to right, rgb(200,160,20), rgb(240,100,30), rgb(255,80,20))', labels: ['0.1 mm/h', '5+ mm/h'] },
+  clouds_low: { title: 'Cloud Cover: Low', gradient: 'linear-gradient(to right, rgb(225,225,225), rgb(45,45,45))', labels: ['1%', '100%'] },
+  clouds_mid: { title: 'Cloud Cover: Mid', gradient: 'linear-gradient(to right, rgb(225,225,225), rgb(45,45,45))', labels: ['1%', '100%'] },
+  clouds_high: { title: 'Cloud Cover: High', gradient: 'linear-gradient(to right, rgb(225,225,225), rgb(45,45,45))', labels: ['1%', '100%'] },
+  clouds_total: { title: 'Cloud Cover: Total', gradient: 'linear-gradient(to right, rgb(225,225,225), rgb(45,45,45))', labels: ['1%', '100%'] },
+  clouds_total_mod: { title: 'Cloud Cover: Total_mod', gradient: 'linear-gradient(to right, rgb(225,225,225), rgb(45,45,45))', labels: ['1%', '100%'] },
+  dry_conv_top: { title: 'Dry Convection Top', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '9900m'] },
+  sigwx: { title: 'Significant weather', gradient: 'linear-gradient(to right, rgba(0,0,0,0), rgb(205,205,205), rgb(145,145,145), rgb(85,85,85), rgb(160,170,40), rgb(70,180,80), rgb(70,180,210), rgb(145,110,230), rgb(220,40,80))', labels: ['ww0 clear', 'ww severe'] },
+  ceiling: { title: 'Ceiling', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '9900m'] },
+  cloud_base: { title: 'Cloud base (convective)', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '5000m'] },
+  conv_thickness: { title: 'Cloud thickness (convective)', gradient: 'linear-gradient(to right, rgb(40,220,60), rgb(200,200,40), rgb(240,80,40))', labels: ['0m', '6000m'] },
+  thermals: { title: 'CAPE_ml', gradient: 'linear-gradient(to right, rgb(50,180,50), rgb(150,150,50), rgb(220,100,30), rgb(255,50,50))', labels: ['50 J/kg', '1000+ J/kg'] },
+  climb_rate: { title: 'Climb Rate', gradient: 'linear-gradient(to right, rgb(50,200,50), rgb(180,200,50), rgb(220,150,30), rgb(255,50,50))', labels: ['0 m/s', '5 m/s'] },
+  lcl: { title: 'Cloud Base (LCL) MSL', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '5000m MSL'] }
 };
 
 // Initialize map
@@ -227,8 +179,7 @@ async function loadSymbols() {
       const data = await res.json();
       symbolLayer.clearLayers();
       data.symbols.forEach(sym => {
-        // Clear sky remains an internal symbol state but is rendered as blank/non-clickable.
-        if (!sym.clickable || sym.type === 'clear') return;
+        if (!sym.clickable) return;
 
         const icon = createSymbolIcon(sym.type, sym.cloudBase);
         const marker = L.marker([sym.lat, sym.lon], {
@@ -239,7 +190,7 @@ async function loadSymbols() {
           const curStep = timesteps[currentTimeIndex];
           const curTime = curStep?.validTime || time;
           const curModel = curStep?.model || null;
-          loadPoint(sym.clickLat ?? sym.lat, sym.clickLon ?? sym.lon, curTime, curModel);
+          loadPoint(sym.clickLat ?? sym.lat, sym.clickLon ?? sym.lon, curTime, curModel, windLevel, map.getZoom());
         });
       });
       
@@ -271,15 +222,18 @@ const OVERLAY_FORMAT = {
   snow:         (v) => v != null ? `Snow: ${v} mm/h` : null,
   hail:         (v) => v != null ? `Hail/Graupel: ${v} mm/h` : null,
   sigwx:        (v) => v != null ? `Sig. Weather: ww ${v}` : null,
-  clouds:       (v) => v != null ? `Cloud cover: ${v}%` : null,
-  thermals:     (v) => v != null ? `CAPE: ${v} J/kg` : null,
+  clouds_low:   (v) => v != null ? `Cloud cover low: ${v}%` : null,
+  clouds_mid:   (v) => v != null ? `Cloud cover mid: ${v}%` : null,
+  clouds_high:  (v) => v != null ? `Cloud cover high: ${v}%` : null,
+  clouds_total: (v) => v != null ? `Cloud cover total: ${v}%` : null,
+  clouds_total_mod: (v) => v != null ? `Cloud cover total_mod: ${v}%` : null,
   ceiling:      (v) => v != null ? `Ceiling: ${Math.round(v)} m` : null,
-  cloud_base:   (v) => v != null ? `Cloud base (SC): ${Math.round(v)} m` : null,
-  wind:         (v) => v != null ? `Wind: ${v} kt` : null,
-  wstar:        (v) => v != null ? `W*: ${v} m/s` : null,
+  cloud_base:   (v) => v != null ? `Cloud base (wet): ${Math.round(v)} m` : null,
+  dry_conv_top: (v) => v != null ? `Dry convection top: ${Math.round(v)} m` : null,
+  conv_thickness: (v) => v != null ? `Convective thickness: ${Math.round(v)} m` : null,
+  thermals:     (v) => v != null ? `CAPE_ml: ${v} J/kg` : null,
   climb_rate:   (v) => v != null ? `Climb: ${v} m/s` : null,
   lcl:          (v) => v != null ? `Cloud base (LCL): ${Math.round(v)} m MSL` : null,
-  reachable:    (v) => v != null ? `Reachable: ${v} km` : null,
 };
 
 // Symbol type display names
@@ -300,12 +254,21 @@ const SYMBOL_NAMES = {
   thunderstorm: 'Thunderstorm', thunderstorm_hail: 'Thunderstorm (hail)',
 };
 
+function degToCompass(deg) {
+  if (deg == null || Number.isNaN(deg)) return null;
+  const dirs = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+  const idx = Math.round((((deg % 360) + 360) % 360) / 22.5) % 16;
+  return dirs[idx];
+}
+
 // Load point details
-async function loadPoint(lat, lon, time, model) {
+async function loadPoint(lat, lon, time, model, windLvl = '10m', zoom = null) {
   try {
     if (!time) time = 'latest';
     const modelParam = model ? `&model=${model}` : '';
-    const res = await fetch(`/api/point?lat=${lat}&lon=${lon}&time=${encodeURIComponent(time)}${modelParam}`);
+    const windParam = windLvl ? `&wind_level=${encodeURIComponent(windLvl)}` : '';
+    const zoomParam = (zoom != null) ? `&zoom=${encodeURIComponent(zoom)}` : '';
+    const res = await fetch(`/api/point?lat=${lat}&lon=${lon}&time=${encodeURIComponent(time)}${modelParam}${windParam}${zoomParam}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
 
@@ -313,11 +276,25 @@ async function loadPoint(lat, lon, time, model) {
     let lines = [`<b>${symbolName}</b>`];
 
     // Show active overlay value if an overlay is selected
-    if (currentOverlay !== 'none' && data.overlay_values) {
-      const fmt = OVERLAY_FORMAT[currentOverlay];
+    const overlayKey = getEffectiveOverlayLayer();
+    if (overlayKey !== 'none' && data.overlay_values) {
+      const fmt = OVERLAY_FORMAT[overlayKey];
       if (fmt) {
-        const formatted = fmt(data.overlay_values[currentOverlay]);
+        const formatted = fmt(data.overlay_values[overlayKey]);
         if (formatted) lines.push(formatted);
+      }
+    }
+
+    // Wind info in tooltip (only when wind layer is enabled)
+    if (windEnabled && data.overlay_values && data.overlay_values.wind_speed != null) {
+      const kt = Number(data.overlay_values.wind_speed);
+      const kmh = kt * 1.852;
+      const dir = Number(data.overlay_values.wind_dir);
+      const windText = `Wind: ${Math.round(kmh)} km/h (${Math.round(kt)} kt)`;
+      if (Number.isFinite(dir)) {
+        lines.push(`${windText}, ${Math.round(dir)}°`);
+      } else {
+        lines.push(windText);
       }
     }
 
@@ -349,6 +326,22 @@ function getOverlayParams() {
   return { bbox, width };
 }
 
+function getEffectiveOverlayLayer() {
+  if (currentOverlay === 'precip') {
+    return document.getElementById('precip-type')?.value || 'total_precip';
+  }
+  if (currentOverlay === 'clouds') {
+    return document.getElementById('clouds-type')?.value || 'clouds_total';
+  }
+  return currentOverlay;
+}
+
+function overlayOpacityForLayer(layer) {
+  if (layer && layer.startsWith('clouds_')) return 0.9;
+  if (layer === 'sigwx') return 0.85;
+  return 0.6;
+}
+
 async function loadOverlay() {
   clearTimeout(overlayDebounce);
   overlayDebounce = setTimeout(async () => {
@@ -373,41 +366,43 @@ async function loadOverlay() {
 
     if (currentOverlay === 'none') return;
 
+    const effectiveOverlay = getEffectiveOverlayLayer();
+    if (!effectiveOverlay || effectiveOverlay === 'none') return;
+
     const time = timesteps[currentTimeIndex]?.validTime || '';
 
     try {
       const overlayStep = timesteps[currentTimeIndex];
-      const overlayModelParam = overlayStep && overlayStep.model ? `&model=${overlayStep.model}` : '';
-      const { bbox: oBbox, width: oWidth } = getOverlayParams();
-      const url = `/api/overlay?layer=${currentOverlay}&bbox=${oBbox}&time=${encodeURIComponent(time)}&width=${oWidth}${overlayModelParam}`;
+      const clientClass = window.innerWidth <= 768 ? 'mobile' : 'desktop';
 
-      const overlayRes = await fetch(url, { signal: overlayAbortCtrl.signal });
-      if (!overlayRes.ok) throw new Error(`Overlay HTTP ${overlayRes.status}`);
-      const clampedBbox = overlayRes.headers.get('X-Bbox');
-      const blob = await overlayRes.blob();
+      const params = new URLSearchParams({
+        layer: effectiveOverlay,
+        time,
+        clientClass,
+      });
+      if (overlayStep && overlayStep.model) params.append('model', overlayStep.model);
 
       // Ignore stale responses that arrive out of order
       if (reqId !== overlayRequestSeq) return;
 
-      overlayObjectUrl = URL.createObjectURL(blob);
+      const tileUrl = `/api/overlay_tile/{z}/{x}/{y}.png?${params.toString()}`;
+      overlayLayer = L.tileLayer(tileUrl, {
+        tileSize: 256,
+        opacity: overlayOpacityForLayer(effectiveOverlay),
+        updateWhenZooming: false,
+        updateWhenIdle: true,
+        keepBuffer: 1,
+        crossOrigin: true,
+        zIndex: 250,
+      }).addTo(map);
 
-      let bounds;
-      if (clampedBbox) {
-        const [cLatMin, cLonMin, cLatMax, cLonMax] = clampedBbox.split(',').map(Number);
-        bounds = [[cLatMin, cLonMin], [cLatMax, cLonMax]];
-      } else {
-        const fb = map.getBounds();
-        bounds = [[fb.getSouth(), fb.getWest()], [fb.getNorth(), fb.getEast()]];
-      }
-
-      overlayLayer = L.imageOverlay(overlayObjectUrl, bounds, { opacity: 0.6, interactive: false }).addTo(map);
       if (symbolLayer) symbolLayer.bringToFront();
     } catch (e) {
       if (e.name !== 'AbortError') {
         console.error('Overlay error:', e);
       }
     }
-  }, 400);
+  }, 220);
 }
 
 // Load wind barbs
@@ -448,13 +443,14 @@ async function loadWind() {
 // Update legend display
 function updateLegend() {
   const legendEl = document.getElementById('legend');
-  
-  if (currentOverlay === 'none' || !LEGEND_CONFIGS[currentOverlay]) {
+  const effectiveOverlay = getEffectiveOverlayLayer();
+
+  if (effectiveOverlay === 'none' || !LEGEND_CONFIGS[effectiveOverlay]) {
     legendEl.style.display = 'none';
     return;
   }
-  
-  const config = LEGEND_CONFIGS[currentOverlay];
+
+  const config = LEGEND_CONFIGS[effectiveOverlay];
   legendEl.innerHTML = `
     <div class="legend-title">${config.title}</div>
     <div class="legend-gradient" style="background: ${config.gradient};"></div>
@@ -491,6 +487,8 @@ document.getElementById('layer-wind').addEventListener('change', (e) => {
     loadWind();
   } else {
     map.removeLayer(windLayer);
+    // Remove stale tooltip content that may include wind info
+    map.closePopup();
   }
 });
 
@@ -507,12 +505,44 @@ document.querySelectorAll('input[name="overlay"]').forEach(radio => {
   });
 });
 
+const precipType = document.getElementById('precip-type');
+if (precipType) {
+  precipType.addEventListener('change', () => {
+    if (currentOverlay === 'precip') {
+      updateLegend();
+      loadOverlay();
+    }
+  });
+}
+
+const cloudsType = document.getElementById('clouds-type');
+if (cloudsType) {
+  cloudsType.addEventListener('change', () => {
+    if (currentOverlay === 'clouds') {
+      updateLegend();
+      loadOverlay();
+    }
+  });
+}
+
 // Event listeners
 // Overlay uses fixed extent — only refresh symbols on pan/zoom
-map.on('moveend zoomend', () => { loadSymbols(); loadWind(); loadOverlay(); });
+map.on('moveend zoomend', () => { loadSymbols(); loadWind(); });
 
 // Don't clear symbols on zoomstart - causes issues on mobile pinch-zoom
 // The debounced loadSymbols() will clear and reload on zoomend
+
+// Enable click tooltip when convection is hidden but wind is active
+map.on('click', (e) => {
+  const convectionOn = document.getElementById('layer-convection')?.checked;
+  if (convectionOn) return;
+  if (!windEnabled) return;
+
+  const curStep = timesteps[currentTimeIndex];
+  const curTime = curStep?.validTime || 'latest';
+  const curModel = curStep?.model || null;
+  loadPoint(e.latlng.lat, e.latlng.lng, curTime, curModel, windLevel, map.getZoom());
+});
 
 // Timeline controls
 const timeline = document.getElementById('timeline');
@@ -734,7 +764,7 @@ function openFeedback() {
   if (step) ctx.push(`Time: ${step.validTime}`);
   if (step?.model) ctx.push(`Model: ${step.model.toUpperCase().replace('_','-')}`);
   ctx.push(`Zoom: ${map.getZoom()}`);
-  if (currentOverlay !== 'none') ctx.push(`Overlay: ${currentOverlay}`);
+  if (currentOverlay !== 'none') ctx.push(`Overlay: ${getEffectiveOverlayLayer()}`);
   if (windEnabled) ctx.push(`Wind: ${windLevel}`);
   feedbackContext.textContent = ctx.length ? 'Context: ' + ctx.join(' · ') : '';
   setTimeout(() => feedbackText.focus(), 100);
@@ -766,7 +796,7 @@ async function submitFeedback() {
       run: currentRun,
       zoom: map.getZoom(),
       center: [map.getCenter().lat, map.getCenter().lng],
-      overlay: currentOverlay,
+      overlay: getEffectiveOverlayLayer(),
       windEnabled: windEnabled,
       windLevel: windEnabled ? windLevel : null,
     },

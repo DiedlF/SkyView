@@ -5,9 +5,11 @@ import os
 import sys
 import io
 import math
+import time
 import numpy as np
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
+from collections import OrderedDict
 
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +19,7 @@ import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend
 import matplotlib.pyplot as plt
 from matplotlib import cm
+from PIL import Image
 
 app = FastAPI(title="ICON-Explorer API")
 
@@ -33,14 +36,79 @@ EXPLORER_DIR = SCRIPT_DIR
 
 data_cache: Dict[str, Dict[str, Any]] = {}
 
+# Small in-memory LRU caches for rendered overlay tiles (split by client class)
+TILE_CACHE_MAX_ITEMS_DESKTOP = 1400
+TILE_CACHE_MAX_ITEMS_MOBILE = 700
+TILE_CACHE_TTL_SECONDS = 900  # periodic age-based pruning
+
+# key -> (png_bytes, stored_at_epoch)
+tile_cache_desktop = OrderedDict()
+tile_cache_mobile = OrderedDict()
+
+# basic cache metrics
+cache_stats = {
+    'hits': 0,
+    'misses': 0,
+    'evictions': 0,
+    'expired': 0,
+}
+
+def _cache_for_class(client_class: str):
+    if client_class == 'mobile':
+        return tile_cache_mobile, TILE_CACHE_MAX_ITEMS_MOBILE
+    return tile_cache_desktop, TILE_CACHE_MAX_ITEMS_DESKTOP
+
+def _tile_cache_prune(client_class: str):
+    cache, max_items = _cache_for_class(client_class)
+    now = time.time()
+
+    # Age pruning (front of OrderedDict is oldest)
+    while cache:
+        _, (_, ts) = next(iter(cache.items()))
+        if (now - ts) <= TILE_CACHE_TTL_SECONDS:
+            break
+        cache.popitem(last=False)
+        cache_stats['expired'] += 1
+
+    # Size pruning
+    while len(cache) > max_items:
+        cache.popitem(last=False)
+        cache_stats['evictions'] += 1
+
+def _tile_cache_get(client_class: str, key: str):
+    cache, _ = _cache_for_class(client_class)
+    _tile_cache_prune(client_class)
+
+    item = cache.get(key)
+    if item is None:
+        cache_stats['misses'] += 1
+        return None
+
+    png_bytes, ts = item
+    if (time.time() - ts) > TILE_CACHE_TTL_SECONDS:
+        del cache[key]
+        cache_stats['expired'] += 1
+        cache_stats['misses'] += 1
+        return None
+
+    cache.move_to_end(key)
+    cache_stats['hits'] += 1
+    return png_bytes
+
+def _tile_cache_set(client_class: str, key: str, png_bytes: bytes):
+    cache, _ = _cache_for_class(client_class)
+    cache[key] = (png_bytes, time.time())
+    cache.move_to_end(key)
+    _tile_cache_prune(client_class)
+
 # ─── Variable Metadata ───
 
 VARIABLE_METADATA = {
     # Aviation group
-    "ww": {"group": "aviation", "unit": "code", "desc": "Significant weather code"},
+    "ww": {"group": "aviation", "unit": "code", "desc": "Significant weather"},
     "cape_ml": {"group": "aviation", "unit": "J/kg", "desc": "Mixed-layer CAPE"},
     "cin_ml": {"group": "aviation", "unit": "J/kg", "desc": "Mixed-layer CIN"},
-    "htop_dc": {"group": "aviation", "unit": "m", "desc": "Convective cloud top height"},
+    "htop_dc": {"group": "aviation", "unit": "m", "desc": "Dry convection top height"},
     "hbas_sc": {"group": "aviation", "unit": "m", "desc": "Shallow convection cloud base"},
     "htop_sc": {"group": "aviation", "unit": "m", "desc": "Shallow convection cloud top"},
     "lpi": {"group": "aviation", "unit": "J/kg", "desc": "Lightning potential index"},
@@ -372,6 +440,8 @@ async def api_overlay(
         raise HTTPException(400, f"Invalid palette. Valid: {valid_palettes}")
     
     # Load data
+    client_class = 'mobile' if clientClass == 'mobile' else 'desktop'
+
     run, step, model_used = resolve_time(time, model)
     d = load_data(run, step, model_used, keys=[var])
     
@@ -391,13 +461,13 @@ async def api_overlay(
     data_arr = _slice_array(d[var], li, lo)
     
     # Compute actual bbox (cell edges)
-    lat_res = float(lat[1] - lat[0]) if len(lat) > 1 else 0.02
-    lon_res = float(lon[1] - lon[0]) if len(lon) > 1 else 0.02
-    actual_lat_min = float(c_lat[0]) - lat_res / 2
-    actual_lat_max = float(c_lat[-1]) + lat_res / 2
-    actual_lon_min = float(c_lon[0]) - lon_res / 2
-    actual_lon_max = float(c_lon[-1]) + lon_res / 2
-    
+    lat_res = abs(float(lat[1] - lat[0])) if len(lat) > 1 else 0.02
+    lon_res = abs(float(lon[1] - lon[0])) if len(lon) > 1 else 0.02
+    actual_lat_min = float(np.min(c_lat)) - lat_res / 2
+    actual_lat_max = float(np.max(c_lat)) + lat_res / 2
+    actual_lon_min = float(np.min(c_lon)) - lon_res / 2
+    actual_lon_max = float(np.max(c_lon)) + lon_res / 2
+
     # Auto-range if vmin/vmax not provided
     if vmin is None or vmax is None:
         valid_data = data_arr[~np.isnan(data_arr)]
@@ -407,37 +477,79 @@ async def api_overlay(
             vmin = float(np.min(valid_data))
         if vmax is None:
             vmax = float(np.max(valid_data))
-    
-    # Compute output dimensions preserving aspect ratio
-    aspect = (actual_lon_max - actual_lon_min) / (actual_lat_max - actual_lat_min)
+
+    # Reproject rows from regular latitude spacing to regular Web-Mercator spacing.
+    # Leaflet image overlays are drawn in EPSG:3857 space; if we render the raster
+    # in geographic row spacing, it appears to drift/stretch during zoom/pan.
+    lat_src = np.asarray(c_lat, dtype=np.float64)
+    data_src = np.asarray(data_arr, dtype=np.float64)
+
+    # Ensure south->north ordering for interpolation
+    if lat_src[0] > lat_src[-1]:
+        lat_src = lat_src[::-1]
+        data_src = data_src[::-1, :]
+
+    def merc_y(lat_deg: np.ndarray) -> np.ndarray:
+        lat_clamped = np.clip(lat_deg, -85.05112878, 85.05112878)
+        lat_rad = np.deg2rad(lat_clamped)
+        return np.log(np.tan(np.pi / 4.0 + lat_rad / 2.0))
+
+    y_src = merc_y(lat_src)
+    y_min = float(merc_y(np.array([actual_lat_min]))[0])
+    y_max = float(merc_y(np.array([actual_lat_max]))[0])
+
+    # Keep row count; remap rows to equal spacing in Web-Mercator Y.
+    target_rows = max(2, data_src.shape[0])
+    y_tgt = np.linspace(y_min, y_max, target_rows)
+    nearest_idx = np.searchsorted(y_src, y_tgt)
+    nearest_idx = np.clip(nearest_idx, 0, len(y_src) - 1)
+    left_idx = np.clip(nearest_idx - 1, 0, len(y_src) - 1)
+    choose_left = np.abs(y_tgt - y_src[left_idx]) <= np.abs(y_tgt - y_src[nearest_idx])
+    row_idx = np.where(choose_left, left_idx, nearest_idx)
+    data_merc = data_src[row_idx, :]
+
+    # Compute output dimensions in Web-Mercator aspect ratio
+    x_min = math.radians(actual_lon_min)
+    x_max = math.radians(actual_lon_max)
+    x_span = max(1e-9, x_max - x_min)
+    y_span = max(1e-9, y_max - y_min)
+    aspect = x_span / y_span
     out_w = width
     out_h = max(1, int(out_w / aspect))
-    
+
     # Create matplotlib figure with exact pixel dimensions
     dpi = 100
     fig, ax = plt.subplots(figsize=(out_w/dpi, out_h/dpi), dpi=dpi)
     ax.set_position([0, 0, 1, 1])  # Fill entire figure
     ax.axis('off')
-    
-    # Render with colormap (origin='lower' for correct orientation)
+
+    # Render with colormap (origin='lower' keeps north at top in final PNG)
     cmap = cm.get_cmap(palette)
     cmap.set_bad(alpha=0)  # Transparent for NaN
-    
-    im = ax.imshow(
-        data_arr,
+
+    ax.imshow(
+        data_merc,
         cmap=cmap,
         vmin=vmin,
         vmax=vmax,
-        extent=[actual_lon_min, actual_lon_max, actual_lat_min, actual_lat_max],
         origin='lower',
         interpolation='nearest',
         aspect='auto'
     )
     
     # Save to bytes
+    # IMPORTANT: avoid bbox_inches='tight' here, because it can crop/resize by
+    # sub-pixel amounts and cause geographic misalignment (overlay appears to
+    # drift relative to basemap during zoom/pan).
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=dpi, bbox_inches='tight', 
-                pad_inches=0, transparent=True)
+    fig.savefig(
+        buf,
+        format='png',
+        dpi=dpi,
+        bbox_inches=None,
+        pad_inches=0,
+        transparent=True,
+    )
     plt.close(fig)
     buf.seek(0)
     
@@ -493,6 +605,208 @@ async def api_point(
         "model": model_used,
         "values": values
     }
+
+
+# ─── Tiled overlay endpoints (Web-Mercator aligned) ───
+
+def _tile_bounds_3857(z: int, x: int, y: int):
+    """Return Web-Mercator bounds (meters): (minx, miny, maxx, maxy)."""
+    origin = 20037508.342789244
+    world = origin * 2.0
+    tile_size = world / (2 ** z)
+    minx = -origin + x * tile_size
+    maxx = minx + tile_size
+    maxy = origin - y * tile_size
+    miny = maxy - tile_size
+    return minx, miny, maxx, maxy
+
+
+def _merc_to_lonlat(mx, my):
+    """Vectorized EPSG:3857 meters -> lon/lat degrees."""
+    lon = (mx / 20037508.342789244) * 180.0
+    lat = np.degrees(2.0 * np.arctan(np.exp(my / 6378137.0)) - np.pi / 2.0)
+    return lon, lat
+
+
+def _regular_grid_indices(vals: np.ndarray, q: np.ndarray) -> np.ndarray:
+    """Fast nearest-index lookup for regular 1D grids (asc or desc)."""
+    if len(vals) < 2:
+        return np.zeros_like(q, dtype=np.int32)
+    step = float(vals[1] - vals[0])
+    if step == 0:
+        return np.zeros_like(q, dtype=np.int32)
+    idx = np.rint((q - float(vals[0])) / step).astype(np.int32)
+    return np.clip(idx, 0, len(vals) - 1)
+
+
+@app.get('/api/overlay_range')
+async def api_overlay_range(
+    var: str = Query(..., description='Variable name'),
+    bbox: str = Query('43.18,-3.94,58.08,20.34', description='lat_min,lon_min,lat_max,lon_max'),
+    time: str = Query('latest', description='ISO time or latest'),
+    model: Optional[str] = Query(None, description='icon_d2 or icon_eu'),
+):
+    """Compute vmin/vmax for current viewport (used to keep tile colors consistent)."""
+    if var not in VARIABLE_METADATA:
+        raise HTTPException(400, f'Unknown variable: {var}')
+
+    parts = bbox.split(',')
+    if len(parts) != 4:
+        raise HTTPException(400, 'bbox format: lat_min,lon_min,lat_max,lon_max')
+    lat_min, lon_min, lat_max, lon_max = map(float, parts)
+
+    run, step, model_used = resolve_time(time, model)
+    d = load_data(run, step, model_used, keys=[var])
+    lat = d['lat']
+    lon = d['lon']
+
+    li, lo = _bbox_indices(lat, lon, lat_min, lon_min, lat_max, lon_max)
+    if len(li) == 0 or len(lo) == 0:
+        raise HTTPException(404, 'No data in bbox')
+
+    data_arr = _slice_array(d[var], li, lo)
+    valid = data_arr[~np.isnan(data_arr)]
+    if len(valid) == 0:
+        raise HTTPException(404, 'No valid data in bbox')
+
+    return {
+        'vmin': float(np.min(valid)),
+        'vmax': float(np.max(valid)),
+        'run': run,
+        'model': model_used,
+        'validTime': d['validTime'],
+    }
+
+
+@app.get('/api/overlay_tile/{z}/{x}/{y}.png')
+async def api_overlay_tile(
+    z: int,
+    x: int,
+    y: int,
+    var: str = Query(..., description='Variable name'),
+    time: str = Query('latest', description='ISO time or latest'),
+    model: Optional[str] = Query(None, description='icon_d2 or icon_eu'),
+    palette: str = Query('viridis', description='Colormap name'),
+    vmin: Optional[float] = Query(None, description='Fixed min value for color scale'),
+    vmax: Optional[float] = Query(None, description='Fixed max value for color scale'),
+    clientClass: str = Query('desktop', description='desktop or mobile'),
+):
+    """Render one 256x256 Web-Mercator tile for overlay variable."""
+    if var not in VARIABLE_METADATA:
+        raise HTTPException(400, f'Unknown variable: {var}')
+
+    valid_palettes = ['viridis', 'plasma', 'inferno', 'magma', 'coolwarm',
+                      'RdBu_r', 'Blues', 'Greens', 'Reds', 'YlOrRd']
+    if palette not in valid_palettes:
+        raise HTTPException(400, f'Invalid palette. Valid: {valid_palettes}')
+
+    client_class = 'mobile' if clientClass == 'mobile' else 'desktop'
+
+    run, step, model_used = resolve_time(time, model)
+    d = load_data(run, step, model_used, keys=[var])
+    arr = d[var]
+    lat = d['lat']
+    lon = d['lon']
+
+    # Tile-level cache key (must include full rendering state)
+    cache_key = f"{client_class}|{model_used}|{run}|{step}|{var}|{palette}|{vmin}|{vmax}|{z}|{x}|{y}"
+    cached_png = _tile_cache_get(client_class, cache_key)
+    if cached_png is not None:
+        return Response(
+            content=cached_png,
+            media_type='image/png',
+            headers={
+                'Cache-Control': 'public, max-age=300',
+                'X-Run': run,
+                'X-ValidTime': d['validTime'],
+                'X-Model': model_used,
+                'X-Cache': 'HIT',
+                'Access-Control-Expose-Headers': 'X-Run, X-ValidTime, X-Model, X-Cache',
+            }
+        )
+
+    # Tile bounds in lon/lat
+    minx, miny, maxx, maxy = _tile_bounds_3857(z, x, y)
+    lon0, lat0 = _merc_to_lonlat(minx, miny)
+    lon1, lat1 = _merc_to_lonlat(maxx, maxy)
+    lon_min, lon_max = (min(lon0, lon1), max(lon0, lon1))
+    lat_min, lat_max = (min(lat0, lat1), max(lat0, lat1))
+
+    # Skip tiles outside data extent quickly
+    data_lat_min, data_lat_max = float(np.min(lat)), float(np.max(lat))
+    data_lon_min, data_lon_max = float(np.min(lon)), float(np.max(lon))
+    if lat_max < data_lat_min or lat_min > data_lat_max or lon_max < data_lon_min or lon_min > data_lon_max:
+        empty = Image.new('RGBA', (256, 256), (0, 0, 0, 0))
+        buf = io.BytesIO(); empty.save(buf, format='PNG', optimize=True); buf.seek(0)
+        return Response(content=buf.getvalue(), media_type='image/png', headers={'Cache-Control': 'public, max-age=300'})
+
+    # Build pixel-center coordinates in Web-Mercator then convert to lon/lat
+    xs = np.linspace(minx, maxx, 256, endpoint=False) + (maxx - minx) / 512.0
+    ys = np.linspace(maxy, miny, 256, endpoint=False) - (maxy - miny) / 512.0  # north->south
+    mx, my = np.meshgrid(xs, ys)
+    qlon, qlat = _merc_to_lonlat(mx, my)
+
+    # Mask outside data extent
+    inside = (
+        (qlat >= data_lat_min) & (qlat <= data_lat_max) &
+        (qlon >= data_lon_min) & (qlon <= data_lon_max)
+    )
+
+    # Resolve scale if not provided
+    if vmin is None or vmax is None:
+        # derive from tile intersection for reasonable fallback
+        li, lo = _bbox_indices(lat, lon, lat_min, lon_min, lat_max, lon_max)
+        if len(li) == 0 or len(lo) == 0:
+            empty = Image.new('RGBA', (256, 256), (0, 0, 0, 0))
+            buf = io.BytesIO(); empty.save(buf, format='PNG', optimize=True); buf.seek(0)
+            return Response(content=buf.getvalue(), media_type='image/png', headers={'Cache-Control': 'public, max-age=300'})
+        local = _slice_array(arr, li, lo)
+        valid = local[~np.isnan(local)]
+        if len(valid) == 0:
+            empty = Image.new('RGBA', (256, 256), (0, 0, 0, 0))
+            buf = io.BytesIO(); empty.save(buf, format='PNG', optimize=True); buf.seek(0)
+            return Response(content=buf.getvalue(), media_type='image/png', headers={'Cache-Control': 'public, max-age=300'})
+        if vmin is None:
+            vmin = float(np.min(valid))
+        if vmax is None:
+            vmax = float(np.max(valid))
+
+    # Nearest-neighbor sample from source grid
+    lat_idx = _regular_grid_indices(lat, qlat)
+    lon_idx = _regular_grid_indices(lon, qlon)
+    sampled = arr[lat_idx, lon_idx]
+
+    # Apply mask + NaN handling
+    valid_mask = inside & np.isfinite(sampled)
+
+    # Colormap to RGBA
+    norm = np.clip((sampled - vmin) / (vmax - vmin + 1e-12), 0.0, 1.0)
+    cmap = cm.get_cmap(palette)
+    rgba = (cmap(norm) * 255).astype(np.uint8)  # (H,W,4)
+
+    # Transparent where invalid
+    rgba[..., 3] = np.where(valid_mask, 255, 0).astype(np.uint8)
+
+    img = Image.fromarray(rgba, mode='RGBA')
+    buf = io.BytesIO()
+    img.save(buf, format='PNG', optimize=True)
+    buf.seek(0)
+
+    png_bytes = buf.getvalue()
+    _tile_cache_set(client_class, cache_key, png_bytes)
+
+    return Response(
+        content=png_bytes,
+        media_type='image/png',
+        headers={
+            'Cache-Control': 'public, max-age=300',
+            'X-Run': run,
+            'X-ValidTime': d['validTime'],
+            'X-Model': model_used,
+            'X-Cache': 'MISS',
+            'Access-Control-Expose-Headers': 'X-Run, X-ValidTime, X-Model, X-Cache',
+        }
+    )
 
 
 @app.get("/api/timeseries")
@@ -589,6 +903,23 @@ async def health():
     """Health check endpoint."""
     runs = get_available_runs()
     return {"status": "ok", "runs": len(runs), "cache": len(data_cache)}
+
+
+@app.get("/api/cache_stats")
+async def api_cache_stats():
+    """Overlay tile cache stats for debugging/perf tuning."""
+    _tile_cache_prune('desktop')
+    _tile_cache_prune('mobile')
+    return {
+        "tileCache": {
+            "desktopItems": len(tile_cache_desktop),
+            "desktopMax": TILE_CACHE_MAX_ITEMS_DESKTOP,
+            "mobileItems": len(tile_cache_mobile),
+            "mobileMax": TILE_CACHE_MAX_ITEMS_MOBILE,
+            "ttlSeconds": TILE_CACHE_TTL_SECONDS,
+        },
+        "metrics": cache_stats,
+    }
 
 
 # ─── Static Files (serve explorer frontend) ───

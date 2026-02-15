@@ -20,10 +20,11 @@ This directory contains research notes, implementation guides, and reference mat
 
 - **PRECIPITATION_VARIABLES.md** — Details on precipitation data variables (rain, snow, graupel rates) and how they differ between ICON-D2 and ICON-EU.
 
-### Prototype & Proof-of-Concept
-- **ICON-D2_prototype_build.md** — Build report from early prototype (Feb 2026) that rendered 13 convection-related layers into a single interactive HTML map. This was the foundation that proved the concept before building the full Skyview app.
+### Planning & Improvements
+- **IMPROVEMENT_IDEAS_SUMMARY.md** — Consolidated roadmap and phased implementation plan.
 
-- **ICON-D2_prototype_visualization.md** — Summary of the first successful ICON-D2 visualization. Documents the initial map overlay with convection height data, including real data statistics and rendering techniques.
+### Archive
+- Historical/superseded docs are in `archive/` (prototype reports, completed fix summaries, and superseded plans).
 
 ---
 
@@ -35,7 +36,7 @@ This directory contains research notes, implementation guides, and reference mat
 4. **Optimization:** `DATA_PIPELINE_RESEARCH.md` — Why we poll every 10 minutes
 5. **Details:** `PRECIPITATION_VARIABLES.md` — Specific variable handling
 
-The prototype docs (`ICON-D2_prototype_*`) are historical — useful for understanding the evolution but not required reading.
+Prototype/fix-history docs are archived under `archive/` — useful for archaeology, not required for current development.
 
 ---
 

@@ -1,7 +1,7 @@
 # Skyview TODO List (Consolidated)
 
-**Last updated:** 2026-02-15 11:00 UTC  
-**Status:** ✅ Core complete, actively iterating on quality and productization
+**Last updated:** 2026-02-15 22:45 UTC  
+**Status:** ✅ Core product works; now focus is robustness, consolidation, and scalable feature delivery.
 
 ---
 
@@ -9,70 +9,61 @@
 
 - ICON-D2 + ICON-EU ingestion with automatic handover
 - Fast polling ingest (<10 min latency)
-- Multi-model API + Explorer app foundation
-- Full basemap/overlay stack (precip, ww, cloud cover, thermals, ceiling/cloud base)
-- Wind barbs (multi-altitude), timeline UX, mobile support
-- Feedback modal + backend storage
-- Major map alignment and rendering bug fixes
+- Multi-model timeline + API
+- Skyview core map + overlays + wind + timeline + mobile
+- Explorer raw-data app foundation
+- Major symbol/overlay logic iteration (classification, clickability, gridding)
 - Logging + docs consolidation
 
 ---
 
-## 🚀 Open Tasks (Alphabetic Task Groups)
+## 🚀 Open Tasks (Consolidated)
 
-### **A. Core Reliability & Interaction (P0)**
-- [ ] Fix click-info failures at later timesteps ("Error loading details")
-- [ ] Restrict clicks to valid symbol locations only
-- [ ] Ensure popup shows exactly: clicked symbol values + active overlay values
-- [ ] Eliminate occasional stale overlay persistence when switching layers
+### A. QA & Hardening (P0)
+- [ ] Full regression pass via `docs/TESTING_CHECKLIST.md`
+- [ ] Add automated integration checks for known fragile cases:
+  - [ ] z12 symbol continuity around Geitau / border panning
+  - [ ] D2↔EU transition continuity (symbols/overlays/tooltips)
+  - [ ] CAPE threshold rendering (50+ only) and tooltip value parity
+  - [ ] Wind tooltip parity with selected wind level + zoom aggregation
+- [ ] Eliminate multi-process/restart ambiguity (single-instance startup guard)
 
-### **B. Symbol & Weather Logic (P0/P1)**
-- [ ] Rework cloud classification per SPEC strategy:
-  - no convection: dominant cloud layer type (low→St, mid→Ac, high→Ci)
-  - with convection: detect blue thermals (dry convection top logic), classify Cu/Cb via vertical extent + CAPE
-  - if convection exists but no `htop_dc`: default to Cu
-- [ ] Ensure every map grid point has a symbol state (blank for clear sky), clickable where symbol exists
-- [ ] Revisit and improve significant-weather (ww) prioritization logic
-- [ ] Improve zoom-dependent symbol gridding:
-  - high zoom: center symbols in data cells
-  - lower zoom: progressive aggregation
-  - preserve worst ww where ww > 10
-  - cloud-only aggregation: use defined altitude/type fallback rules
+### B. Backend Refactor & API Convergence (P0/P1)
+- [ ] Split `backend/app.py` into modules (symbols, overlays, point, cache, colormaps)
+- [ ] Define unified Explorer/Skyview backend contract (timesteps, point schema, overlay metadata)
+- [ ] Remove duplicated variable/format logic between Explorer and Skyview
 
-### **C. Overlay Semantics & Visuals (P1)**
-- [ ] Sig weather overlay: distinct colors for all ww classes, retain grouped palette feel, ww < 10 in gray tones
-- [ ] Cloud cover overlay: use color gradient only (no opacity-based encoding)
+### C. Performance & Scalability (P1)
+- [ ] Add tile prewarm for current viewport (+ ring) on layer/time switch
+- [ ] Strengthen cache strategy (run/step-aware invalidation + memory bounds)
+- [ ] Add reverse-proxy tile caching option (Nginx/Caddy)
+- [ ] Profile and vectorize any remaining expensive non-vectorized rendering paths
 
-### **D. Explorer App Stabilization & Parity (P1)**
-- [ ] Fix explorer overlay reload behavior on zoom/pan
-- [ ] Fix explorer click tooltip stale/multiple values when variable changes
-- [ ] Phase 2b parity: copy key Skyview UX patterns (time selector, control placement, cleaner map chrome)
-- [ ] Phase 3: generalize and combine Explorer/Skyview backend APIs
+### D. Observability & Ops (P1)
+- [ ] Add `/api/status` endpoint aggregating:
+  - ingest freshness
+  - current runs/models
+  - cache stats
+  - perf stats
+  - recent error counters
+- [ ] Add correlation/error IDs for frontend-visible failures
+- [ ] Add lightweight frontend health indicator for repeated tile/API failures
 
-### **E. Product Features (P2)**
-- [ ] Airspace structure overlay (OpenAir data, e.g., soaringweb)
+### E. Product Features (P2)
+- [ ] Airspace structure overlay (OpenAir)
 - [ ] Persistent per-user custom location markers + recommendations
 - [ ] Feedback notifications (Telegram/email)
 - [ ] Feedback/log admin view (simple web UI)
 
-### **F. Delivery & Project Ops (P2)**
+### F. Delivery & Project Ops (P2)
 - [ ] Push repository to GitHub
+- [ ] Add CI pipeline (lint, type/style checks, smoke tests)
 
 ---
 
-## 🧪 QA Gate (applies before/after A–D)
+## 🧭 Implementation Plan Reference
 
-Use `docs/TESTING_CHECKLIST.md` as the execution checklist for:
-- Overlay lock under zoom/pan
-- D2↔EU transition stability
-- Symbol/overlay consistency at click points
-- Regression checks (timeline, symbols, controls, auto-refresh)
-
----
-
-## Deferred / Historical (not active backlog)
-
-Older unchecked TODOs in prototype/research docs are considered historical unless explicitly promoted back into groups A–F.
+See: `docs/IMPLEMENTATION_PLAN.md`
 
 ---
 **Created:** 2026-02-09
