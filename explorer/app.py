@@ -6,15 +6,18 @@ import sys
 import io
 import math
 import time
+import atexit
+import uuid
+import logging
 import numpy as np
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 from collections import OrderedDict
 
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import StreamingResponse, Response, JSONResponse
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend
 import matplotlib.pyplot as plt
@@ -23,6 +26,8 @@ from PIL import Image
 
 app = FastAPI(title="ICON-Explorer API")
 
+logger = logging.getLogger("explorer")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -30,11 +35,76 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    rid = getattr(request.state, "request_id", None) or uuid.uuid4().hex[:12]
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail, "requestId": rid}, headers={"X-Request-Id": rid})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    rid = getattr(request.state, "request_id", None) or uuid.uuid4().hex[:12]
+    logger.exception(f"Unhandled explorer error rid={rid}: {exc}")
+    return JSONResponse(status_code=500, content={"detail": "Internal server error", "requestId": rid}, headers={"X-Request-Id": rid})
+
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    rid = request.headers.get("X-Request-Id") or uuid.uuid4().hex[:12]
+    request.state.request_id = rid
+    response = await call_next(request)
+    response.headers["X-Request-Id"] = rid
+    return response
+
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(SCRIPT_DIR, "..", "data")
 EXPLORER_DIR = SCRIPT_DIR
+PID_FILE = os.path.join(SCRIPT_DIR, "logs", "explorer.pid")
+
+# Shared helpers (keeps API alias + point normalization in one place)
+sys.path.insert(0, os.path.join(SCRIPT_DIR, "..", "backend"))
+from api_contract import resolve_layer_alias as _resolve_layer_alias
+from point_data import build_overlay_values_from_raw
+from time_contract import get_available_runs as tc_get_available_runs, get_merged_timeline as tc_get_merged_timeline, resolve_time as tc_resolve_time
+from grid_utils import bbox_indices as _bbox_indices, slice_array as _slice_array
+from response_headers import build_overlay_headers, build_tile_headers
+from model_caps import get_models_payload
 
 data_cache: Dict[str, Dict[str, Any]] = {}
+
+
+def _acquire_single_instance_or_exit(pid_file: str):
+    """Simple PID-file guard to prevent accidental multi-process launches."""
+    os.makedirs(os.path.dirname(pid_file), exist_ok=True)
+
+    if os.path.exists(pid_file):
+        try:
+            with open(pid_file, "r") as f:
+                old_pid = int(f.read().strip())
+            if old_pid > 0:
+                os.kill(old_pid, 0)
+                raise SystemExit(f"Explorer backend already running with pid {old_pid} (pid file: {pid_file})")
+        except ProcessLookupError:
+            pass
+        except ValueError:
+            pass
+
+    with open(pid_file, "w") as f:
+        f.write(str(os.getpid()))
+
+    def _cleanup_pid_file():
+        try:
+            if os.path.exists(pid_file):
+                with open(pid_file, "r") as pf:
+                    cur = pf.read().strip()
+                if cur == str(os.getpid()):
+                    os.remove(pid_file)
+        except Exception:
+            pass
+
+    atexit.register(_cleanup_pid_file)
 
 # Small in-memory LRU caches for rendered overlay tiles (split by client class)
 TILE_CACHE_MAX_ITEMS_DESKTOP = 1400
@@ -180,6 +250,8 @@ VARIABLE_METADATA = {
     "v_300hpa": {"group": "wind", "unit": "m/s", "desc": "300 hPa V wind"},
 }
 
+# layer alias resolver imported from backend/api_contract.py
+
 # ─── Data Loading Helpers ───
 
 def load_data(run: str, step: int, model: str, keys: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -219,148 +291,15 @@ def load_data(run: str, step: int, model: str, keys: Optional[List[str]] = None)
 
 
 def get_available_runs():
-    """Scan data/icon-d2 and data/icon-eu dirs for available runs and steps."""
-    runs = []
-    for model_dir in ["icon-d2", "icon-eu"]:
-        model_path = os.path.join(DATA_DIR, model_dir)
-        if not os.path.isdir(model_path):
-            continue
-        model_type = model_dir.replace("-", "_")
-        for d in sorted(os.listdir(model_path), reverse=True):
-            run_path = os.path.join(model_path, d)
-            if not os.path.isdir(run_path):
-                continue
-            try:
-                run_dt = datetime.strptime(d, "%Y%m%d%H")
-            except ValueError:
-                continue
-            npz_files = sorted([f for f in os.listdir(run_path) if f.endswith(".npz")])
-            steps = []
-            for f in npz_files:
-                try:
-                    step = int(f[:-4])
-                    vt = run_dt + timedelta(hours=step)
-                    steps.append({"step": step, "validTime": vt.isoformat() + "Z"})
-                except ValueError:
-                    continue
-            if steps:
-                runs.append({"run": d, "model": model_type, "runTime": run_dt.isoformat() + "Z", "steps": steps})
-    runs.sort(key=lambda x: x["runTime"], reverse=True)
-    return runs
+    return tc_get_available_runs(DATA_DIR)
 
 
 def get_merged_timeline():
-    """Build a unified timeline: ICON-D2 for first 48h, ICON-EU for 49-120h."""
-    runs = get_available_runs()
-    if not runs:
-        return None
-    
-    d2_complete = next((r for r in runs if r["model"] == "icon_d2" and len(r["steps"]) >= 48), None)
-    d2_any = next((r for r in runs if r["model"] == "icon_d2"), None)
-    d2_run = d2_complete or d2_any
-    eu_run = next((r for r in runs if r["model"] == "icon_eu"), None)
-    
-    if not d2_run and not eu_run:
-        return None
-    
-    primary = d2_run or eu_run
-    
-    merged_steps = []
-    d2_last_valid = None
-    
-    if d2_run:
-        for s in d2_run["steps"]:
-            merged_steps.append({**s, "model": "icon_d2", "run": d2_run["run"]})
-            if d2_last_valid is None or s["validTime"] > d2_last_valid:
-                d2_last_valid = s["validTime"]
-    
-    if eu_run and d2_last_valid:
-        for s in eu_run["steps"]:
-            if s["validTime"] > d2_last_valid:
-                merged_steps.append({**s, "model": "icon_eu", "run": eu_run["run"]})
-    elif eu_run and not d2_run:
-        for s in eu_run["steps"]:
-            merged_steps.append({**s, "model": "icon_eu", "run": eu_run["run"]})
-    
-    merged_steps.sort(key=lambda x: x["validTime"])
-    
-    return {
-        "run": primary["run"],
-        "runTime": primary["runTime"],
-        "model": primary["model"],
-        "steps": merged_steps,
-        "d2Run": d2_run["run"] if d2_run else None,
-        "euRun": eu_run["run"] if eu_run else None,
-    }
+    return tc_get_merged_timeline(DATA_DIR)
 
 
 def resolve_time(time_str: str, model: Optional[str] = None) -> tuple[str, int, str]:
-    """Resolve time string to (run, step, model)."""
-    runs = get_available_runs()
-    if not runs:
-        raise HTTPException(404, "No data available")
-
-    if time_str == "latest":
-        d2_runs = [r for r in runs if r["model"] == "icon_d2"]
-        if d2_runs:
-            return d2_runs[0]["run"], d2_runs[0]["steps"][-1]["step"], "icon_d2"
-        eu_runs = [r for r in runs if r["model"] == "icon_eu"]
-        if eu_runs:
-            return eu_runs[0]["run"], eu_runs[0]["steps"][-1]["step"], "icon_eu"
-        return runs[0]["run"], runs[0]["steps"][-1]["step"], runs[0]["model"]
-
-    try:
-        target = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
-    except ValueError:
-        raise HTTPException(400, "Invalid time format")
-    if target.tzinfo is None:
-        target = target.replace(tzinfo=timezone.utc)
-
-    now = datetime.now(timezone.utc)
-    lead_hours = max(0, (target - now).total_seconds() / 3600.0)
-
-    candidates = runs
-    if model is None:
-        pref_model = "icon_d2" if lead_hours <= 48 else "icon_eu"
-        candidates = [r for r in runs if r["model"] == pref_model]
-    else:
-        candidates = [r for r in runs if r["model"] == model]
-
-    if not candidates:
-        candidates = runs
-
-    best_dist = float("inf")
-    best_run = best_step = best_model = None
-    for r in candidates:
-        run_dt = datetime.fromisoformat(r["runTime"].replace("Z", "+00:00"))
-        for s in r["steps"]:
-            vt = datetime.fromisoformat(s["validTime"].replace("Z", "+00:00"))
-            dist = abs((vt - target).total_seconds())
-            if dist < best_dist:
-                best_dist = dist
-                best_run = r["run"]
-                best_step = s["step"]
-                best_model = r["model"]
-    if best_run is None:
-        raise HTTPException(404, "No matching timestep")
-    return best_run, best_step, best_model
-
-
-def _bbox_indices(lat, lon, lat_min, lon_min, lat_max, lon_max):
-    """Return (lat_indices, lon_indices) for points within the bbox."""
-    eps = 0.001
-    lat_mask = (lat >= lat_min - eps) & (lat <= lat_max + eps)
-    lon_mask = (lon >= lon_min - eps) & (lon <= lon_max + eps)
-    li = np.where(lat_mask)[0]
-    lo = np.where(lon_mask)[0]
-    if len(li) == 0 or len(lo) == 0:
-        return np.array([], dtype=int), np.array([], dtype=int)
-    return li, lo
-
-
-def _slice_array(arr, li, lo):
-    """Slice a 2D array by lat/lon index arrays."""
-    return arr[np.ix_(li, lo)]
+    return tc_resolve_time(DATA_DIR, time_str, model)
 
 
 # ─── API Endpoints ───
@@ -404,6 +343,12 @@ async def api_variables():
     return {"variables": variables}
 
 
+@app.get("/api/models")
+async def api_models():
+    """Compatibility endpoint with Skyview model metadata."""
+    return get_models_payload()
+
+
 @app.get("/api/timesteps")
 async def api_timesteps():
     """Return available runs and timesteps."""
@@ -413,7 +358,8 @@ async def api_timesteps():
 
 @app.get("/api/overlay")
 async def api_overlay(
-    var: str = Query(..., description="Variable name"),
+    var: Optional[str] = Query(None, description="Variable name"),
+    layer: Optional[str] = Query(None, description="Skyview-compatible layer alias"),
     bbox: str = Query("43.18,-3.94,58.08,20.34", description="lat_min,lon_min,lat_max,lon_max"),
     time: str = Query("latest", description="ISO time or 'latest'"),
     model: Optional[str] = Query(None, description="icon_d2 or icon_eu"),
@@ -423,6 +369,13 @@ async def api_overlay(
     vmax: Optional[float] = Query(None, description="Max value for color scale"),
 ):
     """Render a variable as a color-mapped PNG overlay."""
+    # Skyview-compat alias support
+    if var is None and layer is not None:
+        var = _resolve_layer_alias(layer)
+
+    if var is None:
+        raise HTTPException(400, "Missing required query param: var (or layer alias)")
+
     # Validate variable
     if var not in VARIABLE_METADATA:
         raise HTTPException(400, f"Unknown variable: {var}")
@@ -440,8 +393,6 @@ async def api_overlay(
         raise HTTPException(400, f"Invalid palette. Valid: {valid_palettes}")
     
     # Load data
-    client_class = 'mobile' if clientClass == 'mobile' else 'desktop'
-
     run, step, model_used = resolve_time(time, model)
     d = load_data(run, step, model_used, keys=[var])
     
@@ -556,17 +507,17 @@ async def api_overlay(
     return StreamingResponse(
         buf,
         media_type="image/png",
-        headers={
-            "Cache-Control": "public, max-age=300",
-            "X-Bbox": f"{actual_lat_min},{actual_lon_min},{actual_lat_max},{actual_lon_max}",
-            "X-Run": run,
-            "X-ValidTime": d["validTime"],
-            "X-Model": model_used,
-            "X-VMin": str(vmin),
-            "X-VMax": str(vmax),
-            "Access-Control-Expose-Headers": "X-Bbox, X-Run, X-ValidTime, X-Model, X-VMin, X-VMax",
-        }
+        headers=build_overlay_headers(
+            run=run,
+            valid_time=d["validTime"],
+            model=model_used,
+            bbox=f"{actual_lat_min},{actual_lon_min},{actual_lat_max},{actual_lon_max}",
+            extra={"X-VMin": str(vmin), "X-VMax": str(vmax)},
+        ),
     )
+
+
+
 
 
 @app.get("/api/point")
@@ -575,6 +526,7 @@ async def api_point(
     lon: float = Query(..., description="Longitude"),
     time: str = Query("latest", description="ISO time or 'latest'"),
     model: Optional[str] = Query(None, description="icon_d2 or icon_eu"),
+    wind_level: str = Query("10m", description="10m or pressure level (950/850/700/500/300)"),
 ):
     """Return all variable values at a specific point for a given timestep."""
     # Load all data for this timestep
@@ -597,13 +549,16 @@ async def api_point(
                 val = float(arr[lat_idx, lon_idx])
                 values[var_name] = None if np.isnan(val) else round(val, 3)
     
+    overlay_values = build_overlay_values_from_raw(values, wind_level=wind_level)
+
     return {
         "lat": round(float(lat_arr[lat_idx]), 4),
         "lon": round(float(lon_arr[lon_idx]), 4),
         "validTime": d["validTime"],
         "run": run,
         "model": model_used,
-        "values": values
+        "values": values,
+        "overlay_values": overlay_values,
     }
 
 
@@ -683,7 +638,8 @@ async def api_overlay_tile(
     z: int,
     x: int,
     y: int,
-    var: str = Query(..., description='Variable name'),
+    var: Optional[str] = Query(None, description='Variable name'),
+    layer: Optional[str] = Query(None, description='Skyview-compatible layer alias'),
     time: str = Query('latest', description='ISO time or latest'),
     model: Optional[str] = Query(None, description='icon_d2 or icon_eu'),
     palette: str = Query('viridis', description='Colormap name'),
@@ -692,6 +648,10 @@ async def api_overlay_tile(
     clientClass: str = Query('desktop', description='desktop or mobile'),
 ):
     """Render one 256x256 Web-Mercator tile for overlay variable."""
+    if var is None and layer is not None:
+        var = _resolve_layer_alias(layer)
+    if var is None:
+        raise HTTPException(400, 'Missing required query param: var (or layer alias)')
     if var not in VARIABLE_METADATA:
         raise HTTPException(400, f'Unknown variable: {var}')
 
@@ -715,14 +675,12 @@ async def api_overlay_tile(
         return Response(
             content=cached_png,
             media_type='image/png',
-            headers={
-                'Cache-Control': 'public, max-age=300',
-                'X-Run': run,
-                'X-ValidTime': d['validTime'],
-                'X-Model': model_used,
-                'X-Cache': 'HIT',
-                'Access-Control-Expose-Headers': 'X-Run, X-ValidTime, X-Model, X-Cache',
-            }
+            headers=build_tile_headers(
+                run=run,
+                valid_time=d['validTime'],
+                model=model_used,
+                cache='HIT',
+            ),
         )
 
     # Tile bounds in lon/lat
@@ -798,14 +756,12 @@ async def api_overlay_tile(
     return Response(
         content=png_bytes,
         media_type='image/png',
-        headers={
-            'Cache-Control': 'public, max-age=300',
-            'X-Run': run,
-            'X-ValidTime': d['validTime'],
-            'X-Model': model_used,
-            'X-Cache': 'MISS',
-            'Access-Control-Expose-Headers': 'X-Run, X-ValidTime, X-Model, X-Cache',
-        }
+        headers=build_tile_headers(
+            run=run,
+            valid_time=d['validTime'],
+            model=model_used,
+            cache='MISS',
+        ),
     )
 
 
@@ -929,5 +885,6 @@ if os.path.isdir(EXPLORER_DIR):
 
 
 if __name__ == "__main__":
+    _acquire_single_instance_or_exit(PID_FILE)
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8502)

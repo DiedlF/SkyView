@@ -3,11 +3,75 @@
 let map, symbolLayer, windLayer, overlayLayer = null, debounceTimer, overlayDebounce, windDebounce, timesteps = [], currentTimeIndex = 0, currentRun = '';
 let overlayRequestSeq = 0;
 let overlayAbortCtrl = null;
+let overlayPrewarmCtrl = null;
 let overlayObjectUrl = null;
 let currentOverlay = 'none';
 let windEnabled = false;
 let windLevel = '10m';
 let modelCapabilities = {};  // Store model capabilities from API
+
+let apiFailureStreak = 0;
+let healthBadgeEl = null;
+
+function ensureHealthBadge() {
+  if (healthBadgeEl) return healthBadgeEl;
+  const el = document.createElement('div');
+  el.id = 'api-health-indicator';
+  el.style.position = 'fixed';
+  el.style.top = '10px';
+  el.style.right = '10px';
+  el.style.zIndex = '2000';
+  el.style.padding = '6px 10px';
+  el.style.borderRadius = '8px';
+  el.style.fontSize = '12px';
+  el.style.background = 'rgba(200,50,50,0.9)';
+  el.style.color = '#fff';
+  el.style.display = 'none';
+  document.body.appendChild(el);
+  healthBadgeEl = el;
+  return el;
+}
+
+function updateHealthIndicator() {
+  const el = ensureHealthBadge();
+  if (apiFailureStreak >= 3) {
+    el.textContent = `Data degraded (${apiFailureStreak} failures)`;
+    el.style.display = 'block';
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+function markApiSuccess() {
+  if (apiFailureStreak !== 0) {
+    apiFailureStreak = 0;
+    updateHealthIndicator();
+  }
+}
+
+function markApiFailure(context, err) {
+  apiFailureStreak += 1;
+  updateHealthIndicator();
+  if (err && err.requestId) {
+    console.error(`${context} failed (requestId=${err.requestId})`, err);
+  }
+}
+
+async function throwHttpError(res, context = 'request') {
+  let detail = `HTTP ${res.status}`;
+  let requestId = res.headers.get('X-Request-Id') || null;
+  try {
+    const j = await res.json();
+    if (j && j.detail) detail = j.detail;
+    if (j && j.requestId) requestId = j.requestId;
+  } catch (_e) {
+    // ignore non-JSON body
+  }
+  const err = new Error(`${context}: ${detail}`);
+  err.status = res.status;
+  err.requestId = requestId;
+  throw err;
+}
 
 // Legend definitions for each effective backend overlay layer
 const LEGEND_CONFIGS = {
@@ -93,6 +157,7 @@ async function loadModelCapabilities() {
     const res = await fetch('/api/models');
     if (!res.ok) throw new Error('Failed to fetch model info');
     const data = await res.json();
+    markApiSuccess();
     
     // Index by model name
     data.models.forEach(m => {
@@ -100,6 +165,7 @@ async function loadModelCapabilities() {
     });
   } catch (e) {
     console.error('Error loading model capabilities:', e);
+    markApiFailure('model capabilities', e);
     // Fallback: assume ICON-D2 capabilities
     modelCapabilities = {
       'icon_d2': {
@@ -151,8 +217,10 @@ async function loadTimesteps() {
     
     buildTimeline();
     loadSymbols();
+    markApiSuccess();
   } catch (e) {
     console.error('Error loading timesteps:', e);
+    markApiFailure('timesteps', e);
     document.getElementById('run-time').textContent = 'N/A';
   }
 }
@@ -175,8 +243,9 @@ async function loadSymbols() {
       const step = timesteps[currentTimeIndex];
       const modelParam = step && step.model ? `&model=${step.model}` : '';
       const res = await fetch(`/api/symbols?bbox=${bbox}&zoom=${zoom}&time=${encodeURIComponent(time)}${modelParam}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) await throwHttpError(res, 'API');
       const data = await res.json();
+      markApiSuccess();
       symbolLayer.clearLayers();
       data.symbols.forEach(sym => {
         if (!sym.clickable) return;
@@ -209,32 +278,46 @@ async function loadSymbols() {
       }
     } catch (e) {
       console.error('Error loading symbols:', e);
+      markApiFailure('symbols', e);
       // Optionally show error in UI
       symbolLayer.clearLayers();
     }
   }, 300);
 }
 
-// Overlay value formatting
-const OVERLAY_FORMAT = {
-  total_precip: (v) => v != null ? `Total precip: ${v} mm/h` : null,
-  rain:         (v) => v != null ? `Rain: ${v} mm/h` : null,
-  snow:         (v) => v != null ? `Snow: ${v} mm/h` : null,
-  hail:         (v) => v != null ? `Hail/Graupel: ${v} mm/h` : null,
-  sigwx:        (v) => v != null ? `Sig. Weather: ww ${v}` : null,
-  clouds_low:   (v) => v != null ? `Cloud cover low: ${v}%` : null,
-  clouds_mid:   (v) => v != null ? `Cloud cover mid: ${v}%` : null,
-  clouds_high:  (v) => v != null ? `Cloud cover high: ${v}%` : null,
-  clouds_total: (v) => v != null ? `Cloud cover total: ${v}%` : null,
-  clouds_total_mod: (v) => v != null ? `Cloud cover total_mod: ${v}%` : null,
-  ceiling:      (v) => v != null ? `Ceiling: ${Math.round(v)} m` : null,
-  cloud_base:   (v) => v != null ? `Cloud base (wet): ${Math.round(v)} m` : null,
-  dry_conv_top: (v) => v != null ? `Dry convection top: ${Math.round(v)} m` : null,
-  conv_thickness: (v) => v != null ? `Convective thickness: ${Math.round(v)} m` : null,
-  thermals:     (v) => v != null ? `CAPE_ml: ${v} J/kg` : null,
-  climb_rate:   (v) => v != null ? `Climb: ${v} m/s` : null,
-  lcl:          (v) => v != null ? `Cloud base (LCL): ${Math.round(v)} m MSL` : null,
+// Overlay value formatting (aligned with API_CONVERGENCE_CONTRACT units)
+const OVERLAY_META = {
+  total_precip: { label: 'Total precip', unit: 'mm/h', decimals: 2 },
+  rain: { label: 'Rain', unit: 'mm/h', decimals: 2 },
+  snow: { label: 'Snow', unit: 'mm/h', decimals: 2 },
+  hail: { label: 'Hail/Graupel', unit: 'mm/h', decimals: 2 },
+  sigwx: { label: 'Sig. Weather ww', unit: '', integer: true },
+  clouds_low: { label: 'Cloud cover low', unit: '%', decimals: 1 },
+  clouds_mid: { label: 'Cloud cover mid', unit: '%', decimals: 1 },
+  clouds_high: { label: 'Cloud cover high', unit: '%', decimals: 1 },
+  clouds_total: { label: 'Cloud cover total', unit: '%', decimals: 1 },
+  clouds_total_mod: { label: 'Cloud cover total mod', unit: '%', decimals: 1 },
+  ceiling: { label: 'Ceiling', unit: 'm', integer: true },
+  cloud_base: { label: 'Cloud base', unit: 'm', integer: true },
+  dry_conv_top: { label: 'Dry convection top', unit: 'm', integer: true },
+  conv_thickness: { label: 'Convective thickness', unit: 'm', integer: true },
+  thermals: { label: 'CAPE_ml', unit: 'J/kg', decimals: 1 },
+  climb_rate: { label: 'Climb', unit: 'm/s', decimals: 1 },
+  lcl: { label: 'Cloud base (LCL)', unit: 'm MSL', integer: true },
 };
+
+function formatOverlayValue(key, value) {
+  if (value == null) return null;
+  const meta = OVERLAY_META[key];
+  if (!meta) return null;
+
+  let out;
+  if (meta.integer) out = Math.round(Number(value));
+  else if (typeof meta.decimals === 'number') out = Number(value).toFixed(meta.decimals);
+  else out = String(value);
+
+  return meta.unit ? `${meta.label}: ${out} ${meta.unit}` : `${meta.label}: ${out}`;
+}
 
 // Symbol type display names
 const SYMBOL_NAMES = {
@@ -254,13 +337,6 @@ const SYMBOL_NAMES = {
   thunderstorm: 'Thunderstorm', thunderstorm_hail: 'Thunderstorm (hail)',
 };
 
-function degToCompass(deg) {
-  if (deg == null || Number.isNaN(deg)) return null;
-  const dirs = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
-  const idx = Math.round((((deg % 360) + 360) % 360) / 22.5) % 16;
-  return dirs[idx];
-}
-
 // Load point details
 async function loadPoint(lat, lon, time, model, windLvl = '10m', zoom = null) {
   try {
@@ -269,7 +345,7 @@ async function loadPoint(lat, lon, time, model, windLvl = '10m', zoom = null) {
     const windParam = windLvl ? `&wind_level=${encodeURIComponent(windLvl)}` : '';
     const zoomParam = (zoom != null) ? `&zoom=${encodeURIComponent(zoom)}` : '';
     const res = await fetch(`/api/point?lat=${lat}&lon=${lon}&time=${encodeURIComponent(time)}${modelParam}${windParam}${zoomParam}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) await throwHttpError(res, 'API');
     const data = await res.json();
 
     const symbolName = SYMBOL_NAMES[data.symbol] || data.symbol || 'N/A';
@@ -278,11 +354,8 @@ async function loadPoint(lat, lon, time, model, windLvl = '10m', zoom = null) {
     // Show active overlay value if an overlay is selected
     const overlayKey = getEffectiveOverlayLayer();
     if (overlayKey !== 'none' && data.overlay_values) {
-      const fmt = OVERLAY_FORMAT[overlayKey];
-      if (fmt) {
-        const formatted = fmt(data.overlay_values[overlayKey]);
-        if (formatted) lines.push(formatted);
-      }
+      const formatted = formatOverlayValue(overlayKey, data.overlay_values[overlayKey]);
+      if (formatted) lines.push(formatted);
     }
 
     // Wind info in tooltip (only when wind layer is enabled)
@@ -304,6 +377,7 @@ async function loadPoint(lat, lon, time, model, windLvl = '10m', zoom = null) {
       .openOn(map);
   } catch (e) {
     console.error('Error loading point:', e);
+    markApiFailure('point', e);
     L.popup()
       .setLatLng([lat, lon])
       .setContent('Error loading details')
@@ -340,6 +414,56 @@ function overlayOpacityForLayer(layer) {
   if (layer && layer.startsWith('clouds_')) return 0.9;
   if (layer === 'sigwx') return 0.85;
   return 0.6;
+}
+
+function lonLatToTile(lat, lon, z) {
+  const n = 2 ** z;
+  const x = Math.floor((lon + 180) / 360 * n);
+  const latRad = lat * Math.PI / 180;
+  const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n);
+  return { x, y };
+}
+
+async function prewarmOverlayTiles(params) {
+  if (!overlayLayer || !map) return;
+  if (overlayPrewarmCtrl) overlayPrewarmCtrl.abort();
+  overlayPrewarmCtrl = new AbortController();
+  const signal = overlayPrewarmCtrl.signal;
+
+  const z = map.getZoom();
+  const b = map.getBounds();
+  const nw = lonLatToTile(b.getNorth(), b.getWest(), z);
+  const se = lonLatToTile(b.getSouth(), b.getEast(), z);
+  const minX = Math.min(nw.x, se.x) - 1;
+  const maxX = Math.max(nw.x, se.x) + 1;
+  const minY = Math.min(nw.y, se.y) - 1;
+  const maxY = Math.max(nw.y, se.y) + 1;
+
+  const maxTile = (2 ** z) - 1;
+  const urls = [];
+  for (let x = minX; x <= maxX; x++) {
+    for (let y = minY; y <= maxY; y++) {
+      if (x < 0 || y < 0 || x > maxTile || y > maxTile) continue;
+      urls.push(`/api/overlay_tile/${z}/${x}/${y}.png?${params.toString()}`);
+    }
+  }
+
+  // Limit prewarm burst size to avoid spiking backend/network.
+  const limited = urls.slice(0, 36);
+  const concurrency = 6;
+  let idx = 0;
+  const workers = Array.from({ length: concurrency }, async () => {
+    while (idx < limited.length) {
+      const i = idx++;
+      const u = limited[i];
+      try {
+        await fetch(u, { signal, cache: 'force-cache' });
+      } catch (_e) {
+        // best-effort prewarm; ignore failures
+      }
+    }
+  });
+  await Promise.all(workers);
 }
 
 async function loadOverlay() {
@@ -396,10 +520,18 @@ async function loadOverlay() {
         zIndex: 250,
       }).addTo(map);
 
-      if (symbolLayer) symbolLayer.bringToFront();
+      // Best-effort prewarm: viewport + 1-ring tiles after layer/time switch.
+      prewarmOverlayTiles(params).catch(() => {});
+
+      if (symbolLayer && typeof symbolLayer.eachLayer === 'function') {
+        symbolLayer.eachLayer(layer => {
+          if (layer && typeof layer.bringToFront === 'function') layer.bringToFront();
+        });
+      }
     } catch (e) {
       if (e.name !== 'AbortError') {
         console.error('Overlay error:', e);
+        markApiFailure('overlay', e);
       }
     }
   }, 220);
@@ -421,8 +553,9 @@ async function loadWind() {
 
     try {
       const res = await fetch(`/api/wind?bbox=${bbox}&zoom=${zoom}&time=${encodeURIComponent(time)}${modelParam}&level=${windLevel}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) await throwHttpError(res, 'API');
       const data = await res.json();
+      markApiSuccess();
 
       data.barbs.forEach(b => {
         const icon = createWindBarbIcon(b.speed_kt, b.dir_deg);
@@ -433,9 +566,14 @@ async function loadWind() {
         }).addTo(windLayer);
       });
 
-      if (symbolLayer) symbolLayer.bringToFront();
+      if (symbolLayer && typeof symbolLayer.eachLayer === 'function') {
+        symbolLayer.eachLayer(layer => {
+          if (layer && typeof layer.bringToFront === 'function') layer.bringToFront();
+        });
+      }
     } catch (e) {
       console.error('Wind barb error:', e);
+      markApiFailure('wind', e);
     }
   }, 350);
 }
@@ -810,13 +948,15 @@ async function submitFeedback() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) await throwHttpError(res, 'API');
+    markApiSuccess();
     feedbackStatus.textContent = '✓ Thank you for your feedback!';
     feedbackStatus.style.color = '#66cc66';
     feedbackText.value = '';
     setTimeout(closeFeedback, 1500);
   } catch (e) {
     console.error('Feedback error:', e);
+    markApiFailure('feedback', e);
     feedbackStatus.textContent = 'Failed to send. Please try again.';
     feedbackStatus.style.color = '#ff6b6b';
     feedbackSubmit.disabled = false;

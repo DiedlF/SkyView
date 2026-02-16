@@ -1,69 +1,56 @@
 # Skyview TODO List (Consolidated)
 
-**Last updated:** 2026-02-15 22:45 UTC  
-**Status:** ✅ Core product works; now focus is robustness, consolidation, and scalable feature delivery.
+**Last updated:** 2026-02-16 13:55 UTC  
+**Status:** ✅ P0/P1 complete. Active backlog is P2 feature delivery + project ops.
 
 ---
 
-## ✅ Completed (high-level)
+## ✅ Completed Milestones
 
-- ICON-D2 + ICON-EU ingestion with automatic handover
-- Fast polling ingest (<10 min latency)
-- Multi-model timeline + API
-- Skyview core map + overlays + wind + timeline + mobile
-- Explorer raw-data app foundation
-- Major symbol/overlay logic iteration (classification, clickability, gridding)
-- Logging + docs consolidation
+- P0 QA/hardening complete (manual + automated baseline + QA report)
+- P1 backend modularization + convergence complete
+  - shared helpers/modules for overlays, symbols, point payloads, time/timelines, grid slicing, headers, status/perf, feedback, model caps
+  - Explorer/Skyview converged contract paths validated (`qa_contract.py`)
+- Performance and operability improvements delivered
+  - symbols/tile caching improvements
+  - run/step-aware cache rotation
+  - SigWX LUT optimization
+  - tile prewarm (viewport + ring)
+- Symbol aggregation priority update delivered
+  - Prio 1: `WW > 10`
+  - Prio 2: `hbas_sc > 0 && cape_ml > 50`
+  - Prio 3: `htop_dc` with `cape_ml > 50`
+  - hectometer label now follows the winning symbol point altitude
+- Observability baseline live
+  - `/api/status`
+  - request correlation IDs (`X-Request-Id`)
+  - frontend degraded-data indicator
+- Reverse-proxy tile caching guidance documented
+  - `docs/REVERSE_PROXY_TILE_CACHE.md`
 
 ---
 
-## 🚀 Open Tasks (Consolidated)
+## 🚀 Open Tasks
 
-### A. QA & Hardening (P0)
-- [ ] Full regression pass via `docs/TESTING_CHECKLIST.md`
-- [ ] Add automated integration checks for known fragile cases:
-  - [ ] z12 symbol continuity around Geitau / border panning
-  - [ ] D2↔EU transition continuity (symbols/overlays/tooltips)
-  - [ ] CAPE threshold rendering (50+ only) and tooltip value parity
-  - [ ] Wind tooltip parity with selected wind level + zoom aggregation
-- [ ] Eliminate multi-process/restart ambiguity (single-instance startup guard)
-
-### B. Backend Refactor & API Convergence (P0/P1)
-- [ ] Split `backend/app.py` into modules (symbols, overlays, point, cache, colormaps)
-- [ ] Define unified Explorer/Skyview backend contract (timesteps, point schema, overlay metadata)
-- [ ] Remove duplicated variable/format logic between Explorer and Skyview
-
-### C. Performance & Scalability (P1)
-- [ ] Add tile prewarm for current viewport (+ ring) on layer/time switch
-- [ ] Strengthen cache strategy (run/step-aware invalidation + memory bounds)
-- [ ] Add reverse-proxy tile caching option (Nginx/Caddy)
-- [ ] Profile and vectorize any remaining expensive non-vectorized rendering paths
-
-### D. Observability & Ops (P1)
-- [ ] Add `/api/status` endpoint aggregating:
-  - ingest freshness
-  - current runs/models
-  - cache stats
-  - perf stats
-  - recent error counters
-- [ ] Add correlation/error IDs for frontend-visible failures
-- [ ] Add lightweight frontend health indicator for repeated tile/API failures
-
-### E. Product Features (P2)
+## E. Product Features (P2)
 - [ ] Airspace structure overlay (OpenAir)
 - [ ] Persistent per-user custom location markers + recommendations
 - [ ] Feedback notifications (Telegram/email)
 - [ ] Feedback/log admin view (simple web UI)
+- [ ] Evaluate ingest/storage optimization via reduced precision persistence
+- [ ] Improve ICON-EU coverage around D2→EU transition for problematic variables
 
-### F. Delivery & Project Ops (P2)
+## F. Delivery & Project Ops (P2 / later)
 - [ ] Push repository to GitHub
-- [ ] Add CI pipeline (lint, type/style checks, smoke tests)
+- [ ] Add CI pipeline (lint, style/type checks, smoke/regression/contract checks)
 
 ---
 
-## 🧭 Implementation Plan Reference
+## 🧭 References
 
-See: `docs/IMPLEMENTATION_PLAN.md`
+- Main roadmap: `docs/IMPROVEMENT_IDEAS_SUMMARY.md`
+- P1 convergence audit: `docs/P1_CONVERGENCE_AUDIT_2026-02-16.md`
+- Reverse proxy cache guide: `docs/REVERSE_PROXY_TILE_CACHE.md`
 
 ---
 **Created:** 2026-02-09
