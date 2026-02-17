@@ -22,6 +22,7 @@ def build_status_payload(
     perf_recent,
     perf_totals,
     api_error_counters,
+    fallback_stats,
 ):
     now = datetime.now(timezone.utc)
     latest_run_time = None
@@ -39,6 +40,35 @@ def build_status_payload(
         "latestRunTime": runs[0]["runTime"] if runs else None,
         "freshnessMinutes": round((now - latest_run_time).total_seconds() / 60.0, 1) if latest_run_time else None,
     }
+
+    # Ingest health panel (latest run + expected/available/missing steps per model)
+    expected_steps = {"icon_d2": 48, "icon_eu": 92}
+    by_model = {}
+    for m in ("icon_d2", "icon_eu"):
+        latest_m = next((r for r in runs if r.get("model") == m), None)
+        if latest_m is None:
+            by_model[m] = {
+                "hasRun": False,
+                "latestRun": None,
+                "latestRunTime": None,
+                "availableSteps": 0,
+                "expectedSteps": expected_steps[m],
+                "missingSteps": expected_steps[m],
+                "coverage": 0.0,
+            }
+            continue
+        available = len(latest_m.get("steps", []))
+        expected = expected_steps[m]
+        missing = max(0, expected - available)
+        by_model[m] = {
+            "hasRun": True,
+            "latestRun": latest_m.get("run"),
+            "latestRunTime": latest_m.get("runTime"),
+            "availableSteps": available,
+            "expectedSteps": expected,
+            "missingSteps": missing,
+            "coverage": round((available / expected), 3) if expected else None,
+        }
 
     tile_cache_prune_fn("desktop")
     tile_cache_prune_fn("mobile")
@@ -100,6 +130,19 @@ def build_status_payload(
         "errors": {
             "http4xx": api_error_counters["4xx"],
             "http5xx": api_error_counters["5xx"],
+        },
+        "ingestHealth": {
+            "models": by_model,
+        },
+        "fallback": {
+            "euResolveAttempts": fallback_stats.get("euResolveAttempts", 0),
+            "euResolveSuccess": fallback_stats.get("euResolveSuccess", 0),
+            "strictTimeDenied": fallback_stats.get("strictTimeDenied", 0),
+            "overlayFallback": fallback_stats.get("overlayFallback", 0),
+            "overlayTileFallback": fallback_stats.get("overlayTileFallback", 0),
+            "symbolsBlended": fallback_stats.get("symbolsBlended", 0),
+            "windBlended": fallback_stats.get("windBlended", 0),
+            "pointFallback": fallback_stats.get("pointFallback", 0),
         },
         "serverTime": now.isoformat().replace("+00:00", "Z"),
     }

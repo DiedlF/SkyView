@@ -21,6 +21,7 @@ const STATE = {
     dayMeta: [],
     mergedRunTime: null,
     mergedLabel: null,
+    currentRun: null,
     overlayReady: false,
     pendingOverlayUpdate: false
 };
@@ -31,6 +32,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initControls();
     loadVariables();
     loadTimesteps();
+    startTimelineAutoRefresh();
 
     // Overlay-ready gate: prevent first render until layout/map metrics are stable.
     window.addEventListener('load', () => {
@@ -204,11 +206,13 @@ async function loadTimesteps() {
             STATE._mergedSteps = merged.steps;  // keep model/run info per step
             STATE.mergedRunTime = merged.runTime || null;
             STATE.mergedLabel = "ICON-D2 + EU";
+            STATE.currentRun = merged.run || null;
         } else {
             STATE.timesteps = data.timesteps || [];
             STATE._mergedSteps = null;
             STATE.mergedRunTime = null;
             STATE.mergedLabel = null;
+            STATE.currentRun = (data.runs && data.runs[0] && data.runs[0].run) ? data.runs[0].run : null;
         }
         populateTimeButtons();
         updateModelInfo();
@@ -217,6 +221,122 @@ async function loadTimesteps() {
         console.error('Failed to load timesteps:', error);
         showError('Failed to load timesteps');
     }
+}
+
+function getTimelineSource(data) {
+    const merged = data?.merged;
+    if (merged && Array.isArray(merged.steps) && merged.steps.length) {
+        return {
+            run: merged.run || null,
+            runTime: merged.runTime || null,
+            label: 'ICON-D2 + EU',
+            steps: merged.steps,
+        };
+    }
+
+    const firstRun = data?.runs?.[0];
+    if (firstRun && Array.isArray(firstRun.steps) && firstRun.steps.length) {
+        return {
+            run: firstRun.run || null,
+            runTime: firstRun.runTime || null,
+            label: firstRun.model ? firstRun.model.toUpperCase().replace('_', '-') : null,
+            steps: firstRun.steps,
+        };
+    }
+
+    if (Array.isArray(data?.timesteps) && data.timesteps.length) {
+        return {
+            run: null,
+            runTime: null,
+            label: null,
+            steps: data.timesteps.map(vt => ({ validTime: vt })),
+        };
+    }
+
+    return null;
+}
+
+function startTimelineAutoRefresh() {
+    // Keep explorer timeline fresh like Skyview frontend.
+    setInterval(async () => {
+        try {
+            const response = await fetch('/api/timesteps');
+            if (!response.ok) return;
+            const data = await response.json();
+            const source = getTimelineSource(data);
+            if (!source || !source.steps.length) return;
+
+            const newTimesteps = source.steps.map(s => s.validTime);
+            const newRun = source.run;
+
+            if (STATE.currentRun && newRun && newRun !== STATE.currentRun) {
+                const oldTimes = STATE.timesteps.slice();
+                const oldIdx = oldTimes.indexOf(STATE.selectedTime);
+                const wasAtStart = oldIdx === 0;
+                const wasAtEnd = oldIdx === oldTimes.length - 1;
+                const oldSelected = STATE.selectedTime;
+
+                STATE.timesteps = newTimesteps;
+                STATE._mergedSteps = source.steps;
+                STATE.currentRun = newRun;
+                STATE.mergedRunTime = source.runTime;
+                STATE.mergedLabel = source.label;
+
+                if (wasAtStart) {
+                    STATE.selectedTime = STATE.timesteps[0] || null;
+                } else if (wasAtEnd) {
+                    STATE.selectedTime = STATE.timesteps[STATE.timesteps.length - 1] || null;
+                } else if (oldSelected) {
+                    let bestIdx = 0;
+                    let bestDist = Infinity;
+                    const oldMs = new Date(oldSelected).getTime();
+                    STATE.timesteps.forEach((vt, i) => {
+                        const dist = Math.abs(new Date(vt).getTime() - oldMs);
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            bestIdx = i;
+                        }
+                    });
+                    STATE.selectedTime = STATE.timesteps[bestIdx] || null;
+                } else {
+                    STATE.selectedTime = STATE.timesteps[0] || null;
+                }
+
+                populateTimeButtons();
+                updateModelInfo();
+                updateOverlay();
+
+                const runEl = document.getElementById('run-time');
+                if (runEl) {
+                    runEl.style.color = '#00AA00';
+                    setTimeout(() => { runEl.style.color = ''; }, 3000);
+                }
+            } else if (
+                (newRun && newRun === STATE.currentRun && newTimesteps.length > STATE.timesteps.length) ||
+                (!newRun && newTimesteps.length > STATE.timesteps.length)
+            ) {
+                const oldLen = STATE.timesteps.length;
+                const oldIdx = STATE.timesteps.indexOf(STATE.selectedTime);
+                const wasAtEnd = oldIdx === oldLen - 1;
+
+                STATE.timesteps = newTimesteps;
+                STATE._mergedSteps = source.steps;
+                STATE.currentRun = newRun || STATE.currentRun;
+                STATE.mergedRunTime = source.runTime;
+                STATE.mergedLabel = source.label;
+
+                if (wasAtEnd) {
+                    STATE.selectedTime = STATE.timesteps[STATE.timesteps.length - 1] || STATE.selectedTime;
+                }
+
+                populateTimeButtons();
+                updateModelInfo();
+                updateOverlay();
+            }
+        } catch (_err) {
+            // Silent polling; ignore temporary errors.
+        }
+    }, 60000);
 }
 
 // ===== UI POPULATION =====
@@ -311,9 +431,12 @@ function populateTimeButtons() {
 
     updateDateStrip();
 
-    // Select first timestep
+    // Keep current selection if possible; otherwise select first timestep
     if (STATE.timesteps.length > 0) {
-        selectTime(STATE.timesteps[0]);
+        const preferred = STATE.selectedTime && STATE.timesteps.includes(STATE.selectedTime)
+            ? STATE.selectedTime
+            : STATE.timesteps[0];
+        selectTime(preferred);
     }
 }
 

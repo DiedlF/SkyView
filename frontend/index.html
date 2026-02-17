@@ -6,8 +6,8 @@
   <title>Skyview - Convection Visualization</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="apple-touch-icon" href="logo.svg">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="style.css?v=22">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous">
+  <link rel="stylesheet" href="style.css?v=32">
 </head>
 <body>
   <div id="map"></div>
@@ -27,22 +27,29 @@
       <div id="timeline" class="timeline"></div>
     </div>
     <div id="info-bar">
-      <span><span class="info-label">Model:</span> <span id="model">--</span></span>
+      <span><span class="info-label" data-i18n="info.model">Model:</span> <span id="model">--</span></span>
       <span class="info-sep">·</span>
-      <span><span class="info-label">Run:</span> <span id="run-time">Loading...</span></span>
+      <span><span class="info-label" data-i18n="info.run">Run:</span> <span id="run-time">Loading...</span></span>
       <span class="info-sep">·</span>
-      <span><span class="info-label">Zoom:</span> <span id="zoom-grid">--</span></span>
+      <span><span class="info-label" data-i18n="info.zoom">Zoom:</span> <span id="zoom-grid">--</span></span>
     </div>
   </div>
   <div id="layers">
     <div class="layer-controls-header">
-      <div class="layer-title">Layers</div>
-      <button id="layers-toggle" class="layers-toggle" title="Toggle layers">▼</button>
+      <div class="layer-title" data-i18n="layers.title">Layers</div>
+      <div class="layer-header-actions">
+        <select id="lang-select" title="Language" aria-label="Language">
+          <option value="en">EN</option>
+          <option value="de">DE</option>
+        </select>
+        <button id="help-btn" class="help-btn" title="What am I seeing?">?</button>
+        <button id="layers-toggle" class="layers-toggle" title="Toggle layers">▼</button>
+      </div>
     </div>
     <div id="layers-content">
-    <label><input type="checkbox" id="layer-convection" checked> Convection</label>
+    <label><input type="checkbox" id="layer-convection" checked> <span data-i18n="layer.convection">Convection</span></label>
     <label style="display:flex;align-items:center;gap:6px;">
-      <input type="checkbox" id="layer-wind"> Wind
+      <input type="checkbox" id="layer-wind"> <span data-i18n="layer.wind">Wind</span>
       <select id="wind-level" style="font-size:11px;background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 4px;">
         <option value="10m" selected>10m</option>
         <option value="950">950 hPa (~500m)</option>
@@ -53,39 +60,54 @@
       </select>
     </label>
     <div class="layer-divider"></div>
-    <div class="layer-subtitle">Overlay (ICON)</div>
-    <label><input type="radio" name="overlay" value="none" checked> None</label>
+    <div class="layer-subtitle" data-i18n="layer.overlay.title">Overlay (ICON)</div>
+    <label><input type="radio" name="overlay" value="none" checked> <span data-i18n="layer.none">None</span></label>
     <label style="display:flex;align-items:center;gap:6px;">
-      <input type="radio" name="overlay" value="precip"> Precipitation
+      <input type="radio" name="overlay" value="precip"> <span data-i18n="layer.precip">Precipitation</span>
       <select id="precip-type" style="font-size:11px;background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 4px;">
-        <option value="total_precip" selected>Total</option>
-        <option value="rain">Rain</option>
-        <option value="snow">Snow</option>
-        <option value="hail">Hail/Graupel</option>
+        <option value="total_precip" selected data-i18n="layer.precip.total">Total</option>
+        <option value="rain" data-i18n="layer.precip.rain">Rain</option>
+        <option value="snow" data-i18n="layer.precip.snow">Snow</option>
+        <option value="hail" data-i18n="layer.precip.hail">Hail/Graupel</option>
       </select>
     </label>
     <label style="display:flex;align-items:center;gap:6px;">
-      <input type="radio" name="overlay" value="clouds"> Cloud Cover
+      <input type="radio" name="overlay" value="clouds"> <span data-i18n="layer.cloudcover">Cloud Cover</span>
       <select id="clouds-type" style="font-size:11px;background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 4px;">
-        <option value="clouds_low">Low</option>
-        <option value="clouds_mid">Mid</option>
-        <option value="clouds_high">High</option>
-        <option value="clouds_total" selected>Total</option>
+        <option value="clouds_low" data-i18n="layer.clouds.low">Low</option>
+        <option value="clouds_mid" data-i18n="layer.clouds.mid">Mid</option>
+        <option value="clouds_high" data-i18n="layer.clouds.high">High</option>
+        <option value="clouds_total" selected data-i18n="layer.clouds.total">Total</option>
         <option value="clouds_total_mod">Total_mod</option>
       </select>
     </label>
     <div class="layer-divider"></div>
-    <div class="layer-subtitle">Diagnostic</div>
-    <label><input type="radio" name="overlay" value="cloud_base"> Cloud base (convective)</label>
-    <label><input type="radio" name="overlay" value="dry_conv_top"> Dry Convection Top</label>
-    <label><input type="radio" name="overlay" value="sigwx"> Significant weather</label>
-    <label><input type="radio" name="overlay" value="ceiling"> Ceiling</label>
-    <label><input type="radio" name="overlay" value="conv_thickness"> Cloud thickness (convective)</label>
+    <div class="layer-subtitle" data-i18n="layer.diagnostic">Diagnostic</div>
+    <label><input type="radio" name="overlay" value="cloud_base"> <span data-i18n="layer.cloudbase">Cloud base (convective)</span></label>
+    <label><input type="radio" name="overlay" value="dry_conv_top"> <span data-i18n="layer.dryconv">Dry Convection Top</span></label>
+    <label><input type="radio" name="overlay" value="sigwx"> <span data-i18n="layer.sigwx">Significant weather</span></label>
+    <label><input type="radio" name="overlay" value="ceiling"> <span data-i18n="layer.ceiling">Ceiling</span></label>
+    <label><input type="radio" name="overlay" value="conv_thickness"> <span data-i18n="layer.convthickness">Cloud thickness (convective)</span></label>
+    <label><input type="radio" name="overlay" value="lpi"> <span data-i18n="layer.lpi">LPI</span></label>
     <label><input type="radio" name="overlay" value="thermals"> CAPE_ml</label>
     <div class="layer-divider"></div>
-    <div class="layer-subtitle">Experimental</div>
-    <label><input type="radio" name="overlay" value="climb_rate"> Climb Rate</label>
-    <label><input type="radio" name="overlay" value="lcl"> Cloud Base (LCL)</label>
+    <div class="layer-subtitle" data-i18n="layer.experimental">Experimental</div>
+    <label><input type="radio" name="overlay" value="climb_rate"> <span data-i18n="layer.climbrate">Climb Rate</span></label>
+    <label><input type="radio" name="overlay" value="lcl"> <span data-i18n="layer.lcl">Cloud Base (LCL)</span></label>
+    <div class="layer-divider"></div>
+    <div class="layer-subtitle" data-i18n="layer.marker">Marker</div>
+    <div class="marker-buttons">
+      <button id="marker-picker-open" type="button">Marker: Geitau</button>
+    </div>
+    <div id="marker-picker" class="marker-picker" style="display:none;">
+      <input id="marker-search" type="text" placeholder="Search glider field, airfield, airport..." />
+      <div id="marker-suggestions" class="marker-suggestions"></div>
+      <div class="marker-picker-actions">
+        <button id="marker-confirm" type="button">Set marker</button>
+        <button id="marker-use-location" type="button">Use my position</button>
+        <button id="marker-cancel" type="button" class="secondary">Cancel</button>
+      </div>
+    </div>
   </div>
   </div>
   
@@ -101,7 +123,7 @@
       <path d="M20 17l4-10 6 3-4 10z"/>
       <path d="M20 17l-1.5 3 3.5-0.5"/>
     </svg>
-  </button
+  </button>
 
   <!-- Feedback modal -->
   <div id="feedback-overlay" style="display:none;">
@@ -126,9 +148,20 @@
     </div>
   </div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- Help / explanation modal (prototype) -->
+  <div id="help-overlay" style="display:none;">
+    <div id="help-modal">
+      <div class="help-header">
+        <span id="help-title">How to read Skyview</span>
+        <button id="help-close">✕</button>
+      </div>
+      <div class="help-body" id="help-body"></div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="anonymous"></script>
   <script src="symbols.js?v=16"></script>
   <script src="windbarbs.js?v=1"></script>
-  <script src="app.js?v=34"></script>
+  <script src="app.js?v=53"></script>
 </body>
 </html>

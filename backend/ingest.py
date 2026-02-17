@@ -10,6 +10,8 @@ Retention: latest run only.
 
 import os
 import sys
+import json
+import shutil
 import subprocess
 import numpy as np
 import cfgrib
@@ -85,8 +87,9 @@ MODEL_CONFIG = {
         "base_url": "https://opendata.dwd.de/weather/nwp/icon-eu/grib",
         "filename_pattern": "icon-eu_europe_regular-lat-lon_single-level_{run}_{step:03d}_{var_upper}.grib2.bz2",
         "max_forecast_hours": 120,
-        "steps": list(range(49, 79)) + list(range(81, 121, 3)),
-        "short_steps": list(range(49, 73)),
+        # Full relevant EU horizon: hourly 1..78, then 3-hourly 81..120.
+        "steps": list(range(1, 79)) + list(range(81, 121, 3)),
+        "short_steps": list(range(1, 25)),
     },
 }
 
@@ -393,7 +396,133 @@ def cleanup_old_runs(model, keep_runs, current_run=None):
     for old_run in runs[keep_runs:]:
         old_path = os.path.join(model_dir, old_run)
         logger.info(f"Cleaning up old run: {model}/{old_run}")
-        subprocess.run(["rm", "-rf", old_path], capture_output=True)
+        shutil.rmtree(old_path, ignore_errors=True)
+
+
+def _merge_axis_aligned_segments(segments, eps=1e-9):
+    """Merge contiguous horizontal/vertical boundary segments to reduce payload size."""
+    if not segments:
+        return []
+
+    horiz = {}
+    vert = {}
+
+    def _q(x):
+        return round(float(x), 8)
+
+    for seg in segments:
+        (a_lat, a_lon), (b_lat, b_lon) = seg
+        a_lat, a_lon, b_lat, b_lon = float(a_lat), float(a_lon), float(b_lat), float(b_lon)
+        if abs(a_lat - b_lat) <= eps:
+            y = _q(a_lat)
+            lo, hi = sorted((a_lon, b_lon))
+            horiz.setdefault(y, []).append((lo, hi))
+        elif abs(a_lon - b_lon) <= eps:
+            x = _q(a_lon)
+            lo, hi = sorted((a_lat, b_lat))
+            vert.setdefault(x, []).append((lo, hi))
+
+    merged = []
+
+    for y, ivals in horiz.items():
+        ivals.sort(key=lambda t: (t[0], t[1]))
+        cur_lo, cur_hi = ivals[0]
+        for lo, hi in ivals[1:]:
+            if lo <= cur_hi + eps:
+                cur_hi = max(cur_hi, hi)
+            else:
+                merged.append([[float(y), cur_lo], [float(y), cur_hi]])
+                cur_lo, cur_hi = lo, hi
+        merged.append([[float(y), cur_lo], [float(y), cur_hi]])
+
+    for x, ivals in vert.items():
+        ivals.sort(key=lambda t: (t[0], t[1]))
+        cur_lo, cur_hi = ivals[0]
+        for lo, hi in ivals[1:]:
+            if lo <= cur_hi + eps:
+                cur_hi = max(cur_hi, hi)
+            else:
+                merged.append([[cur_lo, float(x)], [cur_hi, float(x)]])
+                cur_lo, cur_hi = lo, hi
+        merged.append([[cur_lo, float(x)], [cur_hi, float(x)]])
+
+    return merged
+
+
+def build_d2_boundary_cache(run: str):
+    """Precompute ICON-D2 valid-cell boundary once per run for fast API serving."""
+    run_dir = os.path.join(DATA_DIR, "icon-d2", run)
+    if not os.path.isdir(run_dir):
+        return
+
+    npz_files = sorted([f for f in os.listdir(run_dir) if f.endswith('.npz')])
+    if not npz_files:
+        return
+
+    src = None
+    for f in npz_files:
+        p = os.path.join(run_dir, f)
+        try:
+            z = np.load(p)
+            if 'lat' in z and 'lon' in z and 'ww' in z:
+                src = z
+                break
+        except Exception:
+            continue
+    if src is None:
+        return
+
+    lat = src['lat']
+    lon = src['lon']
+    ww = src['ww']
+
+    lat_res = float(abs(lat[1] - lat[0])) if len(lat) > 1 else 0.02
+    lon_res = float(abs(lon[1] - lon[0])) if len(lon) > 1 else 0.02
+    valid = np.isfinite(ww)
+
+    segments = []
+    n_i, n_j = valid.shape
+    for i in range(n_i):
+        lat_lo = float(lat[i]) - lat_res / 2.0
+        lat_hi = float(lat[i]) + lat_res / 2.0
+        for j in range(n_j):
+            if not valid[i, j]:
+                continue
+            lon_lo = float(lon[j]) - lon_res / 2.0
+            lon_hi = float(lon[j]) + lon_res / 2.0
+            if i == n_i - 1 or not valid[i + 1, j]:
+                segments.append([[lat_hi, lon_lo], [lat_hi, lon_hi]])
+            if i == 0 or not valid[i - 1, j]:
+                segments.append([[lat_lo, lon_lo], [lat_lo, lon_hi]])
+            if j == n_j - 1 or not valid[i, j + 1]:
+                segments.append([[lat_lo, lon_hi], [lat_hi, lon_hi]])
+            if j == 0 or not valid[i, j - 1]:
+                segments.append([[lat_lo, lon_lo], [lat_hi, lon_lo]])
+
+    segments = _merge_axis_aligned_segments(segments)
+
+    payload = {
+        'run': run,
+        'latRes': lat_res,
+        'lonRes': lon_res,
+        'bbox': {
+            'latMin': float(np.min(lat)), 'lonMin': float(np.min(lon)),
+            'latMax': float(np.max(lat)), 'lonMax': float(np.max(lon)),
+        },
+        'cellEdgeBbox': {
+            'latMin': float(np.min(lat)) - lat_res / 2.0,
+            'lonMin': float(np.min(lon)) - lon_res / 2.0,
+            'latMax': float(np.max(lat)) + lat_res / 2.0,
+            'lonMax': float(np.max(lon)) + lon_res / 2.0,
+        },
+        'boundarySegments': segments,
+        'validCells': int(np.count_nonzero(valid)),
+        'boundarySegmentCount': len(segments),
+    }
+    out = os.path.join(run_dir, '_d2_boundary.json')
+    with open(out, 'w', encoding='utf-8') as f:
+        json.dump(payload, f)
+    logger.info(f"D2 boundary cache written: {out} ({len(segments)} segments)")
 
 
 def main():
@@ -478,6 +607,13 @@ def main():
                 os.unlink(npz)
         if ingest_step(run, step, tmp_dir, out_dir, model, config):
             ok += 1
+
+    # Build cached D2 boundary geometry once per run (for fast frontend border rendering)
+    if model == "icon-d2" and ok > 0:
+        try:
+            build_d2_boundary_cache(run)
+        except Exception as e:
+            logger.warning(f"D2 boundary cache build failed: {e}")
 
     # Cleanup tmp
     subprocess.run(["rm", "-rf", tmp_dir], capture_output=True)

@@ -87,8 +87,52 @@ Timestep tested: `2026-02-16T10:00:00Z`
 - `tile cache metrics`:
   - `hits=24, misses=24, evictions=0, expired=0`
 
+## Boundary QA Evidence — ICON D2→EU fallback (2026-02-16)
+
+Backend: `http://127.0.0.1:8501`  
+Reference early timestep: `2026-02-16T13:00:00Z`
+
+### 1) D2 interior control points (no fallback)
+- `GET /api/point?lat=47.68&lon=11.96&time=2026-02-16T13:00:00Z&model=icon_d2`
+  - ✅ `model=icon_d2`, `sourceModel=icon_d2`, `validTime=2026-02-16T13:00:00Z`
+- `GET /api/symbols` bbox `47.3,11.4,48.0,12.2` (z8, model icon_d2)
+  - ✅ `model=icon_d2`, `count=16`
+- `GET /api/wind` same bbox (z8, level 10m, model icon_d2)
+  - ✅ `model=icon_d2`, `count=16`
+
+### 2) D2 edge band (seam behavior)
+- `GET /api/symbols` bbox `43.7,-3.2,44.3,-2.4` (z8, model icon_d2)
+  - ✅ `model=blended`, `count=15`
+- `GET /api/wind` same bbox
+  - ✅ `model=blended`, `count=15`
+
+### 3) Outside-D2 coverage (EU usage)
+- `GET /api/point?lat=44.0&lon=-2.8&time=2026-02-16T13:00:00Z&model=icon_d2`
+  - ✅ `model=icon_eu`, `sourceModel=icon_eu`, `validTime=2026-02-16T13:00:00Z`
+- `GET /api/point?lat=43.5&lon=-2.8&time=2026-02-16T13:00:00Z&model=icon_d2`
+  - ✅ `model=icon_eu`, `sourceModel=icon_eu`, `validTime=2026-02-16T13:00:00Z`
+- `GET /api/symbols` bbox `43.2,-3.8,43.8,-2.6` (z8, model icon_d2)
+  - ✅ `model=blended`, `count=18`
+- `GET /api/wind` same bbox
+  - ✅ `model=blended`, `count=18`
+
+### 4) Strict-time guard (no EU time jump)
+- Early-horizon outside-D2 point remains temporally aligned:
+  - request: `time=2026-02-16T13:00:00Z`
+  - response: `validTime=2026-02-16T13:00:00Z`
+  - ✅ no large fallback jump
+- Synthetic old-time request (`2026-01-01T00:00:00Z`) increments strict deny counters in status:
+  - `/api/status -> fallback.strictTimeDenied` increased (`2` observed)
+  - ✅ strict-time guard active
+
+### 5) Status observability fields
+- `/api/status` now includes `fallback` section:
+  - `euResolveAttempts`, `euResolveSuccess`, `strictTimeDenied`
+  - `overlayFallback`, `overlayTileFallback`, `symbolsBlended`, `windBlended`, `pointFallback`
+
 ## Next Action
-Proceed with remaining P1 tasks:
-- final backend/explorer convergence audit and residual cleanup
-- optional additional first-hit low-zoom optimization if needed
-- reverse-proxy tile caching option (Nginx/Caddy)
+Proceed with P2 feature delivery in order:
+- OpenAir overlay
+- persistent user markers + recommendations
+- feedback notifications + admin view
+- optional reduced-precision ingest/storage A/B

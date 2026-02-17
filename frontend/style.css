@@ -301,6 +301,32 @@ body {
   margin-bottom: 4px;
 }
 
+.layer-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#lang-select {
+  background: #2f3c5a;
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 11px;
+}
+
+.help-btn {
+  background: #2f3c5a;
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 4px;
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
 #layers-toggle {
   display: none;
   background: none;
@@ -329,7 +355,7 @@ body {
 
 @media (max-width: 768px) {
   #layers {
-    max-width: 220px;
+    max-width: 240px;
     padding: 10px 12px 8px;
   }
   
@@ -342,7 +368,9 @@ body {
   }
   
   #layers-content.expanded {
-    max-height: 400px;
+    max-height: min(72vh, 620px);
+    overflow-y: auto;
+    padding-right: 2px;
   }
 }
 
@@ -380,6 +408,114 @@ body {
 #layers input[type="checkbox"],
 #layers input[type="radio"] {
   accent-color: #4a90e2;
+}
+
+/* Align layer dropdowns (wind / precip / clouds) to the same right edge */
+#wind-level,
+#precip-type,
+#clouds-type {
+  margin-left: auto;
+  box-sizing: border-box;
+}
+
+/* Desktop/tablet widths */
+#wind-level {
+  width: 108px;
+}
+
+#precip-type,
+#clouds-type {
+  width: 96px;
+}
+
+/* Slightly narrower on mobile */
+@media (max-width: 768px) {
+  #wind-level {
+    width: 96px;
+  }
+
+  #precip-type,
+  #clouds-type {
+    width: 90px;
+  }
+}
+
+.marker-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 2px;
+}
+
+.marker-buttons button {
+  background: rgba(70,130,220,0.75);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.marker-buttons button:hover {
+  background: rgba(70,130,220,0.95);
+}
+
+.marker-buttons button.danger {
+  background: rgba(180,60,60,0.82);
+}
+
+.marker-buttons button.danger:hover {
+  background: rgba(200,50,50,0.95);
+}
+
+.marker-picker {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#marker-search {
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.marker-suggestions {
+  max-height: 140px;
+  overflow-y: auto;
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 4px;
+}
+
+.marker-suggestion {
+  padding: 6px 8px;
+  font-size: 11px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  cursor: pointer;
+}
+
+.marker-suggestion:last-child { border-bottom: none; }
+.marker-suggestion .sub { opacity: 0.65; font-size: 10px; margin-top: 2px; }
+.marker-suggestion.active { background: rgba(70,130,220,0.35); }
+.marker-suggestion.empty { opacity: 0.65; cursor: default; }
+
+.marker-picker-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.marker-picker-actions button {
+  flex: 1 1 110px;
+}
+
+.marker-picker-actions button.secondary {
+  background: rgba(120,120,120,0.7);
 }
 
 /* Symbol markers */
@@ -619,6 +755,74 @@ body {
   min-height: 18px;
 }
 
+/* Help overlay (prototype explanation panel) */
+#help-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 2100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+#help-modal {
+  background: #1e2337;
+  border-radius: 12px;
+  width: 100%;
+  max-width: 560px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  color: white;
+}
+
+.help-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+  font-weight: bold;
+  font-size: 15px;
+}
+
+#help-close {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.6);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+#help-close:hover {
+  color: white;
+  background: rgba(255,255,255,0.1);
+}
+
+.help-body {
+  padding: 14px 16px 18px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: rgba(255,255,255,0.92);
+}
+
+.help-body h4 {
+  margin: 10px 0 6px;
+  font-size: 13px;
+  color: #8fc2ff;
+}
+
+.help-body ul {
+  margin: 6px 0 0 18px;
+}
+
 @media (max-width: 600px) {
   #feedback-overlay {
     padding: 8px;
@@ -629,4 +833,49 @@ body {
     max-height: 85vh;
     border-radius: 12px 12px 0 0;
   }
+}
+
+/* Cloud symbol grid in help panel */
+.cloud-sym-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 10px;
+}
+
+.cloud-sym-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.cloud-sym-cell {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  background: white;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cloud-sym-desc {
+  color: rgba(255,255,255,0.6);
+  font-size: 11px;
+}
+
+.cloud-logic-list {
+  margin: 4px 0 0 18px;
+  padding: 0;
+}
+
+.cloud-logic-list li {
+  margin-bottom: 4px;
+}
+
+.cloud-logic-list ul {
+  margin: 3px 0 3px 16px;
 }

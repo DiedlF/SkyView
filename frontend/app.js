@@ -1,6 +1,6 @@
 // app.js - Main application logic
 
-let map, symbolLayer, windLayer, overlayLayer = null, debounceTimer, overlayDebounce, windDebounce, timesteps = [], currentTimeIndex = 0, currentRun = '';
+let map, symbolLayer, windLayer, markerLayer, d2BorderLayer = null, overlayLayer = null, debounceTimer, overlayDebounce, windDebounce, timesteps = [], currentTimeIndex = 0, currentRun = '';
 let overlayRequestSeq = 0;
 let overlayAbortCtrl = null;
 let overlayPrewarmCtrl = null;
@@ -9,6 +9,267 @@ let currentOverlay = 'none';
 let windEnabled = false;
 let windLevel = '10m';
 let modelCapabilities = {};  // Store model capabilities from API
+
+function showGlobalError(msg) {
+  let el = document.getElementById('global-error-banner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'global-error-banner';
+    el.style.position = 'fixed';
+    el.style.left = '50%';
+    el.style.bottom = '12px';
+    el.style.transform = 'translateX(-50%)';
+    el.style.background = 'rgba(140,30,30,0.95)';
+    el.style.color = '#fff';
+    el.style.padding = '8px 12px';
+    el.style.borderRadius = '8px';
+    el.style.fontSize = '12px';
+    el.style.zIndex = '9999';
+    el.style.maxWidth = '85vw';
+    el.style.textAlign = 'center';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.style.display = 'block';
+  clearTimeout(showGlobalError._t);
+  showGlobalError._t = setTimeout(() => {
+    if (el) el.style.display = 'none';
+  }, 6000);
+}
+
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('Unhandled promise rejection:', event.reason);
+  showGlobalError('Network/API error. Please retry or reload.');
+});
+
+window.addEventListener('error', (event) => {
+  console.error('Unhandled frontend error:', event.error || event.message);
+  showGlobalError('Unexpected frontend error. Please reload if this persists.');
+});
+
+const I18N = {
+  en: {
+    'layers.title': 'Layers',
+    'info.model': 'Model:',
+    'info.run': 'Run:',
+    'info.zoom': 'Zoom:',
+    'layer.convection': 'Convection',
+    'layer.wind': 'Wind',
+    'layer.overlay.title': 'Overlay (ICON)',
+    'layer.none': 'None',
+    'layer.precip': 'Precipitation',
+    'layer.precip.total': 'Total',
+    'layer.precip.rain': 'Rain',
+    'layer.precip.snow': 'Snow',
+    'layer.precip.hail': 'Hail/Graupel',
+    'layer.cloudcover': 'Cloud Cover',
+    'layer.clouds.low': 'Low',
+    'layer.clouds.mid': 'Mid',
+    'layer.clouds.high': 'High',
+    'layer.clouds.total': 'Total',
+    'layer.diagnostic': 'Diagnostic',
+    'layer.cloudbase': 'Cloud base (convective)',
+    'layer.dryconv': 'Dry Convection Top',
+    'layer.sigwx': 'Significant weather',
+    'layer.ceiling': 'Ceiling',
+    'layer.convthickness': 'Cloud thickness (convective)',
+    'layer.lpi': 'LPI',
+    'layer.experimental': 'Experimental',
+    'layer.climbrate': 'Climb Rate',
+    'layer.lcl': 'Cloud Base (LCL)',
+    'layer.marker': 'Marker',
+    helpTitle: 'How to read Skyview',
+    helpHtml: `
+      <h4>Data sources</h4>
+      <ul>
+        <li>Primary model: ICON-D2 (high resolution).</li>
+        <li>Fallback/outside D2: ICON-EU where available.</li>
+      </ul>
+      <h4>Symbols</h4>
+      <p style="margin:4px 0 8px"><b>Priority:</b> significant weather (ww) &rarr; convective cloud &rarr; non-convective cloud.</p>
+      <div class="cloud-sym-grid">
+        <div class="cloud-sym-row">
+          <div class="cloud-sym-cell"><svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36"><line x1="3" y1="18" x2="33" y2="18" stroke="#333" stroke-width="3" stroke-linecap="round"/></svg></div>
+          <div><b>St</b> &mdash; Stratus<br><span class="cloud-sym-desc">ceiling &lt; 2000 m, no convection, low cloud cover (clcl) &ge; 30%</span></div>
+        </div>
+        <div class="cloud-sym-row">
+          <div class="cloud-sym-cell"><svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36"><path d="M4 14 Q4 26 11 26 Q18 26 18 14 Q18 26 25 26 Q32 26 32 14" fill="none" stroke="#333" stroke-width="3" stroke-linecap="round"/></svg></div>
+          <div><b>Ac</b> &mdash; Altocumulus<br><span class="cloud-sym-desc">ceiling 2000&ndash;7000 m, no convection, mid cloud cover (clcm) &ge; 30%</span></div>
+        </div>
+        <div class="cloud-sym-row">
+          <div class="cloud-sym-cell"><svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
+          <path d="M 6,25 h 20 A 5,5 0 0 0 26,15" fill="none" stroke="#333" stroke-width="2.6" stroke-linecap="round"/>
+          </svg></div>
+          <div><b>Ci</b> &mdash; Cirrus<br><span class="cloud-sym-desc">ceiling &ge; 7000 m, no convection, high cloud cover (clch) &ge; 30%</span></div>
+        </div>
+        <div class="cloud-sym-row">
+          <div class="cloud-sym-cell"><svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
+          <text x="18" y="26" text-anchor="middle" font-size="22" font-weight="bold" fill="#333">b</text></svg></div>
+          <div><b>b</b> &mdash; Blue thermal<br><span class="cloud-sym-desc">convection &ge; 300 mAGL, no visible cloud base (dry thermals)
+          </span></div>
+        </div>
+        <div class="cloud-sym-row">
+          <div class="cloud-sym-cell"><svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
+          <path d="M6 26 Q18 7 30 26" fill="none" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <line x1="6" y1="26" x2="30" y2="26" stroke="#333" stroke-width="3" stroke-linecap="round"/></svg></div>
+          <div><b>Cu</b> &mdash; Cu humilis<br><span class="cloud-sym-desc">convection &ge; 300 mAGL, shallow convection, depth &le; 2000 m</span></div>
+        </div>
+        <div class="cloud-sym-row">
+          <div class="cloud-sym-cell"><svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
+          <path d="M6 26 Q18 7 30 26" fill="none" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <line x1="6" y1="26" x2="30" y2="26" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <path d="M11 19 Q18 0 25 19" fill="none" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <line x1="18" y1="10" x2="18" y2="23" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          </svg></div>
+          <div><b>Cu con</b> &mdash; Cu congestus<br><span class="cloud-sym-desc">convection &ge; 300 mAGL, depth &gt; 2000 m, no LPI/anvil</span></div>
+        </div>
+        <div class="cloud-sym-row">
+          <div class="cloud-sym-cell"><svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
+          <path d="M6 26 Q18 7 30 26" fill="none" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <line x1="6" y1="26" x2="30" y2="26" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <line x1="12" y1="17" x2="9" y2="10" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <line x1="24" y1="17" x2="27" y2="10" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <line x1="9" y1="10" x2="27" y2="10" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          </svg></div>
+          <div><b>Cb</b> &mdash; Cumulonimbus<br><span class="cloud-sym-desc">convection &ge; 300 mAGL and (LPI &gt; 7 or (depth &gt; 4 km and CAPE &gt; 1000 J/kg))</span></div>
+        </div>
+      </div>
+      
+      <h4>Overlays</h4>
+      <ul>
+        <li>Overlays visualize one field at a time (precip, clouds, diagnostics).</li>
+        <li>Colors are relative field scales; use point click for exact values.</li>
+      </ul>
+      <h4>Time &amp; model info</h4>
+      <ul>
+        <li>Run = forecast initialization time (UTC).</li>
+        <li>Model label reflects what is visible in your current viewport.</li>
+      </ul>
+    `,
+  },
+  de: {
+    'layers.title': 'Ebenen',
+    'info.model': 'Modell:',
+    'info.run': 'Lauf:',
+    'info.zoom': 'Zoom:',
+    'layer.convection': 'Konvektion',
+    'layer.wind': 'Wind',
+    'layer.overlay.title': 'Overlay (ICON)',
+    'layer.none': 'Keines',
+    'layer.precip': 'Niederschlag',
+    'layer.precip.total': 'Gesamt',
+    'layer.precip.rain': 'Regen',
+    'layer.precip.snow': 'Schnee',
+    'layer.precip.hail': 'Hagel/Graupel',
+    'layer.cloudcover': 'Bewölkung',
+    'layer.clouds.low': 'Tief',
+    'layer.clouds.mid': 'Mittel',
+    'layer.clouds.high': 'Hoch',
+    'layer.clouds.total': 'Gesamt',
+    'layer.diagnostic': 'Diagnostik',
+    'layer.cloudbase': 'Wolkenbasis (konvektiv)',
+    'layer.dryconv': 'Konvektionshöhe trocken',
+    'layer.sigwx': 'Signifikantes Wetter',
+    'layer.ceiling': 'Haupt-Wolkenuntergrenze',
+    'layer.convthickness': 'Wolkenmächtigkeit (konvektiv)',
+    'layer.lpi': 'LPI',
+    'layer.experimental': 'Experimentell',
+    'layer.climbrate': 'Steigwerte',
+    'layer.lcl': 'Wolkenbasis (LCL)',
+    'layer.marker': 'Markierung',
+    helpTitle: 'Skyview Erklärung',
+    helpHtml: `
+      <h4>Datenquellen</h4>
+      <ul>
+        <li>Primärmodell: ICON-D2 (hohe Auflösung).</li>
+        <li>Fallback/außerhalb D2: ICON-EU, sofern verfügbar.</li>
+      </ul>
+      <h4>Symbole</h4>
+      <p style="margin:4px 0 8px"><b>Priorität:</b> Signifikantes Wetter (ww) &rarr; Konvektionswolke &rarr; nicht-konvektive Wolke.</p>
+      <div class="cloud-sym-grid">
+        <div class="cloud-sym-row">
+          <div class="cloud-sym-cell"><svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36"><line x1="3" y1="18" x2="33" y2="18" stroke="#333" stroke-width="3" stroke-linecap="round"/></svg></div>
+          <div><b>St</b> &mdash; Stratus<br><span class="cloud-sym-desc">Haupt-Wolkenuntergrenze &lt; 2000 m, keine Konvektion, tiefe Bewölkung (clcl) &ge; 30%</span></div>
+        </div>
+        <div class="cloud-sym-row">
+          <div class="cloud-sym-cell"><svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36"><path d="M4 14 Q4 26 11 26 Q18 26 18 14 Q18 26 25 26 Q32 26 32 14" fill="none" stroke="#333" stroke-width="3" stroke-linecap="round"/></svg></div>
+          <div><b>Ac</b> &mdash; Altocumulus<br><span class="cloud-sym-desc">Haupt-Wolkenuntergrenze 2000&ndash;7000 m, keine Konvektion, mittlere Bewölkung (clcm) &ge; 30%</span></div>
+        </div>
+        <div class="cloud-sym-row">
+          <div class="cloud-sym-cell"><svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
+          <path d="M 6,25 h 20 A 5,5 0 0 0 26,15" fill="none" stroke="#333" stroke-width="2.6" stroke-linecap="round"/>
+          </svg></div>
+          <div><b>Ci</b> &mdash; Cirrus<br><span class="cloud-sym-desc">Haupt-Wolkenuntergrenze &ge; 7000 m, keine Konvektion, hohe Bewölkung (clch) &ge; 30%</span></div>
+        </div>
+        <div class="cloud-sym-row">
+          <div class="cloud-sym-cell"><svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
+          <text x="18" y="26" text-anchor="middle" font-size="22" font-weight="bold" fill="#333">b</text>
+          </svg></div>
+          <div><b>b</b> &mdash; Blauthermik<br><span class="cloud-sym-desc">Konvektion &ge; 300 mAGL, keine sichtbare Wolkenbasis (Blauthermik)</span></div>
+        </div>
+        <div class="cloud-sym-row">
+          <div class="cloud-sym-cell"><svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
+          <path d="M6 26 Q18 7 30 26" fill="none" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <line x1="6" y1="26" x2="30" y2="26" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          </svg></div>
+          <div><b>Cu</b> &mdash; Cu humilis<br><span class="cloud-sym-desc">Konvektion &ge; 300 mAGL, flache Konvektion, Tiefe &le; 2000 m</span></div>
+        </div>
+        <div class="cloud-sym-row">
+          <div class="cloud-sym-cell"><svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
+          <path d="M6 26 Q18 7 30 26" fill="none" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <line x1="6" y1="26" x2="30" y2="26" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <path d="M11 19 Q18 0 25 19" fill="none" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <line x1="18" y1="10" x2="18" y2="23" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          </svg></div>
+          <div><b>Cu con</b> &mdash; Cu congestus<br><span class="cloud-sym-desc">Konvektion &ge; 300 mAGL, Tiefe &gt; 2000 m, kein LPI/Amboss</span></div>
+        </div>
+        <div class="cloud-sym-row">
+          <div class="cloud-sym-cell"><svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
+          <path d="M6 26 Q18 7 30 26" fill="none" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <line x1="6" y1="26" x2="30" y2="26" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <line x1="12" y1="17" x2="9" y2="10" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <line x1="24" y1="17" x2="27" y2="10" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <line x1="9" y1="10" x2="27" y2="10" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          </svg></div>
+          <div><b>Cb</b> &mdash; Cumulonimbus<br><span class="cloud-sym-desc">Konvektion &ge; 300 mAGL und (LPI &gt; 7 oder (Tiefe &gt; 4 km und CAPE &gt; 1000 J/kg))</span></div>
+        </div>
+      </div>
+      
+      <h4>Overlays</h4>
+      <ul>
+        <li>Overlays zeigen jeweils ein Feld (Niederschlag, Bewölkung, Diagnostik).</li>
+        <li>Farben sind Feldskalen; exakte Werte per Klick auf einen Punkt.</li>
+      </ul>
+      <h4>Zeit &amp; Modellinfo</h4>
+      <ul>
+        <li>Lauf = Initialisierungszeit des Forecasts (UTC).</li>
+        <li>Die Modellanzeige bezieht sich auf den aktuell sichtbaren Kartenausschnitt.</li>
+      </ul>
+    `,
+  },
+};
+
+let currentLang = localStorage.getItem('skyview_lang') || ((navigator.language || navigator.userLanguage || 'en').toLowerCase().startsWith('de') ? 'de' : 'en');
+
+function t(key) {
+  const dict = I18N[currentLang] || I18N.en;
+  return dict[key] || I18N.en[key] || key;
+}
+
+function applyLocale(lang) {
+  currentLang = (lang === 'de') ? 'de' : 'en';
+  localStorage.setItem('skyview_lang', currentLang);
+  document.querySelectorAll('[data-i18n]').forEach((el) => {
+    const key = el.getAttribute('data-i18n');
+    el.textContent = t(key);
+  });
+  const helpTitle = document.getElementById('help-title');
+  const helpBody = document.getElementById('help-body');
+  if (helpTitle) helpTitle.textContent = t('helpTitle');
+  if (helpBody) helpBody.innerHTML = t('helpHtml');
+  const langSel = document.getElementById('lang-select');
+  if (langSel && langSel.value !== currentLang) langSel.value = currentLang;
+}
 
 let apiFailureStreak = 0;
 let healthBadgeEl = null;
@@ -57,6 +318,32 @@ function markApiFailure(context, err) {
   }
 }
 
+function getClientId() {
+  const key = 'skyview_client_id';
+  let v = localStorage.getItem(key);
+  if (!v) {
+    v = (crypto?.randomUUID ? crypto.randomUUID() : `cid_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`);
+    localStorage.setItem(key, v);
+  }
+  return v;
+}
+
+let markerAuthToken = null;
+let markerAuthExpMs = 0;
+let markerEditingEnabled = true;
+
+async function ensureMarkerAuthToken(force = false) {
+  const now = Date.now();
+  if (!force && markerAuthToken && now < markerAuthExpMs - 60_000) return markerAuthToken;
+  const cid = getClientId();
+  const res = await fetch(`/api/marker_auth?clientId=${encodeURIComponent(cid)}`);
+  if (!res.ok) await throwHttpError(res, 'API');
+  const data = await res.json();
+  markerAuthToken = data.token;
+  markerAuthExpMs = Date.parse(data.expiresAt || '') || (now + 6 * 3600 * 1000);
+  return markerAuthToken;
+}
+
 async function throwHttpError(res, context = 'request') {
   let detail = `HTTP ${res.status}`;
   let requestId = res.headers.get('X-Request-Id') || null;
@@ -89,6 +376,7 @@ const LEGEND_CONFIGS = {
   ceiling: { title: 'Ceiling', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '9900m'] },
   cloud_base: { title: 'Cloud base (convective)', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '5000m'] },
   conv_thickness: { title: 'Cloud thickness (convective)', gradient: 'linear-gradient(to right, rgb(40,220,60), rgb(200,200,40), rgb(240,80,40))', labels: ['0m', '6000m'] },
+  lpi: { title: 'LPI', gradient: 'linear-gradient(to right, rgb(70,190,80), rgb(160,150,60), rgb(255,70,40))', labels: ['0', '20+'] },
   thermals: { title: 'CAPE_ml', gradient: 'linear-gradient(to right, rgb(50,180,50), rgb(150,150,50), rgb(220,100,30), rgb(255,50,50))', labels: ['50 J/kg', '1000+ J/kg'] },
   climb_rate: { title: 'Climb Rate', gradient: 'linear-gradient(to right, rgb(50,200,50), rgb(180,200,50), rgb(220,150,30), rgb(255,50,50))', labels: ['0 m/s', '5 m/s'] },
   lcl: { title: 'Cloud Base (LCL) MSL', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '5000m MSL'] }
@@ -100,7 +388,8 @@ map = L.map('map', {
   zoom: 9,
   minZoom: 5,
   maxZoom: 12,
-  maxBounds: L.latLngBounds([[42, -5], [59, 21]]),
+  // Expanded pan limits to full ICON-EU operational area (approx Europe view)
+  maxBounds: L.latLngBounds([[30, -30], [72, 45]]),
   maxBoundsViscosity: 1.0,
   zoomControl: false
 });
@@ -108,30 +397,30 @@ L.control.zoom({ position: 'bottomleft' }).addTo(map);
 
 // Ocean base provides water coloring (ocean, lakes, rivers) with matching coastlines
 // maxNativeZoom=10: inland tiles unavailable at z11+, so upscale z10 tiles
-L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}', {
+const baseTileOpts = {
   attribution: '',
+  updateWhenZooming: false,
+  updateWhenIdle: true,
+  keepBuffer: 2,
+  detectRetina: false,
+};
+
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}', {
+  ...baseTileOpts,
   maxNativeZoom: 10,
-  maxZoom: 12
+  maxZoom: 12,
 }).addTo(map);
 
 // Hillshade on top with multiply blend mode — shading applies over the ocean base colors
 L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}', {
-  attribution: '',
-  className: 'hillshade-layer'
+  ...baseTileOpts,
+  className: 'hillshade-layer',
 }).addTo(map);
-
-// Geitau marker
-L.circleMarker([47.6836, 11.9610], {
-  radius: 6,
-  fillColor: '#ff0000',
-  color: '#8B0000',
-  weight: 2,
-  opacity: 0.8,
-  fillOpacity: 0.7
-}).bindTooltip('Geitau').addTo(map);
 
 symbolLayer = L.layerGroup().addTo(map);
 windLayer = L.layerGroup();
+markerLayer = L.layerGroup().addTo(map);
+d2BorderLayer = L.layerGroup().addTo(map);
 
 // Format date as "DayOfWeek, dd.mm., HH UTC"
 function formatDateShort(d) {
@@ -140,6 +429,15 @@ function formatDateShort(d) {
   const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
   const hh = String(d.getUTCHours()).padStart(2, '0');
   return `${days[d.getUTCDay()]}, ${dd}.${mm}., ${hh} UTC`;
+}
+
+function parseRunToDate(run) {
+  if (!run || !/^\d{10}$/.test(run)) return null;
+  const y = Number(run.slice(0, 4));
+  const m = Number(run.slice(4, 6)) - 1;
+  const d = Number(run.slice(6, 8));
+  const h = Number(run.slice(8, 10));
+  return new Date(Date.UTC(y, m, d, h, 0, 0));
 }
 
 // Update info panel zoom/grid
@@ -217,6 +515,7 @@ async function loadTimesteps() {
     
     buildTimeline();
     loadSymbols();
+    loadD2Border();
     markApiSuccess();
   } catch (e) {
     console.error('Error loading timesteps:', e);
@@ -272,9 +571,15 @@ async function loadSymbols() {
       
       // (valid time display removed from UI)
       
-      // Update model name from response (changes when switching between D2/EU timesteps)
+      // Update model/run from response (handles D2/EU-only viewport cases).
       if (data.model) {
         document.getElementById('model').textContent = data.model.toUpperCase().replace('_', '-');
+      }
+      if (data.run) {
+        const runDt = parseRunToDate(data.run);
+        if (runDt) {
+          document.getElementById('run-time').textContent = formatDateShort(runDt);
+        }
       }
     } catch (e) {
       console.error('Error loading symbols:', e);
@@ -301,6 +606,7 @@ const OVERLAY_META = {
   cloud_base: { label: 'Cloud base', unit: 'm', integer: true },
   dry_conv_top: { label: 'Dry convection top', unit: 'm', integer: true },
   conv_thickness: { label: 'Convective thickness', unit: 'm', integer: true },
+  lpi: { label: 'LPI', unit: '', decimals: 1 },
   thermals: { label: 'CAPE_ml', unit: 'J/kg', decimals: 1 },
   climb_rate: { label: 'Climb', unit: 'm/s', decimals: 1 },
   lcl: { label: 'Cloud base (LCL)', unit: 'm MSL', integer: true },
@@ -385,16 +691,183 @@ async function loadPoint(lat, lon, time, model, windLvl = '10m', zoom = null) {
   }
 }
 
+async function loadD2Border() {
+  try {
+    const step = timesteps[currentTimeIndex];
+    const time = step?.validTime || 'latest';
+    const res = await fetch(`/api/d2_domain?time=${encodeURIComponent(time)}`);
+    if (!res.ok) await throwHttpError(res, 'API');
+    const data = await res.json();
+    d2BorderLayer.clearLayers();
+
+    const segments = data?.boundarySegments || [];
+    const freshness = data?.diagnostics?.dataFreshnessMinutes;
+    const freshText = (freshness != null) ? `${freshness} min` : 'n/a';
+    const tip = `ICON-D2 valid-cell border<br/>Run: ${data.run}<br/>Valid: ${data.validTime}<br/>Freshness: ${freshText}`;
+
+    if (segments.length > 0) {
+      const line = L.polyline(segments, {
+        color: '#ffd84d',
+        weight: 2,
+        opacity: 0.95,
+        interactive: true,
+      }).addTo(d2BorderLayer);
+      line.bindTooltip(tip, { sticky: true, direction: 'top', opacity: 0.92 });
+    } else {
+      const b = data?.cellEdgeBbox || data?.bbox;
+      if (!b) return;
+      const rect = L.rectangle([[b.latMin, b.lonMin], [b.latMax, b.lonMax]], {
+        color: '#ffd84d',
+        weight: 2,
+        opacity: 0.95,
+        fill: false,
+        interactive: true,
+        dashArray: '4,3',
+      }).addTo(d2BorderLayer);
+      rect.bindTooltip(tip, { sticky: true, direction: 'top', opacity: 0.92 });
+    }
+    markApiSuccess();
+  } catch (e) {
+    console.error('Error loading D2 border:', e);
+    markApiFailure('d2 border', e);
+  }
+}
+
+let currentMarker = null;
+let markerSuggestions = [];
+let selectedSuggestionIdx = -1;
+let markerSearchDebounce = null;
+
+async function loadMarkerProfile() {
+  try {
+    const cid = getClientId();
+    const res = await fetch(`/api/marker_profile?clientId=${encodeURIComponent(cid)}`);
+    if (!res.ok) await throwHttpError(res, 'API');
+    const data = await res.json();
+    const m = data.marker;
+    if (!m) return;
+    currentMarker = m;
+    markerEditingEnabled = !!data.markerEditable;
+
+    markerLayer.clearLayers();
+    const marker = L.circleMarker([m.lat, m.lon], {
+      radius: 7,
+      fillColor: '#ff3b30',
+      color: '#8b0000',
+      weight: 2,
+      opacity: 0.95,
+      fillOpacity: 0.9,
+    }).addTo(markerLayer);
+    marker.bindTooltip(m.name || 'Marker', { direction: 'top', opacity: 0.92 });
+
+    const btn = document.getElementById('marker-picker-open');
+    if (btn) {
+      btn.textContent = `Marker: ${m.name || 'Marker'}`;
+      btn.disabled = !markerEditingEnabled;
+      btn.title = markerEditingEnabled ? '' : 'Marker editing disabled: server auth not configured';
+    }
+
+    const input = document.getElementById('marker-search');
+    const confirmBtn = document.getElementById('marker-confirm');
+    const locBtn = document.getElementById('marker-use-location');
+    if (input) input.disabled = !markerEditingEnabled;
+    if (confirmBtn) confirmBtn.disabled = !markerEditingEnabled;
+    if (locBtn) locBtn.disabled = !markerEditingEnabled;
+
+    markApiSuccess();
+  } catch (e) {
+    console.error('Error loading marker profile:', e);
+    markApiFailure('marker profile', e);
+  }
+}
+
+function renderMarkerSuggestions() {
+  const box = document.getElementById('marker-suggestions');
+  if (!box) return;
+  if (!markerSuggestions.length) {
+    box.innerHTML = '<div class="marker-suggestion empty">No matches</div>';
+    return;
+  }
+  box.innerHTML = markerSuggestions.map((s, idx) => {
+    const active = idx === selectedSuggestionIdx ? ' active' : '';
+    const subtitle = s.displayName ? `<div class="sub">${s.displayName}</div>` : '';
+    return `<div class="marker-suggestion${active}" data-idx="${idx}"><div>${s.name}</div>${subtitle}</div>`;
+  }).join('');
+
+  box.querySelectorAll('.marker-suggestion').forEach(el => {
+    el.addEventListener('click', () => {
+      selectedSuggestionIdx = Number(el.dataset.idx);
+      renderMarkerSuggestions();
+    });
+  });
+}
+
+async function searchMarkerLocations(query) {
+  try {
+    const res = await fetch(`/api/location_search?q=${encodeURIComponent(query)}&limit=8`);
+    if (!res.ok) await throwHttpError(res, 'API');
+    const data = await res.json();
+    markerSuggestions = data.results || [];
+    selectedSuggestionIdx = markerSuggestions.length ? 0 : -1;
+    renderMarkerSuggestions();
+    markApiSuccess();
+  } catch (e) {
+    console.error('Location search failed:', e);
+    markApiFailure('location search', e);
+  }
+}
+
+async function setMarkerProfile({ name, note = '', lat, lon }) {
+  const token = await ensureMarkerAuthToken();
+  const payload = {
+    clientId: getClientId(),
+    markerAuthToken: token,
+    name,
+    note,
+    lat,
+    lon,
+  };
+  let res = await fetch('/api/marker_profile', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (res.status === 401) {
+    const newTok = await ensureMarkerAuthToken(true);
+    payload.markerAuthToken = newTok;
+    res = await fetch('/api/marker_profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  }
+  if (!res.ok) await throwHttpError(res, 'API');
+}
+
+async function saveSelectedMarker() {
+  if (selectedSuggestionIdx < 0 || !markerSuggestions[selectedSuggestionIdx]) {
+    alert('Please select a location first.');
+    return;
+  }
+  const s = markerSuggestions[selectedSuggestionIdx];
+  try {
+    await setMarkerProfile({ name: s.name, note: s.displayName || '', lat: s.lat, lon: s.lon });
+    document.getElementById('marker-picker').style.display = 'none';
+    await loadMarkerProfile();
+    markApiSuccess();
+  } catch (e) {
+    console.error('Set marker failed:', e);
+    markApiFailure('set marker', e);
+  }
+}
+
 // Overlay loading — uses FIXED full-extent bbox so overlay never shifts on pan/zoom
 // Use viewport bbox for overlays (not full domain) for performance
 function getOverlayParams() {
   const b = map.getBounds();
-  // Clamp to data extent
-  const latMin = Math.max(b.getSouth(), 43.18);
-  const lonMin = Math.max(b.getWest(), -3.94);
-  const latMax = Math.min(b.getNorth(), 58.08);
-  const lonMax = Math.min(b.getEast(), 20.34);
-  const bbox = `${latMin},${lonMin},${latMax},${lonMax}`;
+  // No frontend clamp: backend will clip to available model extent.
+  const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
   // Width proportional to viewport, capped
   const width = Math.min(800, Math.round(window.innerWidth * 1.2));
   return { bbox, width };
@@ -630,6 +1103,70 @@ document.getElementById('layer-wind').addEventListener('change', (e) => {
   }
 });
 
+document.getElementById('marker-picker-open').addEventListener('click', () => {
+  if (!markerEditingEnabled) {
+    alert('Marker editing is currently disabled (server auth secret missing). Using default marker Geitau.');
+    return;
+  }
+  const panel = document.getElementById('marker-picker');
+  const input = document.getElementById('marker-search');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  if (panel.style.display === 'block') {
+    input.value = '';
+    markerSuggestions = [];
+    selectedSuggestionIdx = -1;
+    renderMarkerSuggestions();
+    setTimeout(() => input.focus(), 50);
+  }
+});
+
+document.getElementById('marker-cancel').addEventListener('click', () => {
+  document.getElementById('marker-picker').style.display = 'none';
+});
+
+document.getElementById('marker-confirm').addEventListener('click', () => {
+  saveSelectedMarker();
+});
+
+document.getElementById('marker-use-location').addEventListener('click', () => {
+  if (!navigator.geolocation) {
+    alert('Geolocation is not supported in this browser.');
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    async (pos) => {
+      try {
+        await setMarkerProfile({
+          name: 'My position',
+          note: 'Device location',
+          lat: pos.coords.latitude,
+          lon: pos.coords.longitude,
+        });
+        document.getElementById('marker-picker').style.display = 'none';
+        await loadMarkerProfile();
+        markApiSuccess();
+      } catch (e) {
+        console.error('Set marker from location failed:', e);
+        markApiFailure('marker local position', e);
+      }
+    },
+    () => alert('Could not get your location. Please allow location permission.'),
+    { enableHighAccuracy: true, timeout: 10000 }
+  );
+});
+
+document.getElementById('marker-search').addEventListener('input', (e) => {
+  const q = e.target.value.trim();
+  clearTimeout(markerSearchDebounce);
+  if (q.length < 2) {
+    markerSuggestions = [];
+    selectedSuggestionIdx = -1;
+    renderMarkerSuggestions();
+    return;
+  }
+  markerSearchDebounce = setTimeout(() => searchMarkerLocations(q), 220);
+});
+
 document.getElementById('wind-level').addEventListener('change', (e) => {
   windLevel = e.target.value;
   if (windEnabled) loadWind();
@@ -751,6 +1288,7 @@ function buildTimeline() {
       loadSymbols();
       loadOverlay();
       loadWind();
+      loadD2Border();
     });
     
     timeline.appendChild(hourEl);
@@ -856,6 +1394,7 @@ function stepForward() {
   loadSymbols();
   loadOverlay();
   loadWind();
+  loadD2Border();
 }
 
 function stepBackward() {
@@ -876,6 +1415,7 @@ function stepBackward() {
   loadSymbols();
   loadOverlay();
   loadWind();
+  loadD2Border();
 }
 
 prev1hBtn.addEventListener('click', stepBackward);
@@ -890,6 +1430,11 @@ const feedbackText = document.getElementById('feedback-text');
 const feedbackType = document.getElementById('feedback-type');
 const feedbackStatus = document.getElementById('feedback-status');
 const feedbackContext = document.getElementById('feedback-context');
+
+const helpBtn = document.getElementById('help-btn');
+const helpOverlay = document.getElementById('help-overlay');
+const helpClose = document.getElementById('help-close');
+const langSelect = document.getElementById('lang-select');
 
 function openFeedback() {
   feedbackOverlay.style.display = 'flex';
@@ -910,6 +1455,14 @@ function openFeedback() {
 
 function closeFeedback() {
   feedbackOverlay.style.display = 'none';
+}
+
+function openHelp() {
+  helpOverlay.style.display = 'flex';
+}
+
+function closeHelp() {
+  helpOverlay.style.display = 'none';
 }
 
 async function submitFeedback() {
@@ -974,8 +1527,21 @@ feedbackText.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') submitFeedback();
 });
 
-// Initial load
+if (helpBtn) helpBtn.addEventListener('click', openHelp);
+if (helpClose) helpClose.addEventListener('click', closeHelp);
+if (helpOverlay) {
+  helpOverlay.addEventListener('click', (e) => {
+    if (e.target === helpOverlay) closeHelp();
+  });
+}
+if (langSelect) {
+  langSelect.addEventListener('change', (e) => applyLocale(e.target.value));
+}
+
+// Initial localization + load
+applyLocale(currentLang);
 loadTimesteps();
+loadMarkerProfile();
 
 // Auto-refresh: check for new runs every 60s
 setInterval(async () => {
@@ -1023,6 +1589,7 @@ setInterval(async () => {
       buildTimeline();
       loadSymbols();
       loadWind();
+      loadD2Border();
 
       // Flash the run label to signal update
       const runEl = document.getElementById('run-time');
@@ -1037,6 +1604,7 @@ setInterval(async () => {
         currentTimeIndex = timesteps.length - 1;
       }
       buildTimeline();
+      loadD2Border();
     }
   } catch (e) {
     // Silently ignore polling errors

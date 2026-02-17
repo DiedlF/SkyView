@@ -18,7 +18,7 @@ def get_models_payload() -> dict:
                 "name": "icon-eu",
                 "label": "ICON-EU (6.5km)",
                 "maxHours": 120,
-                "timesteps": list(range(49, 79)) + list(range(81, 121, 3)),
+                "timesteps": list(range(1, 79)) + list(range(81, 121, 3)),
                 "resolution": 6.5,
                 "updateInterval": 6,
             },

@@ -22,6 +22,8 @@ This directory contains research notes, implementation guides, and reference mat
 
 ### Planning & Improvements
 - **IMPROVEMENT_IDEAS_SUMMARY.md** — Consolidated roadmap and phased implementation plan.
+- **ICON_EU_OUTSIDE_D2_IMPLEMENTATION_PLAN.md** — Implementation status for D2→EU spatial fallback (Phases 1–3), strict-time guard, and residual risks.
+- **QA_BASELINE_2026-02-15.md** — Baseline + boundary QA evidence for fallback behavior.
 
 ### Archive
 - Historical/superseded docs are in `archive/` (prototype reports, completed fix summaries, and superseded plans).
@@ -38,6 +40,12 @@ This directory contains research notes, implementation guides, and reference mat
 
 Prototype/fix-history docs are archived under `archive/` — useful for archaeology, not required for current development.
 
+Operational note: `/api/status` now exposes:
+- `fallback` counters for EU fallback resolution and blended endpoint usage (process-local), and
+- `ingestHealth.models.icon_d2/icon_eu` with latest run plus expected/available/missing steps.
+
+API diagnostics note: JSON endpoints (`/api/point`, `/api/symbols`, `/api/wind`) include a `diagnostics` object with `dataFreshnessMinutes` and `fallbackDecision`; overlay endpoints expose equivalent diagnostics via headers.
+
 ---
 
 ## 🔗 Related Files
@@ -49,4 +57,4 @@ Prototype/fix-history docs are archived under `archive/` — useful for archaeol
 
 ---
 
-**Last updated:** 2026-02-11
+**Last updated:** 2026-02-16

@@ -51,6 +51,8 @@ def build_overlay_values_from_raw(values: dict, wind_level: str = "10m") -> dict
         ov["cloud_base"] = round(values["hbas_sc"], 0)
     if values.get("htop_dc") is not None and values["htop_dc"] > 0:
         ov["dry_conv_top"] = round(values["htop_dc"], 0)
+    if values.get("lpi") is not None:
+        ov["lpi"] = round(values["lpi"], 1)
 
     if values.get("htop_sc") is not None and values.get("hbas_sc") is not None:
         thick = max(0.0, values["htop_sc"] - values["hbas_sc"])
@@ -130,6 +132,10 @@ def build_overlay_values(
         thick = np.maximum(0, d["htop_sc"][np.ix_(li, lo)] - d["hbas_sc"][np.ix_(li, lo)])
         thick_valid = thick[thick > 0]
         overlay_values["conv_thickness"] = round(float(np.max(thick_valid)), 0) if len(thick_valid) > 0 else None
+    if "lpi" in d:
+        lpi_vals = d["lpi"][np.ix_(li, lo)]
+        lpi_valid = lpi_vals[np.isfinite(lpi_vals)]
+        overlay_values["lpi"] = round(float(np.nanmax(lpi_valid)), 1) if len(lpi_valid) > 0 else None
 
     if "ashfl_s" in d and "mh" in d and "t_2m" in d:
         ashfl_cell = d["ashfl_s"][np.ix_(li, lo)]
@@ -178,5 +184,10 @@ def build_overlay_values(
         if np.isfinite(u_mean) and np.isfinite(v_mean):
             overlay_values["wind_speed"] = round(math.sqrt(u_mean**2 + v_mean**2) * 1.94384, 1)
             overlay_values["wind_dir"] = round((math.degrees(math.atan2(-u_mean, -v_mean)) + 360) % 360, 0)
+
+    # Guard JSON serialization: convert NaN/Inf values to None.
+    for k, v in list(overlay_values.items()):
+        if isinstance(v, float) and not np.isfinite(v):
+            overlay_values[k] = None
 
     return overlay_values

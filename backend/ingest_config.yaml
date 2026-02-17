@@ -3,7 +3,7 @@
 
 region:
   icon-d2: full          # Use native grid (no crop) — 746×1215
-  icon-eu: crop-to-d2    # Crop to ICON-D2 bounds (43.18–58.08°N, -3.94–20.34°E)
+  icon-eu: full          # Use full ICON-EU coverage (no crop)
 
 # D2 full domain bounds (used for EU cropping)
 d2_bounds:

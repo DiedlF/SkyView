@@ -25,9 +25,19 @@ def main() -> int:
     base = args.base.rstrip("/")
 
     # 1) Core endpoints
-    for ep in ("/api/health", "/api/timesteps", "/api/models"):
+    for ep in ("/api/health", "/api/timesteps", "/api/models", "/api/status"):
         r = requests.get(base + ep, timeout=20)
         assert_ok(r.status_code == 200, f"{ep} returned {r.status_code}")
+
+    st = requests.get(base + "/api/status", timeout=20).json()
+    fb = st.get("fallback", {})
+    for k in ("euResolveAttempts", "euResolveSuccess", "strictTimeDenied", "symbolsBlended", "windBlended", "pointFallback"):
+        assert_ok(k in fb, f"/api/status missing fallback.{k}")
+    ih = st.get("ingestHealth", {}).get("models", {})
+    assert_ok("icon_d2" in ih and "icon_eu" in ih, "/api/status missing ingestHealth models")
+    for m in ("icon_d2", "icon_eu"):
+        for k in ("availableSteps", "expectedSteps", "missingSteps", "coverage"):
+            assert_ok(k in ih[m], f"/api/status missing ingestHealth.models.{m}.{k}")
 
     ts = requests.get(base + "/api/timesteps", timeout=20).json().get("merged", {}).get("steps", [])
     assert_ok(len(ts) > 10, "Merged timeline too short / unavailable")
@@ -76,6 +86,9 @@ def main() -> int:
     j = rp.json()
     assert_ok("overlay_values" in j, "/api/point missing overlay_values")
     assert_ok("thermals" in j["overlay_values"], "/api/point missing thermals value")
+    diag = j.get("diagnostics", {})
+    for k in ("dataFreshnessMinutes", "fallbackDecision", "requestedTime", "sourceModel"):
+        assert_ok(k in diag, f"/api/point missing diagnostics.{k}")
 
     print("PASS: Skyview smoke checks passed")
     return 0

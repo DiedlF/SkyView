@@ -97,8 +97,9 @@ def colormap_thermals(val):
 
 
 def colormap_ceiling(v):
-    if v >= 9900 or v <= 0:
+    if v <= 0:
         return None
+    # Values above 9900m are clamped to max color instead of being suppressed.
     t = max(0.0, min(float(v), 9900.0)) / 9900.0
     return (int(220 * (1 - t)), int(60 + 180 * t), int(30 + 50 * t), int(200 - 60 * t))
 
@@ -145,6 +146,13 @@ def colormap_conv_thickness(v):
     return (int(240 * t + 40 * (1 - t)), int(220 * (1 - t) + 80 * t), int(60 * (1 - t) + 40 * t), 190)
 
 
+def colormap_lpi(v):
+    if v is None or float(v) <= 0:
+        return None
+    t = min(float(v) / 20.0, 1.0)
+    return (int(70 + 185 * t), int(190 * (1 - t) + 70 * t), int(80 * (1 - t) + 40 * t), int(120 + 110 * t))
+
+
 def _build_sigwx_lut() -> np.ndarray:
     lut = np.zeros((256, 4), dtype=np.uint8)
     for ww in range(256):
@@ -172,6 +180,7 @@ OVERLAY_CONFIGS = {
     "ceiling": {"var": "ceiling", "cmap": colormap_ceiling},
     "cloud_base": {"var": "hbas_sc", "cmap": colormap_hbas_sc},
     "conv_thickness": {"var": "conv_thickness", "cmap": colormap_conv_thickness, "computed": True},
+    "lpi": {"var": "lpi", "cmap": colormap_lpi},
     "thermals": {"var": "cape_ml", "cmap": colormap_thermals},
     "wstar": {"var": "wstar", "cmap": colormap_wstar, "computed": True},
     "climb_rate": {"var": "climb_rate", "cmap": colormap_climb_rate, "computed": True},
@@ -218,7 +227,7 @@ def colorize_layer_vectorized(layer: str, sampled: np.ndarray, valid: np.ndarray
         return rgba
 
     if layer in ("ceiling", "dry_conv_top"):
-        m = valid & (v > 0) & (v < 9900)
+        m = valid & (v > 0)
         if np.any(m):
             t = np.clip(v / 9900.0, 0.0, 1.0)
             set_rgba(m, 220 * (1 - t), 60 + 180 * t, 30 + 50 * t, 200 - 60 * t)
@@ -236,6 +245,13 @@ def colorize_layer_vectorized(layer: str, sampled: np.ndarray, valid: np.ndarray
         if np.any(m):
             t = np.clip(v / 6000.0, 0.0, 1.0)
             set_rgba(m, 240 * t + 40 * (1 - t), 220 * (1 - t) + 80 * t, 60 * (1 - t) + 40 * t, 190)
+        return rgba
+
+    if layer == "lpi":
+        m = valid & (v > 0)
+        if np.any(m):
+            t = np.clip(v / 20.0, 0.0, 1.0)
+            set_rgba(m, 70 + 185 * t, 190 - 120 * t, 80 - 40 * t, 110 + 120 * t)
         return rgba
 
     if layer == "thermals":
@@ -274,12 +290,13 @@ def colorize_layer_vectorized(layer: str, sampled: np.ndarray, valid: np.ndarray
         rgba[valid] = rgba_lookup[valid]
         return rgba
 
+    # Generic fallback for uncommon/custom layers: process only valid samples.
+    # (Avoid full h*w nested Python loops.)
     cmap_fn = OVERLAY_CONFIGS[layer]["cmap"]
-    for yy in range(h):
-        for xx in range(w):
-            if not valid[yy, xx]:
-                continue
-            color = cmap_fn(v[yy, xx])
-            if color:
-                rgba[yy, xx] = color
+    iy, ix = np.where(valid)
+    for k in range(len(iy)):
+        yy = int(iy[k]); xx = int(ix[k])
+        color = cmap_fn(v[yy, xx])
+        if color:
+            rgba[yy, xx] = color
     return rgba

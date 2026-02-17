@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from datetime import datetime, timezone
+
+feedback_lock = threading.Lock()
 
 
 def make_feedback_entry(body: dict) -> dict:
@@ -22,18 +25,19 @@ def make_feedback_entry(body: dict) -> dict:
 
 
 def append_feedback(feedback_file: str, entry: dict):
-    feedback = []
-    if os.path.exists(feedback_file):
-        try:
-            with open(feedback_file, "r") as f:
-                feedback = json.load(f)
-        except Exception:
-            feedback = []
+    with feedback_lock:
+        feedback = []
+        if os.path.exists(feedback_file):
+            try:
+                with open(feedback_file, "r") as f:
+                    feedback = json.load(f)
+            except Exception:
+                feedback = []
 
-    feedback.append(entry)
-    os.makedirs(os.path.dirname(feedback_file), exist_ok=True)
-    with open(feedback_file, "w") as f:
-        json.dump(feedback, f, indent=2)
+        feedback.append(entry)
+        os.makedirs(os.path.dirname(feedback_file), exist_ok=True)
+        with open(feedback_file, "w") as f:
+            json.dump(feedback, f, indent=2)
 
 
 def read_feedback_list(feedback_file: str):

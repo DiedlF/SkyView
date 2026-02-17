@@ -6,13 +6,11 @@ const SYM_SIZE = 36;
 const LABEL_OFFSET = 14;
 
 // ─── WMO ww code → symbol file mapping ───
-// Maps ww codes produced by ICON-D2 to SVG filenames
-const WW_SYMBOLS = {};
-// Generate mappings for all 100 ww codes (00-99)
-for (let i = 0; i < 100; i++) {
-  const code = String(i).padStart(2, '0');
-  WW_SYMBOLS[i] = `/geodata/ww-symbols/wmo4677_ww${code}.svg`;
-}
+// Keep this list trimmed to codes actually used by backend/weather_codes.py.
+const ICON_D2_WW = [0,1,2,3,45,48,51,53,55,56,57,61,63,65,66,67,71,73,75,77,80,81,82,85,86,95,96];
+const WW_SYMBOLS = Object.fromEntries(
+  ICON_D2_WW.map((ww) => [ww, `/geodata/ww-symbols/wmo4677_ww${String(ww).padStart(2, '0')}.svg`])
+);
 
 // ww code display names
 const WW_NAMES = {
@@ -39,24 +37,35 @@ const CLOUD_SYMBOLS = {
     svg: `<path d="M4 14 Q4 26 11 26 Q18 26 18 14 Q18 26 25 26 Q32 26 32 14" fill="none" stroke="#333" stroke-width="3" stroke-linecap="round"/>`,
     label: 'Altocumulus'
   },
+  ci: {
+    svg: `<path d="M 6,25 h 20 A 5,5 0 0 0 26,15" fill="none" stroke="#333" stroke-width="2.6" stroke-linecap="round"/>`,
+    label: 'Cirrus'
+  },
   cu_hum: {
-    svg: `<line x1="6" y1="26" x2="30" y2="26" stroke="#333" stroke-width="3"/>
-          <path d="M6 26 Q6 12 18 12 Q30 12 30 26" fill="none" stroke="#333" stroke-width="3"/>`,
+    // Reference style: simple semicircle with baseline
+    svg: `<path d="M6 26 Q18 7 30 26" fill="none" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <line x1="6" y1="26" x2="30" y2="26" stroke="#333" stroke-width="3" stroke-linecap="round"/>`,
     label: 'Cu humilis'
   },
   cu_con: {
-    svg: `<line x1="6" y1="30" x2="30" y2="30" stroke="#333" stroke-width="3"/>
-          <path d="M6 30 L6 20 Q6 14 11 14 Q14 8 18 8 Q22 8 25 14 Q30 14 30 20 L30 30" fill="none" stroke="#333" stroke-width="3"/>`,
+    // Reference style: developed cumulus with upper dome and vertical core
+    svg: `<path d="M6 26 Q18 7 30 26" fill="none" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <line x1="6" y1="26" x2="30" y2="26" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <path d="M11 19 Q18 0 25 19" fill="none" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <line x1="18" y1="10" x2="18" y2="23" stroke="#333" stroke-width="3" stroke-linecap="round"/>`,
     label: 'Cu congestus'
   },
   cb: {
-    svg: `<line x1="6" y1="30" x2="30" y2="30" stroke="#333" stroke-width="3"/>
-          <path d="M6 30 L6 20 Q6 14 11 14 Q14 8 18 8 Q22 8 25 14 Q30 14 30 20 L30 30" fill="none" stroke="#333" stroke-width="3"/>
-          <line x1="4" y1="8" x2="32" y2="8" stroke="#333" stroke-width="3"/>`,
+    // Reference style: dome with trapezoid anvil top
+    svg: `<path d="M6 26 Q18 7 30 26" fill="none" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <line x1="6" y1="26" x2="30" y2="26" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <line x1="12" y1="17" x2="9" y2="10" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <line x1="24" y1="17" x2="27" y2="10" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+          <line x1="9" y1="10" x2="27" y2="10" stroke="#333" stroke-width="3" stroke-linecap="round"/>`,
     label: 'Cb'
   },
   blue_thermal: {
-    svg: `<text x="18" y="24" text-anchor="middle" font-size="22" font-weight="bold" fill="#333">b</text>`,
+    svg: `<text x="18" y="26" text-anchor="middle" font-size="22" font-weight="bold" fill="#333">b</text>`,
     label: 'Blue thermal'
   },
 };
@@ -79,8 +88,7 @@ async function _preloadWwSvg(ww) {
   }
 }
 
-// Preload all ICON-D2 ww codes on startup
-const ICON_D2_WW = [0,1,2,3,45,48,51,53,55,56,57,61,63,65,66,67,71,73,75,77,80,81,82,85,86,95,96];
+// Preload all configured ww codes on startup
 ICON_D2_WW.forEach(ww => _preloadWwSvg(ww));
 
 /**
@@ -143,14 +151,17 @@ function createSymbolIcon(type, cloudBase) {
 
 // Map symbol type names back to ww codes
 function _typeToWw(type) {
+  // Keep aligned with backend/weather_codes.py ww_to_symbol mapping.
   const map = {
     'fog': 45, 'rime_fog': 48,
-    'drizzle_light': 50, 'drizzle_moderate': 51, 'drizzle_dense': 53,
+    'drizzle_light': 51, 'drizzle_moderate': 53, 'drizzle_dense': 55,
     'freezing_drizzle': 56, 'freezing_drizzle_heavy': 57,
-    'rain_slight': 60, 'rain_moderate': 61, 'rain_heavy': 63,
+    'rain_slight': 61, 'rain_moderate': 63, 'rain_heavy': 65,
     'freezing_rain': 66, 'freezing_rain_heavy': 67,
-    'rain_shower': 80, 'rain_shower_moderate': 81, 'rain_shower_heavy': 82,
-    'snow_slight': 70, 'snow_moderate': 71, 'snow_heavy': 73,
+    'rain_shower': 80, 'rain_shower_moderate': 81,
+    // Backend currently maps ww82 to rain_shower_moderate; keep alias for compatibility.
+    'rain_shower_heavy': 82,
+    'snow_slight': 71, 'snow_moderate': 73, 'snow_heavy': 75,
     'snow_grains': 77,
     'snow_shower': 85, 'snow_shower_heavy': 86,
     'thunderstorm': 95, 'thunderstorm_hail': 96,

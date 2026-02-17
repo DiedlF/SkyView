@@ -5,6 +5,40 @@ from logging_config import setup_logging
 logger = setup_logging(__name__, level="WARNING")
 
 
+def classify_point(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=0.0):
+    """Canonical scalar cloud-type classification.
+
+    Inputs use AMSL for htop_dc/hbas_sc; AGL thresholds are applied via hsurf.
+    """
+    ww = 0.0
+    if not (np.isfinite(ww) and ww <= 3):
+        return "clear"
+
+    is_conv = np.isfinite(cape_ml) and (cape_ml > 50)
+    if is_conv:
+        cloud_depth = max(0.0, htop_sc - hbas_sc) if np.isfinite(htop_sc) and np.isfinite(hbas_sc) else 0.0
+        hbas_agl = (hbas_sc - hsurf) if (np.isfinite(hbas_sc) and np.isfinite(hsurf)) else np.nan
+        htop_dc_agl = (htop_dc - hsurf) if (np.isfinite(htop_dc) and np.isfinite(hsurf)) else np.nan
+
+        if (hbas_sc <= 0 or clcl < 5) and np.isfinite(htop_dc_agl) and htop_dc_agl >= 300:
+            return "blue_thermal"
+        if np.isfinite(hbas_agl) and hbas_agl >= 300:
+            if (lpi > 7) or ((cloud_depth > 4000) and (cape_ml > 1000)):
+                return "cb"
+            if cloud_depth > 2000:
+                return "cu_con"
+            return "cu_hum"
+        return "clear"
+
+    if not np.isfinite(ceiling) or ceiling <= 0 or ceiling >= 20000:
+        return "clear"
+    if ceiling < 2000:
+        return "st" if np.isfinite(clcl) and clcl >= 30 else "clear"
+    if ceiling < 7000:
+        return "ac" if np.isfinite(clcm) and clcm >= 30 else "clear"
+    return "ci" if np.isfinite(clch) and clch >= 30 else "clear"
+
+
 def crop_to_bbox(arrays_dict, lat, lon, bbox):
     """Crop multiple 2D arrays to bbox (lat_min, lat_max, lon_min, lon_max).
     
@@ -31,10 +65,14 @@ def crop_to_bbox(arrays_dict, lat, lon, bbox):
     return cropped, lat[li], lon[lo]
 
 
-def classify_cloud_type(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling):
+def classify_cloud_type(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=None):
     """Classify cloud type for ww<=3 grid points.
 
-    Non-convective class is determined solely from ceiling.
+    Non-convective class uses ceiling band + min layer cloud cover:
+    - st: ceiling < 2000 and clcl >= 30
+    - ac: 2000 <= ceiling < 7000 and clcm >= 30
+    - ci: ceiling >= 7000 and clch >= 30
+    otherwise clear.
     """
     height, width = ww.shape
     logger.debug(f"Classifying cloud types for grid: {height}x{width}")
@@ -46,19 +84,38 @@ def classify_cloud_type(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc
     # Convective
     conv_mask = mask & is_convective
     cloud_depth = np.maximum(0, htop_sc - hbas_sc)
-    cloud_type[conv_mask & ((hbas_sc <= 0) | (clcl < 5))] = "blue_thermal"
-    cloud_type[conv_mask & ((lpi > 0) | (cloud_depth > 4000) | (cape_ml > 1000))] = "cb"
-    cu_con_mask = conv_mask & (cloud_depth > 500) & (cloud_type != "cb") & (cloud_type != "blue_thermal")
+
+    # hbas_sc / htop_dc are AMSL; convert to AGL using hsurf when available.
+    if hsurf is None:
+        hsurf = np.zeros_like(hbas_sc)
+    hbas_agl = hbas_sc - hsurf
+    htop_dc_agl = htop_dc - hsurf
+
+    # Suppress convective symbols when AGL signal is too low:
+    # - convective clouds (cu_hum/cu_con/cb): cloud base must be >= 300 m AGL
+    # - blue_thermal: dry convection top must be >= 300 m AGL
+    conv_cloud_ok = np.isfinite(hbas_agl) & (hbas_agl >= 300)
+    blue_ok = np.isfinite(htop_dc_agl) & (htop_dc_agl >= 300)
+
+    blue_mask = conv_mask & ((hbas_sc <= 0) | (clcl < 5)) & blue_ok
+    cloud_type[blue_mask] = "blue_thermal"
+    cloud_type[conv_mask & conv_cloud_ok & ((lpi > 7) | ((cloud_depth > 4000) & (cape_ml > 1000))) & (cloud_type != "blue_thermal")] = "cb"
+    cu_con_mask = conv_mask & conv_cloud_ok & (cloud_depth > 2000) & (cloud_type != "cb") & (cloud_type != "blue_thermal")
     cloud_type[cu_con_mask] = "cu_con"
-    cu_hum_mask = conv_mask & (cloud_type == "clear")
+    cu_hum_mask = conv_mask & conv_cloud_ok & (cloud_type == "clear")
     cloud_type[cu_hum_mask] = "cu_hum"
 
-    # Non-convective (ceiling only)
+    # Non-convective (ceiling band + min layer cloud cover)
     strat_mask = mask & ~is_convective
     valid_ceiling = strat_mask & np.isfinite(ceiling) & (ceiling > 0) & (ceiling < 20000)
-    cloud_type[valid_ceiling & (ceiling < 2500)] = "st"
-    cloud_type[valid_ceiling & (ceiling > 7000)] = "ci"
-    cloud_type[valid_ceiling & (ceiling >= 2500) & (ceiling <= 7000)] = "ac"
+
+    low_band = valid_ceiling & (ceiling < 2000)
+    mid_band = valid_ceiling & (ceiling >= 2000) & (ceiling < 7000)
+    high_band = valid_ceiling & (ceiling >= 7000)
+
+    cloud_type[low_band & np.isfinite(clcl) & (clcl >= 30)] = "st"
+    cloud_type[mid_band & np.isfinite(clcm) & (clcm >= 30)] = "ac"
+    cloud_type[high_band & np.isfinite(clch) & (clch >= 30)] = "ci"
     
     # Log classification summary
     unique, counts = np.unique(cloud_type, return_counts=True)

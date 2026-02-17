@@ -21,6 +21,7 @@ def aggregate_symbol_cell(
     c_hbas_sc: np.ndarray,
     c_htop_sc: np.ndarray,
     c_lpi: np.ndarray,
+    c_hsurf: np.ndarray,
     classify_point_fn: Callable,
     zoom: int = 12,
 ) -> Tuple[str, int | None, int, int]:
@@ -63,23 +64,27 @@ def aggregate_symbol_cell(
 
         # Sampled sub-cell arrays
         s_clcl = c_clcl[np.ix_(iter_cli, iter_clo)]
+        s_clcm = c_clcm[np.ix_(iter_cli, iter_clo)]
+        s_clch = c_clch[np.ix_(iter_cli, iter_clo)]
         s_cape = c_cape[np.ix_(iter_cli, iter_clo)]
         s_htop_dc = c_htop_dc[np.ix_(iter_cli, iter_clo)]
         s_hbas_sc = c_hbas_sc[np.ix_(iter_cli, iter_clo)]
         s_htop_sc = c_htop_sc[np.ix_(iter_cli, iter_clo)]
         s_lpi = c_lpi[np.ix_(iter_cli, iter_clo)]
+        s_hsurf = c_hsurf[np.ix_(iter_cli, iter_clo)]
         s_ceil = ceil_arr[np.ix_(iter_cli, iter_clo)]
 
         # Vectorized emulation of classify_point() decision tree.
         conv_mask = np.isfinite(s_cape) & (s_cape > 50)
         cloud_depth = np.maximum(0.0, np.where(np.isfinite(s_htop_sc) & np.isfinite(s_hbas_sc), s_htop_sc - s_hbas_sc, 0.0))
 
-        # Priority 2: true convective base candidates (hbas_sc > 0 with CAPE > 50)
-        p2_mask = conv_mask & np.isfinite(s_hbas_sc) & (s_hbas_sc > 0)
+        # Priority 2: true convective base candidates (hbas_sc-hsurf >= 300m AGL with CAPE > 50)
+        hbas_agl = s_hbas_sc - s_hsurf
+        p2_mask = conv_mask & np.isfinite(hbas_agl) & (hbas_agl >= 300)
         cb_mask = p2_mask & (
-            (np.isfinite(s_lpi) & (s_lpi > 0)) | (cloud_depth > 4000) | (np.isfinite(s_cape) & (s_cape > 1000))
+            (np.isfinite(s_lpi) & (s_lpi > 7)) | ((cloud_depth > 4000) & np.isfinite(s_cape) & (s_cape > 1000))
         )
-        cu_con_mask = p2_mask & (~cb_mask) & (cloud_depth > 500)
+        cu_con_mask = p2_mask & (~cb_mask) & (cloud_depth > 2000)
         cu_hum_mask = p2_mask & (~cb_mask) & (~cu_con_mask)
 
         if np.any(p2_mask):
@@ -97,10 +102,11 @@ def aggregate_symbol_cell(
             else:
                 sym = "cu_hum"
             # altitude label from winning symbol point
-            cb_hm = int(float(vals[k]) / 100) if float(vals[k]) > 0 else None
+            cb_hm = int((float(vals[k])-50) / 100) if float(vals[k]) > 0 else None
         else:
-            # Priority 3: dry convection candidates (htop_dc > 0 with CAPE > 50)
-            p3_mask = conv_mask & np.isfinite(s_htop_dc) & (s_htop_dc > 0)
+            # Priority 3: dry convection candidates (htop_dc-hsurf >= 300m AGL with CAPE > 50)
+            htop_dc_agl = s_htop_dc - s_hsurf
+            p3_mask = conv_mask & np.isfinite(htop_dc_agl) & (htop_dc_agl >= 300)
             if np.any(p3_mask):
                 i_loc, j_loc = np.where(p3_mask)
                 vals = s_htop_dc[i_loc, j_loc]
@@ -111,22 +117,18 @@ def aggregate_symbol_cell(
                 best_jj = int(iter_clo[jj_s])
                 sym = "blue_thermal"
                 # altitude label from winning symbol point
-                cb_hm = int(float(vals[k]) / 100) if float(vals[k]) > 0 else None
+                cb_hm = int((float(vals[k])-50) / 100) if float(vals[k]) > 0 else None
             else:
-                # Non-convective fallback: ceiling-only
+                # Non-convective fallback: representative-cell method
+                # 1) compute average ceiling
+                # 2) pick the cell closest to that average
+                # 3) use THAT cell's altitude and symbol
                 ceil_mask = np.isfinite(s_ceil) & (s_ceil > 0) & (s_ceil < 20000)
                 ceil_valid = s_ceil[ceil_mask]
                 if len(ceil_valid) == 0:
                     sym = "clear"
                 else:
                     avg_ceil = float(np.mean(ceil_valid))
-                    if avg_ceil < 2500:
-                        sym = "st"
-                    elif avg_ceil > 7000:
-                        sym = "ci"
-                    else:
-                        sym = "ac"
-                    # choose winning point closest to representative ceiling and use its altitude label
                     i_loc, j_loc = np.where(ceil_mask)
                     vals = s_ceil[i_loc, j_loc]
                     k = int(np.argmin(np.abs(vals - avg_ceil)))
@@ -134,7 +136,20 @@ def aggregate_symbol_cell(
                     jj_s = int(j_loc[k])
                     best_ii = int(iter_cli[ii_s])
                     best_jj = int(iter_clo[jj_s])
-                    cb_hm = int(float(vals[k]) / 100)
+
+                    chosen_ceil = float(vals[k])
+                    chosen_clcl = float(s_clcl[ii_s, jj_s]) if np.isfinite(s_clcl[ii_s, jj_s]) else np.nan
+                    chosen_clcm = float(s_clcm[ii_s, jj_s]) if np.isfinite(s_clcm[ii_s, jj_s]) else np.nan
+                    chosen_clch = float(s_clch[ii_s, jj_s]) if np.isfinite(s_clch[ii_s, jj_s]) else np.nan
+
+                    if chosen_ceil < 2000:
+                        sym = "st" if np.isfinite(chosen_clcl) and chosen_clcl >= 30 else "clear"
+                    elif chosen_ceil < 7000:
+                        sym = "ac" if np.isfinite(chosen_clcm) and chosen_clcm >= 30 else "clear"
+                    else:
+                        sym = "ci" if np.isfinite(chosen_clch) and chosen_clch >= 30 else "clear"
+
+                    cb_hm = int((chosen_ceil - 50) / 100) if sym != "clear" else None
 
     # Keep label tied to the winning symbol point altitude.
     if cb_hm is not None and cb_hm > 99:
