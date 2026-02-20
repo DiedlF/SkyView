@@ -33,7 +33,7 @@
 
 - [ ] **`test_symbol_zoom_continuity` threshold** — 3 cells at z8→z9 give 98.68% vs 99.5% threshold. Investigate whether these are legitimately ambiguous border cells or a real rendering inconsistency.
 - [ ] **GitHub push** — repo not yet pushed to remote.
-- [ ] **CI pipeline** (PR9) — lint/type/pytest + qa_smoke/qa_regression/qa_contract/qa_perf workflows.
+- [x] **CI pipeline** (PR9) — lint/type/pytest + qa_smoke/qa_regression/qa_contract/qa_perf workflows. Live: https://github.com/DiedlF/SkyView/actions
 - [x] **Pytest migration** (PR8) — `tests/test_smoke.py`, `test_regression.py`, `test_contract.py`, `test_perf.py`. Unit tests (no server) run always; integration/perf marked + skipped in fast CI. `pytest.ini` configured. 20 unit tests pass. (Arch #11)
 - [ ] **Marker secret startup policy** — warn/error at startup when `SKYVIEW_MARKER_AUTH_SECRET` missing/weak; add rotation notes to ops docs. (PR10)
 - [ ] **CORS production** — doc that `SKYVIEW_CORS_ORIGINS` must be set to real hostname before public deploy; default already safe (localhost allowlist). (PR11)
