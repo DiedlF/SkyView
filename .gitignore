@@ -1,8 +1,6 @@
+**/__pycache__/
+**/logs/
+**/tmp/
+
 data/icon-d2/
 data/icon-eu/
-data/tmp/
-backend/logs/
-backend/__pycache__/
-explorer/logs/
-explorer/__pycache__/
-scripts/__pycache__/

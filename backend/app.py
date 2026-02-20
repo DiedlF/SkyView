@@ -1852,11 +1852,13 @@ async def api_status():
             payload["ingestHealth"]["models"][mk]["freshnessMinutesSinceFullIngest"] = timings[mk].get("freshnessMinutesSinceFullIngest")
 
     # Panel-relevant fallback status: current snapshot, not cumulative counters.
-    payload["fallback"] = {
+    # Merge per-request snapshot fields into the fallback counter dict built by
+    # build_status_payload — use update() so the cumulative counters are preserved.
+    payload["fallback"].update({
         "updatedAt": app_state.fallback_current.get("updatedAt"),
         "endpoints": app_state.fallback_current.get("endpoints", {}),
         "strictWindowHours": EU_STRICT_MAX_DELTA_HOURS,
-    }
+    })
 
     return payload
 

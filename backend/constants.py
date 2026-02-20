@@ -43,3 +43,5 @@ PRECIP_RATE_FIELD_BY_LAYER_VAR: dict[str, str] = {
     "snow_amount": "snow_rate",
     "hail_amount": "hail_rate",
 }
+
+DATA_CACHE_MAX_ITEMS: int = 24
