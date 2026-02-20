@@ -101,6 +101,7 @@ from constants import (
     CAPE_CONV_THRESHOLD,
     ICON_EU_STEP_3H_START,
     EU_STRICT_MAX_DELTA_HOURS_DEFAULT,
+    DATA_CACHE_MAX_ITEMS
 )
 from cache_state import (
     TILE_CACHE_MAX_ITEMS_DESKTOP, TILE_CACHE_MAX_ITEMS_MOBILE, TILE_CACHE_TTL_SECONDS,
@@ -384,7 +385,7 @@ def load_data(run: str, step: int, model: str, keys: Optional[List[str]] = None)
         run=run,
         step=step,
         cache=data_cache,
-        cache_max_items=constants.DATA_CACHE_MAX_ITEMS,
+        cache_max_items=DATA_CACHE_MAX_ITEMS,
         keys=keys,
         logger=logger,
     )
@@ -1931,7 +1932,11 @@ async def api_overlay_tile(
     client_class = "mobile" if clientClass == "mobile" else "desktop"
     cfg = OVERLAY_CONFIGS[layer]
 
+    # Always load hsurf alongside overlay keys: it reflects the true D2 domain validity
+    # (NaN outside the irregular rotated-lat-lon domain, not just at the rectangular bbox edge).
     overlay_keys = build_overlay_keys(cfg)
+    if "hsurf" not in overlay_keys:
+        overlay_keys = list(overlay_keys) + ["hsurf"]
 
     t_load0 = perf_counter()
     run, step, model_used = resolve_time_with_cache_context(time, model)
@@ -1939,10 +1944,14 @@ async def api_overlay_tile(
     lat = d["lat"]
     lon = d["lon"]
 
-    # EU load only if the tile extends outside D2 bounds OR into the D2 boundary relaxation zone.
+    # EU load decision: check whether this tile has any pixels where D2 has no valid data.
+    # ICON-D2 uses a rotated lat-lon grid whose domain is highly irregular in regular lat-lon.
+    # The rectangular bbox (np.min/max lat/lon) is much larger than the actual valid domain:
+    # e.g. at lat=50°N valid D2 lons start at ~-1.9°E, not at the bbox edge of -3.94°E.
+    # We use hsurf (terrain elevation) as the domain mask — it is NaN exactly where D2 has
+    # no data, regardless of the cause (irregular boundary, relaxation zone, etc.).
     _eu_raw_tile = None
     eu_fb = None
-    # Compute D2 grid resolution (needed for gate and inside-mask expansion below).
     d2_lat_res = abs(float(lat[1] - lat[0])) if len(lat) > 1 else 0.02
     d2_lon_res = abs(float(lon[1] - lon[0])) if len(lon) > 1 else 0.02
     if model_used == "icon_d2":
@@ -1953,17 +1962,32 @@ async def api_overlay_tile(
         lon1, lat1 = _merc_to_lonlat(maxx, maxy)
         t_lon_min, t_lon_max = min(lon0, lon1), max(lon0, lon1)
         t_lat_min, t_lat_max = min(lat0, lat1), max(lat0, lat1)
-        # Expand gate 5 cells inward: ICON-D2 has a ~3-cell NaN relaxation zone at all borders.
-        # Without this, tiles inside the rectangular D2 bbox but over the NaN zone never load EU,
-        # leaving transparent gaps near the D2 boundary that EU should fill.
-        _eu_border_margin_lat = d2_lat_res * 5
-        _eu_border_margin_lon = d2_lon_res * 5
-        needs_eu_fill = (
-            t_lat_min < d2_lat_min + _eu_border_margin_lat
-            or t_lat_max > d2_lat_max - _eu_border_margin_lat
-            or t_lon_min < d2_lon_min + _eu_border_margin_lon
-            or t_lon_max > d2_lon_max - _eu_border_margin_lon
+
+        # Fast path: tile entirely outside D2 rectangular bbox → definitely need EU.
+        outside_d2_rect = (
+            t_lat_min >= d2_lat_max or t_lat_max <= d2_lat_min
+            or t_lon_min >= d2_lon_max or t_lon_max <= d2_lon_min
         )
+        # Tile overlaps D2 bbox but might have NaN in the irregular domain interior.
+        needs_eu_fill = outside_d2_rect
+        if not needs_eu_fill and "hsurf" in d:
+            # Slice hsurf to tile bounds (+1 cell padding) and check for any NaN.
+            # This correctly handles the irregular D2 boundary in all directions.
+            lat_lo = int(max(0, np.searchsorted(lat, t_lat_min) - 1))
+            lat_hi = int(min(len(lat) - 1, np.searchsorted(lat, t_lat_max) + 1))
+            lon_lo = int(max(0, np.searchsorted(lon, t_lon_min) - 1))
+            lon_hi = int(min(len(lon) - 1, np.searchsorted(lon, t_lon_max) + 1))
+            tile_hsurf = d["hsurf"][lat_lo : lat_hi + 1, lon_lo : lon_hi + 1]
+            needs_eu_fill = not bool(np.all(np.isfinite(tile_hsurf)))
+        elif not needs_eu_fill:
+            # hsurf not available — fall back to 5-cell-inward rectangular margin.
+            needs_eu_fill = (
+                t_lat_min < d2_lat_min + d2_lat_res * 5
+                or t_lat_max > d2_lat_max - d2_lat_res * 5
+                or t_lon_min < d2_lon_min + d2_lon_res * 5
+                or t_lon_max > d2_lon_max - d2_lon_res * 5
+            )
+
         if needs_eu_fill:
             _eu_raw_tile = _try_load_eu_fallback(time, cfg)
             eu_fb = _eu_raw_tile if (_eu_raw_tile is not None and not _eu_raw_tile.get("missing")) else None
