@@ -379,7 +379,7 @@ def load_data(run: str, step: int, model: str, keys: Optional[List[str]] = None)
         run=run,
         step=step,
         cache=data_cache,
-        cache_max_items=8,
+        cache_max_items=constants.DATA_CACHE_MAX_ITEMS,
         keys=keys,
         logger=logger,
     )
