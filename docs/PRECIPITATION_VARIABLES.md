@@ -79,6 +79,19 @@
 
 ---
 
+## Current Skyview implementation (2026-02)
+
+- Precip overlays (`total_precip`, `rain`, `snow`, `hail`) use **precomputed ingest fields** derived from amount fields via de-accumulation between consecutive timesteps.
+- Reported values are normalized to **mm/h-equivalent** by dividing with timestep length `Δt`.
+  - `Δt=1h` for hourly steps
+  - `Δt=3h` for ICON-EU long-range steps (`>=81`)
+- Sources:
+  - `total_precip`: `tot_prec`
+  - `rain`: `rain_gsp + rain_con`
+  - `snow`: `snow_gsp + snow_con`
+  - `hail`: `grau_gsp` (if unavailable: treated as 0)
+- Optional missing ICON-EU variables are now **skipped** in ingest (no zero-fill placeholders).
+
 ## Recommendations for Skyview
 
 ### Current Implementation

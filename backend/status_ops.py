@@ -5,6 +5,19 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 
+def _percentile(values, p):
+    if not values:
+        return None
+    xs = sorted(float(v) for v in values)
+    if len(xs) == 1:
+        return xs[0]
+    rank = (len(xs) - 1) * float(p)
+    lo = int(rank)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = rank - lo
+    return xs[lo] * (1.0 - frac) + xs[hi] * frac
+
+
 def build_status_payload(
     *,
     runs,
@@ -21,6 +34,9 @@ def build_status_payload(
     cache_context_stats,
     perf_recent,
     perf_totals,
+    overlay_phase_recent,
+    overlay_phase_totals,
+    computed_field_metrics,
     api_error_counters,
     fallback_stats,
 ):
@@ -82,6 +98,13 @@ def build_status_payload(
     total_avg_ms = (perf_totals["totalMs"] / total_req) if total_req else None
     total_hit_rate = (perf_totals["hits"] / total_req) if total_req else None
 
+    phase_recent = list(overlay_phase_recent)
+    phase_n = len(phase_recent)
+    phase_total_req = overlay_phase_totals.get("requests", 0)
+
+    def _phase_pct(field: str, pct: float):
+        return _percentile([r.get(field, 0.0) for r in phase_recent], pct)
+
     return {
         "ingest": ingest,
         "models": {
@@ -108,6 +131,7 @@ def build_status_payload(
             },
             "computedField": {
                 "items": len(computed_field_cache),
+                "metrics": computed_field_metrics,
             },
             "symbols": symbols_cache_stats,
             "context": cache_context_stats,
@@ -125,6 +149,38 @@ def build_status_payload(
                 "misses": perf_totals["misses"],
                 "avgMs": total_avg_ms,
                 "hitRate": total_hit_rate,
+            },
+            "overlayTilePhases": {
+                "recentWindow": {
+                    "size": phase_n,
+                    "maxSize": overlay_phase_recent.maxlen,
+                    "p50": {
+                        "loadMs": _phase_pct("loadMs", 0.5),
+                        "sourceMs": _phase_pct("sourceMs", 0.5),
+                        "colorizeMs": _phase_pct("colorizeMs", 0.5),
+                        "encodeMs": _phase_pct("encodeMs", 0.5),
+                        "totalMs": _phase_pct("totalMs", 0.5),
+                    },
+                    "p95": {
+                        "loadMs": _phase_pct("loadMs", 0.95),
+                        "sourceMs": _phase_pct("sourceMs", 0.95),
+                        "colorizeMs": _phase_pct("colorizeMs", 0.95),
+                        "encodeMs": _phase_pct("encodeMs", 0.95),
+                        "totalMs": _phase_pct("totalMs", 0.95),
+                    },
+                },
+                "totals": {
+                    "requests": phase_total_req,
+                    "hits": overlay_phase_totals.get("hits", 0),
+                    "misses": overlay_phase_totals.get("misses", 0),
+                    "avg": {
+                        "loadMs": (overlay_phase_totals.get("loadMs", 0.0) / phase_total_req) if phase_total_req else None,
+                        "sourceMs": (overlay_phase_totals.get("sourceMs", 0.0) / phase_total_req) if phase_total_req else None,
+                        "colorizeMs": (overlay_phase_totals.get("colorizeMs", 0.0) / phase_total_req) if phase_total_req else None,
+                        "encodeMs": (overlay_phase_totals.get("encodeMs", 0.0) / phase_total_req) if phase_total_req else None,
+                        "totalMs": (overlay_phase_totals.get("totalMs", 0.0) / phase_total_req) if phase_total_req else None,
+                    },
+                },
             },
         },
         "errors": {

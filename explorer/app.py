@@ -24,6 +24,8 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 from PIL import Image
 
+from data_provider import build_provider, LocalNpzProvider
+
 app = FastAPI(title="ICON-Explorer API")
 
 logger = logging.getLogger("explorer")
@@ -72,7 +74,8 @@ from grid_utils import bbox_indices as _bbox_indices, slice_array as _slice_arra
 from response_headers import build_overlay_headers, build_tile_headers
 from model_caps import get_models_payload
 
-data_cache: Dict[str, Dict[str, Any]] = {}
+DATA_PROVIDER_MODE = os.environ.get("EXPLORER_DATA_PROVIDER", "dwd")
+SOURCE_API_TOKEN = os.environ.get("EXPLORER_SOURCE_API_TOKEN", "").strip()
 
 
 def _acquire_single_instance_or_exit(pid_file: str):
@@ -254,92 +257,267 @@ VARIABLE_METADATA = {
 
 # ─── Data Loading Helpers ───
 
+source_provider = LocalNpzProvider(
+    DATA_DIR,
+    tc_get_available_runs,
+    tc_get_merged_timeline,
+    tc_resolve_time,
+)
+
+try:
+    provider = build_provider(
+        DATA_PROVIDER_MODE,
+        data_dir=DATA_DIR,
+        get_runs_fn=tc_get_available_runs,
+        get_merged_timeline_fn=tc_get_merged_timeline,
+        resolve_time_fn=tc_resolve_time,
+    )
+    ACTIVE_PROVIDER_MODE = DATA_PROVIDER_MODE
+except Exception as e:
+    logger.warning(f"Failed to initialize provider '{DATA_PROVIDER_MODE}' ({e}), falling back to local_npz")
+    provider = build_provider(
+        "local_npz",
+        data_dir=DATA_DIR,
+        get_runs_fn=tc_get_available_runs,
+        get_merged_timeline_fn=tc_get_merged_timeline,
+        resolve_time_fn=tc_resolve_time,
+    )
+    ACTIVE_PROVIDER_MODE = "local_npz"
+
+logger.info(f"Explorer data provider: {ACTIVE_PROVIDER_MODE}")
+
+
+def _provider_call(fn_name: str, *args, **kwargs):
+    fn = getattr(provider, fn_name)
+    try:
+        return fn(*args, **kwargs)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+def _require_source_auth(request: Request):
+    if not SOURCE_API_TOKEN:
+        return
+    token = request.headers.get("X-Source-Token", "")
+    if token != SOURCE_API_TOKEN:
+        raise HTTPException(status_code=401, detail="Unauthorized source access")
+
+
 def load_data(run: str, step: int, model: str, keys: Optional[List[str]] = None) -> Dict[str, Any]:
-    """Load .npz data for a given run/step/model."""
-    cache_key = f"{model}/{run}/{step:03d}"
-    
-    if cache_key in data_cache:
-        cached = data_cache[cache_key]
-        if keys is None or all(k in cached for k in keys):
-            return cached
-
-    model_dir = model.replace("_", "-")
-    path = os.path.join(DATA_DIR, model_dir, run, f"{step:03d}.npz")
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Data not found: {path}")
-
-    npz = np.load(path)
-    
-    if keys is not None:
-        load_keys = set(keys) | {"lat", "lon"}
-        arrays = {k: npz[k] for k in load_keys if k in npz.files}
-        if cache_key in data_cache:
-            for k, v in data_cache[cache_key].items():
-                if k not in arrays:
-                    arrays[k] = v
-    else:
-        arrays = {k: npz[k] for k in npz.files}
-
-    run_dt = datetime.strptime(run, "%Y%m%d%H")
-    valid_dt = run_dt + timedelta(hours=step)
-    arrays["validTime"] = valid_dt.isoformat() + "Z"
-    arrays["_run"] = run
-    arrays["_step"] = step
-
-    data_cache[cache_key] = arrays
-    return arrays
+    return _provider_call("load_data", run, step, model, keys=keys)
 
 
 def get_available_runs():
-    return tc_get_available_runs(DATA_DIR)
+    return _provider_call("get_available_runs")
 
 
 def get_merged_timeline():
-    return tc_get_merged_timeline(DATA_DIR)
+    return _provider_call("get_merged_timeline")
 
 
 def resolve_time(time_str: str, model: Optional[str] = None) -> tuple[str, int, str]:
-    return tc_resolve_time(DATA_DIR, time_str, model)
+    return _provider_call("resolve_time", time_str, model)
+
+
+def resolve_time_with_run(time_str: str, model: Optional[str] = None, run: Optional[str] = None) -> tuple[str, int, str]:
+    """Resolve time with optional explicit run pinning."""
+    if not run:
+        return resolve_time(time_str, model)
+
+    runs = get_available_runs()
+    candidates = [r for r in runs if r.get("run") == run and (model is None or r.get("model") == model)]
+    if not candidates:
+        raise HTTPException(404, f"Run not found: {run}")
+
+    info = candidates[0]
+    steps = info.get("steps", [])
+    if not steps:
+        raise HTTPException(404, f"No steps for run: {run}")
+
+    if time_str == "latest":
+        step = max(int(s.get("step", 0)) for s in steps)
+        return run, step, info.get("model")
+
+    for s in steps:
+        if s.get("validTime") == time_str:
+            return run, int(s.get("step")), info.get("model")
+
+    raise HTTPException(404, f"Time not found in run {run}: {time_str}")
+
+
+def _build_model_capabilities(p):
+    caps: Dict[str, Any] = {}
+    runs = p.get_available_runs()
+    for r in runs:
+        model = r.get("model")
+        if not model or model in caps:
+            continue
+        steps = r.get("steps") or []
+        if not steps:
+            continue
+        try:
+            step = int(steps[0].get("step"))
+            d = p.load_data(r["run"], step, model, keys=["t_2m"])  # lightweight sample for bbox
+        except Exception:
+            continue
+
+        if hasattr(p, "list_variables"):
+            try:
+                vars_available = sorted(getattr(p, "list_variables")(model, run=r.get("run")))
+            except Exception:
+                vars_available = sorted([k for k, v in d.items() if isinstance(v, np.ndarray) and k not in ("lat", "lon")])
+        else:
+            vars_available = sorted([k for k, v in d.items() if isinstance(v, np.ndarray) and k not in ("lat", "lon")])
+
+        levels = sorted(
+            {k.split("_")[1].replace("hpa", "") for k in vars_available if k.startswith("u_") and k.endswith("hpa")}
+        )
+        lat = d.get("lat")
+        lon = d.get("lon")
+        bbox = None
+        if isinstance(lat, np.ndarray) and isinstance(lon, np.ndarray) and lat.size and lon.size:
+            bbox = {
+                "latMin": float(np.min(lat)),
+                "latMax": float(np.max(lat)),
+                "lonMin": float(np.min(lon)),
+                "lonMax": float(np.max(lon)),
+            }
+        caps[model] = {
+            "run": r.get("run"),
+            "step": step,
+            "variables": vars_available,
+            "pressureLevels": levels,
+            "bbox": bbox,
+        }
+    return {"models": caps}
+
+
+def _provider_health():
+    stats_payload = provider.get_stats() if hasattr(provider, "get_stats") else {"mode": ACTIVE_PROVIDER_MODE}
+    mode = stats_payload.get("mode", ACTIVE_PROVIDER_MODE)
+    if mode not in ("remote", "dwd"):
+        return {"status": "ok", "mode": mode, "reason": "threshold checks apply to remote/dwd modes", "stats": stats_payload}
+
+    stats = stats_payload.get("stats", {})
+    fetches = int(stats.get("field_fetches", 0) or 0)
+    errors = int(stats.get("http_errors", 0) or 0)
+    misses = int(stats.get("field_cache_misses", 0) or 0)
+    mem_hits = int(stats.get("field_mem_hits", 0) or 0)
+    disk_hits = int(stats.get("field_disk_hits", 0) or 0)
+    avg_ms = float(stats.get("fetch_avg_ms", 0.0) or 0.0)
+
+    err_warn = float(os.environ.get("EXPLORER_PROVIDER_WARN_ERROR_RATE", "0.08"))
+    err_crit = float(os.environ.get("EXPLORER_PROVIDER_CRIT_ERROR_RATE", "0.2"))
+    lat_warn = float(os.environ.get("EXPLORER_PROVIDER_WARN_FETCH_MS", "2500"))
+    lat_crit = float(os.environ.get("EXPLORER_PROVIDER_CRIT_FETCH_MS", "5000"))
+    hit_warn = float(os.environ.get("EXPLORER_PROVIDER_WARN_CACHE_HIT_RATIO", "0.35"))
+
+    err_rate = (errors / fetches) if fetches > 0 else 0.0
+    hit_ratio = ((mem_hits + disk_hits) / (mem_hits + disk_hits + misses)) if (mem_hits + disk_hits + misses) > 0 else 1.0
+
+    status = "ok"
+    reasons = []
+    if err_rate >= err_crit or avg_ms >= lat_crit:
+        status = "critical"
+    elif err_rate >= err_warn or avg_ms >= lat_warn or hit_ratio < hit_warn:
+        status = "warning"
+
+    if err_rate >= err_warn:
+        reasons.append(f"high error rate ({err_rate:.2%})")
+    if avg_ms >= lat_warn:
+        reasons.append(f"high avg fetch latency ({avg_ms:.0f} ms)")
+    if hit_ratio < hit_warn:
+        reasons.append(f"low cache hit ratio ({hit_ratio:.2%})")
+
+    return {
+        "status": status,
+        "mode": mode,
+        "reasons": reasons,
+        "metrics": {
+            "errorRate": round(err_rate, 4),
+            "cacheHitRatio": round(hit_ratio, 4),
+            "avgFetchMs": round(avg_ms, 2),
+        },
+        "thresholds": {
+            "warnErrorRate": err_warn,
+            "critErrorRate": err_crit,
+            "warnFetchMs": lat_warn,
+            "critFetchMs": lat_crit,
+            "warnCacheHitRatio": hit_warn,
+        },
+        "stats": stats_payload,
+    }
 
 
 # ─── API Endpoints ───
 
 @app.get("/api/variables")
-async def api_variables():
-    """List all available variables with metadata and sample min/max."""
+async def api_variables(
+    include_unavailable: bool = Query(False, description="Include variables not present in latest timestep"),
+    model: Optional[str] = Query(None, description="Optional model filter"),
+    run: Optional[str] = Query(None, description="Optional run filter"),
+):
+    """List variables with metadata, availability, and sample min/max."""
     variables = []
-    
-    # Try to load a sample timestep to get min/max values
+
+    # If provider supports directory-based variable listing (DWD), use it directly.
+    listed_vars = None
+    if model and hasattr(provider, "list_variables"):
+        try:
+            listed_vars = set(getattr(provider, "list_variables")(model, run=run))
+        except Exception:
+            listed_vars = set()
+
+    # Try to load a sample timestep to get min/max values + live availability.
     runs = get_available_runs()
+    if model:
+        runs = [r for r in runs if r.get("model") == model]
+    if run:
+        runs = [r for r in runs if r.get("run") == run]
+
     sample_data = None
     if runs:
         try:
-            run = runs[0]["run"]
+            run0 = runs[0]["run"]
             step = runs[0]["steps"][0]["step"]
-            model = runs[0]["model"]
-            sample_data = load_data(run, step, model)
+            model0 = runs[0]["model"]
+            sample_data = load_data(run0, step, model0)
         except Exception:
             pass
-    
-    for var_name, meta in VARIABLE_METADATA.items():
+
+    # Build variable universe:
+    # - preferred: listed vars from provider
+    # - fallback: known metadata keys
+    if listed_vars is not None:
+        universe = sorted(listed_vars)
+    else:
+        universe = list(VARIABLE_METADATA.keys())
+
+    for var_name in universe:
+        meta = VARIABLE_METADATA.get(var_name, {"group": "raw", "unit": "", "desc": "DWD variable"})
+        var_available = bool(sample_data is not None and var_name in sample_data)
+        if not include_unavailable and not var_available and listed_vars is None:
+            continue
+
         var_info = {
             "name": var_name,
             "group": meta["group"],
             "unit": meta["unit"],
             "desc": meta["desc"],
+            "available": (var_name in listed_vars) if listed_vars is not None else var_available,
         }
-        
+
         # Add min/max from sample if available
-        if sample_data and var_name in sample_data:
+        if sample_data is not None and var_name in sample_data:
             arr = sample_data[var_name]
             if isinstance(arr, np.ndarray) and arr.size > 0:
                 valid_data = arr[~np.isnan(arr)]
                 if len(valid_data) > 0:
                     var_info["min"] = float(np.min(valid_data))
                     var_info["max"] = float(np.max(valid_data))
-        
+
         variables.append(var_info)
-    
+
     return {"variables": variables}
 
 
@@ -349,11 +527,136 @@ async def api_models():
     return get_models_payload()
 
 
+@app.get("/api/capabilities")
+async def api_capabilities():
+    """Available variables/levels per model for current provider data source."""
+    return _build_model_capabilities(provider)
+
+
 @app.get("/api/timesteps")
-async def api_timesteps():
-    """Return available runs and timesteps."""
-    merged = get_merged_timeline()
-    return {"runs": get_available_runs(), "merged": merged}
+async def api_timesteps(
+    model: Optional[str] = Query(None, description="Filter runs by model (icon_d2|icon_eu)"),
+    run: Optional[str] = Query(None, description="Select specific run id"),
+):
+    """Return available runs and timesteps, optionally filtered by model/run."""
+    runs = get_available_runs()
+
+    if model:
+        runs = [r for r in runs if r.get("model") == model]
+
+    if run:
+        selected = [r for r in runs if r.get("run") == run]
+        if not selected:
+            raise HTTPException(404, f"Run not found: {run}")
+        return {"runs": selected, "merged": None}
+
+    # If no model filter: keep merged behavior for convenience.
+    if model is None:
+        merged = get_merged_timeline()
+        return {"runs": runs, "merged": merged}
+
+    return {"runs": runs, "merged": None}
+
+
+# --- Source endpoints for RemoteProvider (Phase 2) ---
+
+@app.get("/api/source/runs")
+async def api_source_runs(request: Request):
+    _require_source_auth(request)
+    return source_provider.get_available_runs()
+
+
+@app.get("/api/source/timeline")
+async def api_source_timeline(request: Request):
+    _require_source_auth(request)
+    return source_provider.get_merged_timeline()
+
+
+@app.get("/api/source/resolve_time")
+async def api_source_resolve_time(
+    request: Request,
+    time: str = Query("latest", description="ISO time or 'latest'"),
+    model: Optional[str] = Query(None, description="icon_d2 or icon_eu"),
+):
+    _require_source_auth(request)
+    run, step, model_used = source_provider.resolve_time(time, model)
+    return {"run": run, "step": step, "model": model_used}
+
+
+@app.get("/api/source/capabilities")
+async def api_source_capabilities(request: Request):
+    _require_source_auth(request)
+    return _build_model_capabilities(source_provider)
+
+
+@app.get("/api/source/field.npz")
+async def api_source_field_npz(
+    request: Request,
+    run: str = Query(...),
+    step: int = Query(..., ge=0),
+    model: str = Query(...),
+    keys: Optional[str] = Query(None, description="Comma-separated variable keys"),
+):
+    _require_source_auth(request)
+    key_list = [k.strip() for k in keys.split(",") if k.strip()] if keys else None
+    d = source_provider.load_data(run, step, model, keys=key_list)
+
+    out = io.BytesIO()
+    arrays: Dict[str, Any] = {}
+    for k, v in d.items():
+        if isinstance(v, np.ndarray):
+            arrays[k] = v
+    # Include validTime as scalar array for metadata consistency
+    arrays["validTime"] = np.array(str(d.get("validTime", "")))
+    np.savez_compressed(out, **arrays)
+    out.seek(0)
+
+    return Response(
+        content=out.getvalue(),
+        media_type="application/octet-stream",
+        headers={"Cache-Control": "public, max-age=60"},
+    )
+
+
+@app.get("/api/source/contract")
+async def api_source_contract():
+    """Machine-readable source endpoint contract for remote provider compatibility."""
+    return {
+        "version": "v1",
+        "auth": {
+            "header": "X-Source-Token",
+            "requiredWhenConfigured": True,
+        },
+        "endpoints": {
+            "runs": {
+                "method": "GET",
+                "path": "/api/source/runs",
+                "response": "list[runs] as in time_contract.get_available_runs",
+            },
+            "timeline": {
+                "method": "GET",
+                "path": "/api/source/timeline",
+                "response": "merged timeline object as in time_contract.get_merged_timeline",
+            },
+            "resolve_time": {
+                "method": "GET",
+                "path": "/api/source/resolve_time",
+                "query": {"time": "str (latest|ISO)", "model": "optional str"},
+                "response": {"run": "str", "step": "int", "model": "str"},
+            },
+            "field_npz": {
+                "method": "GET",
+                "path": "/api/source/field.npz",
+                "query": {
+                    "run": "str YYYYMMDDHH",
+                    "step": "int",
+                    "model": "str (icon_d2|icon_eu)",
+                    "keys": "optional comma-separated variable keys",
+                },
+                "response": "npz bytes with at least lat, lon, validTime and requested variables when present",
+            },
+        },
+    }
 
 
 @app.get("/api/overlay")
@@ -363,6 +666,7 @@ async def api_overlay(
     bbox: str = Query("43.18,-3.94,58.08,20.34", description="lat_min,lon_min,lat_max,lon_max"),
     time: str = Query("latest", description="ISO time or 'latest'"),
     model: Optional[str] = Query(None, description="icon_d2 or icon_eu"),
+    run: Optional[str] = Query(None, description="Optional explicit run id YYYYMMDDHH"),
     width: int = Query(800, ge=100, le=2000, description="Output width in pixels"),
     palette: str = Query("viridis", description="Colormap name"),
     vmin: Optional[float] = Query(None, description="Min value for color scale"),
@@ -393,7 +697,7 @@ async def api_overlay(
         raise HTTPException(400, f"Invalid palette. Valid: {valid_palettes}")
     
     # Load data
-    run, step, model_used = resolve_time(time, model)
+    run, step, model_used = resolve_time_with_run(time, model, run)
     d = load_data(run, step, model_used, keys=[var])
     
     if var not in d:
@@ -526,11 +830,12 @@ async def api_point(
     lon: float = Query(..., description="Longitude"),
     time: str = Query("latest", description="ISO time or 'latest'"),
     model: Optional[str] = Query(None, description="icon_d2 or icon_eu"),
+    run: Optional[str] = Query(None, description="Optional explicit run id YYYYMMDDHH"),
     wind_level: str = Query("10m", description="10m or pressure level (950/850/700/500/300)"),
 ):
     """Return all variable values at a specific point for a given timestep."""
     # Load all data for this timestep
-    run, step, model_used = resolve_time(time, model)
+    run, step, model_used = resolve_time_with_run(time, model, run)
     d = load_data(run, step, model_used)
     
     lat_arr = d["lat"]
@@ -600,6 +905,7 @@ async def api_overlay_range(
     bbox: str = Query('43.18,-3.94,58.08,20.34', description='lat_min,lon_min,lat_max,lon_max'),
     time: str = Query('latest', description='ISO time or latest'),
     model: Optional[str] = Query(None, description='icon_d2 or icon_eu'),
+    run: Optional[str] = Query(None, description='Optional explicit run id YYYYMMDDHH'),
 ):
     """Compute vmin/vmax for current viewport (used to keep tile colors consistent)."""
     if var not in VARIABLE_METADATA:
@@ -610,7 +916,7 @@ async def api_overlay_range(
         raise HTTPException(400, 'bbox format: lat_min,lon_min,lat_max,lon_max')
     lat_min, lon_min, lat_max, lon_max = map(float, parts)
 
-    run, step, model_used = resolve_time(time, model)
+    run, step, model_used = resolve_time_with_run(time, model, run)
     d = load_data(run, step, model_used, keys=[var])
     lat = d['lat']
     lon = d['lon']
@@ -642,6 +948,7 @@ async def api_overlay_tile(
     layer: Optional[str] = Query(None, description='Skyview-compatible layer alias'),
     time: str = Query('latest', description='ISO time or latest'),
     model: Optional[str] = Query(None, description='icon_d2 or icon_eu'),
+    run: Optional[str] = Query(None, description='Optional explicit run id YYYYMMDDHH'),
     palette: str = Query('viridis', description='Colormap name'),
     vmin: Optional[float] = Query(None, description='Fixed min value for color scale'),
     vmax: Optional[float] = Query(None, description='Fixed max value for color scale'),
@@ -662,7 +969,7 @@ async def api_overlay_tile(
 
     client_class = 'mobile' if clientClass == 'mobile' else 'desktop'
 
-    run, step, model_used = resolve_time(time, model)
+    run, step, model_used = resolve_time_with_run(time, model, run)
     d = load_data(run, step, model_used, keys=[var])
     arr = d[var]
     lat = d['lat']
@@ -858,7 +1165,21 @@ async def api_timeseries(
 async def health():
     """Health check endpoint."""
     runs = get_available_runs()
-    return {"status": "ok", "runs": len(runs), "cache": len(data_cache)}
+    return {"status": "ok", "runs": len(runs), "provider": ACTIVE_PROVIDER_MODE}
+
+
+@app.get("/api/provider_stats")
+async def api_provider_stats():
+    """Provider-level metrics (remote cache/fetch stats, local cache size)."""
+    if hasattr(provider, "get_stats"):
+        return provider.get_stats()
+    return {"mode": ACTIVE_PROVIDER_MODE}
+
+
+@app.get("/api/provider_health")
+async def api_provider_health():
+    """Threshold-based provider health state for canary/cutover operations."""
+    return _provider_health()
 
 
 @app.get("/api/cache_stats")

@@ -1,0 +1,58 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Skyview Symbol Preview</title>
+  <style>
+    body { font-family: Inter, Arial, sans-serif; margin: 20px; color:#222; }
+    h1 { margin: 0 0 14px; font-size: 20px; }
+    h2 { margin: 22px 0 10px; font-size: 16px; }
+    .grid { display:grid; grid-template-columns: repeat(6, minmax(120px,1fr)); gap:12px; }
+    .card { border:1px solid #ddd; border-radius:10px; padding:10px; text-align:center; background:#fff; }
+    .icon { width:42px; height:42px; margin:0 auto 8px; display:flex; align-items:center; justify-content:center; }
+    .label { font-size:12px; line-height:1.3; word-break:break-word; }
+    .cloud svg { width:36px; height:36px; }
+    .ww img { width:36px; height:36px; display:block; margin:0 auto; }
+  </style>
+</head>
+<body>
+  <h1>Skyview symbol render preview</h1>
+
+  <h2>Cloud/classification symbols</h2>
+  <div class="grid" id="cloudGrid"></div>
+
+  <h2>WMO ww symbols used by Skyview</h2>
+  <div class="grid" id="wwGrid"></div>
+
+  <script>
+    const cloudSymbols = {
+      st: `<line x1="3" y1="18" x2="33" y2="18" stroke="#333" stroke-width="3" stroke-linecap="round"/>`,
+      ac: `<path d="M4 14 Q4 26 11 26 Q18 26 18 14 Q18 26 25 26 Q32 26 32 14" fill="none" stroke="#333" stroke-width="3" stroke-linecap="round"/>`,
+      cu_hum: `<line x1="6" y1="26" x2="30" y2="26" stroke="#333" stroke-width="3"/><path d="M6 26 Q6 12 18 12 Q30 12 30 26" fill="none" stroke="#333" stroke-width="3"/>`,
+      cu_con: `<line x1="6" y1="30" x2="30" y2="30" stroke="#333" stroke-width="3"/><path d="M6 30 L6 20 Q6 14 11 14 Q14 8 18 8 Q22 8 25 14 Q30 14 30 20 L30 30" fill="none" stroke="#333" stroke-width="3"/>`,
+      cb: `<line x1="6" y1="30" x2="30" y2="30" stroke="#333" stroke-width="3"/><path d="M6 30 L6 20 Q6 14 11 14 Q14 8 18 8 Q22 8 25 14 Q30 14 30 20 L30 30" fill="none" stroke="#333" stroke-width="3"/><line x1="4" y1="8" x2="32" y2="8" stroke="#333" stroke-width="3"/>`,
+      blue_thermal: `<text x="18" y="24" text-anchor="middle" font-size="22" font-weight="bold" fill="#333">b</text>`,
+    };
+
+    const wwCodes = [0,1,2,3,45,48,51,53,55,56,57,61,63,65,66,67,71,73,75,77,80,81,82,85,86,95,96];
+
+    const cloudGrid = document.getElementById('cloudGrid');
+    Object.entries(cloudSymbols).forEach(([name, svg]) => {
+      const card = document.createElement('div');
+      card.className = 'card cloud';
+      card.innerHTML = `<div class="icon"><svg viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg">${svg}</svg></div><div class="label">${name}</div>`;
+      cloudGrid.appendChild(card);
+    });
+
+    const wwGrid = document.getElementById('wwGrid');
+    wwCodes.forEach((ww) => {
+      const code = String(ww).padStart(2,'0');
+      const src = `/geodata/ww-symbols/wmo4677_ww${code}.svg`;
+      const card = document.createElement('div');
+      card.className = 'card ww';
+      card.innerHTML = `<div class="icon"><img src="${src}" alt="ww${code}"></div><div class="label">ww ${code}</div>`;
+      wwGrid.appendChild(card);
+    });
+  </script>
+</body>
+</html>

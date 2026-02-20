@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"/><title>Updated symbols preview</title>
+<style>body{font-family:Arial,sans-serif;margin:20px}.grid{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:12px}.card{border:1px solid #ddd;border-radius:10px;padding:10px;text-align:center}.icon{width:42px;height:42px;margin:0 auto 8px;display:flex;align-items:center;justify-content:center}.cloud svg{width:36px;height:36px}</style>
+</head>
+<body>
+<h1>Updated cloud symbols preview</h1>
+<div class="grid" id="g"></div>
+<script>
+const cloudSymbols={
+st:`<line x1="3" y1="18" x2="33" y2="18" stroke="#333" stroke-width="3" stroke-linecap="round"/>`,
+ac:`<path d="M4 14 Q4 26 11 26 Q18 26 18 14 Q18 26 25 26 Q32 26 32 14" fill="none" stroke="#333" stroke-width="3" stroke-linecap="round"/>`,
+cu_hum:`<path d="M6 26 Q18 10 30 26" fill="none" stroke="#333" stroke-width="3" stroke-linecap="round"/><line x1="6" y1="26" x2="30" y2="26" stroke="#333" stroke-width="3" stroke-linecap="round"/>`,
+cu_con:`<path d="M5 28 Q18 12 31 28" fill="none" stroke="#333" stroke-width="3" stroke-linecap="round"/><line x1="5" y1="28" x2="31" y2="28" stroke="#333" stroke-width="3" stroke-linecap="round"/><path d="M11 18 Q18 8 25 18" fill="none" stroke="#333" stroke-width="3" stroke-linecap="round"/><line x1="18" y1="10" x2="18" y2="23" stroke="#333" stroke-width="3" stroke-linecap="round"/>`,
+cb:`<path d="M6 27 Q18 12 30 27" fill="none" stroke="#333" stroke-width="3" stroke-linecap="round"/><line x1="6" y1="27" x2="30" y2="27" stroke="#333" stroke-width="3" stroke-linecap="round"/><line x1="12" y1="17" x2="9" y2="10" stroke="#333" stroke-width="3" stroke-linecap="round"/><line x1="24" y1="17" x2="27" y2="10" stroke="#333" stroke-width="3" stroke-linecap="round"/><line x1="9" y1="10" x2="27" y2="10" stroke="#333" stroke-width="3" stroke-linecap="round"/>`,
+blue_thermal:`<text x="18" y="24" text-anchor="middle" font-size="22" font-weight="bold" fill="#333">b</text>`
+};
+const g=document.getElementById('g');
+Object.entries(cloudSymbols).forEach(([n,svg])=>{const d=document.createElement('div');d.className='card cloud';d.innerHTML=`<div class="icon"><svg viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg">${svg}</svg></div><div>${n}</div>`;g.appendChild(d);});
+</script>
+</body></html>

@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import os
 import time
+import threading
 from collections import OrderedDict, deque
+from typing import Callable, Any
 
 # Overlay tile cache (desktop/mobile split, LRU + TTL)
-TILE_CACHE_MAX_ITEMS_DESKTOP = 1400
-TILE_CACHE_MAX_ITEMS_MOBILE = 700
-TILE_CACHE_TTL_SECONDS = 900
+TILE_CACHE_MAX_ITEMS_DESKTOP = int(os.environ.get('SKYVIEW_TILE_CACHE_MAX_DESKTOP', '1400'))
+TILE_CACHE_MAX_ITEMS_MOBILE = int(os.environ.get('SKYVIEW_TILE_CACHE_MAX_MOBILE', '700'))
+TILE_CACHE_TTL_SECONDS = int(os.environ.get('SKYVIEW_TILE_CACHE_TTL_SECONDS', '900'))
 
 tile_cache_desktop = OrderedDict()  # key -> (png_bytes, ts)
 tile_cache_mobile = OrderedDict()
@@ -23,10 +26,34 @@ perf_totals = {
     'totalMs': 0.0,
 }
 
+# Overlay phase telemetry (for /api/overlay_tile timing breakdown)
+overlay_phase_recent = deque(maxlen=400)  # [{'layer':..., 'hit':..., 'loadMs':..., 'sourceMs':..., 'colorizeMs':..., 'encodeMs':..., 'totalMs':...}, ...]
+overlay_phase_totals = {
+    'requests': 0,
+    'hits': 0,
+    'misses': 0,
+    'loadMs': 0.0,
+    'sourceMs': 0.0,
+    'colorizeMs': 0.0,
+    'encodeMs': 0.0,
+    'totalMs': 0.0,
+}
+
 # Computed full-field cache (for expensive derived layers used by tile endpoint)
-COMPUTED_CACHE_MAX_ITEMS = 128
-COMPUTED_CACHE_TTL_SECONDS = 1800
+# Slightly larger default improves warmup retention under layer/time churn.
+COMPUTED_CACHE_MAX_ITEMS = int(os.environ.get('SKYVIEW_COMPUTED_CACHE_MAX_ITEMS', '192'))
+COMPUTED_CACHE_TTL_SECONDS = int(os.environ.get('SKYVIEW_COMPUTED_CACHE_TTL_SECONDS', '2400'))
 computed_field_cache = OrderedDict()  # key -> (np.ndarray, ts)
+computed_field_metrics = {
+    'hits': 0,
+    'misses': 0,
+    'singleflightWaits': 0,
+    'byLayer': {},  # layer -> {'hits':..., 'misses':...}
+}
+
+# Singleflight coordination for computed field misses
+_computed_inflight = {}  # key -> threading.Event
+_computed_inflight_lock = threading.Lock()
 
 # Symbols response cache (JSON payload cache for pan/zoom repeats)
 SYMBOLS_CACHE_MAX_ITEMS = 256
@@ -49,25 +76,104 @@ def perf_record(ms: float, cache_hit: bool):
         perf_totals['misses'] += 1
 
 
-def computed_cache_get(key: str):
+def overlay_phase_record(*, layer: str, cache_hit: bool, load_ms: float, source_ms: float, colorize_ms: float, encode_ms: float, total_ms: float):
+    now = time.time()
+    row = {
+        'layer': layer,
+        'hit': 1 if cache_hit else 0,
+        'loadMs': float(load_ms),
+        'sourceMs': float(source_ms),
+        'colorizeMs': float(colorize_ms),
+        'encodeMs': float(encode_ms),
+        'totalMs': float(total_ms),
+        'ts': now,
+    }
+    overlay_phase_recent.append(row)
+    overlay_phase_totals['requests'] += 1
+    overlay_phase_totals['totalMs'] += row['totalMs']
+    overlay_phase_totals['loadMs'] += row['loadMs']
+    overlay_phase_totals['sourceMs'] += row['sourceMs']
+    overlay_phase_totals['colorizeMs'] += row['colorizeMs']
+    overlay_phase_totals['encodeMs'] += row['encodeMs']
+    if cache_hit:
+        overlay_phase_totals['hits'] += 1
+    else:
+        overlay_phase_totals['misses'] += 1
+
+
+def _computed_metrics_layer(layer: str):
+    return computed_field_metrics['byLayer'].setdefault(layer, {'hits': 0, 'misses': 0})
+
+
+def computed_cache_get(key: str, layer: str | None = None):
     now = time.time()
     item = computed_field_cache.get(key)
     if item is None:
+        computed_field_metrics['misses'] += 1
+        if layer is not None:
+            _computed_metrics_layer(layer)['misses'] += 1
         return None
     arr, ts = item
     if now - ts > COMPUTED_CACHE_TTL_SECONDS:
         del computed_field_cache[key]
+        computed_field_metrics['misses'] += 1
+        if layer is not None:
+            _computed_metrics_layer(layer)['misses'] += 1
         return None
     computed_field_cache.move_to_end(key)
+    computed_field_metrics['hits'] += 1
+    if layer is not None:
+        _computed_metrics_layer(layer)['hits'] += 1
     return arr
 
 
-def computed_cache_set(key: str, arr):
+def computed_cache_set(key: str, arr) -> None:
     now = time.time()
     computed_field_cache[key] = (arr, now)
     computed_field_cache.move_to_end(key)
     while len(computed_field_cache) > COMPUTED_CACHE_MAX_ITEMS:
         computed_field_cache.popitem(last=False)
+
+
+def computed_cache_get_or_compute(key: str, layer: str, compute_fn: Callable[[], Any]):
+    """Singleflight wrapper for computed full-grid fields.
+
+    Only one caller computes a given key at a time; concurrent callers wait and reuse cache.
+    """
+    arr = computed_cache_get(key, layer=layer)
+    if arr is not None:
+        return arr
+
+    owner = False
+    evt = None
+    with _computed_inflight_lock:
+        evt = _computed_inflight.get(key)
+        if evt is None:
+            evt = threading.Event()
+            _computed_inflight[key] = evt
+            owner = True
+
+    if owner:
+        try:
+            arr = compute_fn()
+            computed_cache_set(key, arr)
+            return arr
+        finally:
+            with _computed_inflight_lock:
+                done_evt = _computed_inflight.pop(key, None)
+                if done_evt is not None:
+                    done_evt.set()
+
+    computed_field_metrics['singleflightWaits'] += 1
+    evt.wait(timeout=10.0)
+    arr = computed_cache_get(key, layer=layer)
+    if arr is not None:
+        return arr
+
+    # Fallback if owner failed before filling cache
+    arr = compute_fn()
+    computed_cache_set(key, arr)
+    return arr
 
 
 def _tile_cache_select(client_class: str):
@@ -168,6 +274,15 @@ def rotate_caches_for_context(context_key: str):
     computed_field_cache.clear()
     symbols_cache.clear()
     return True
+
+
+def computed_metrics_payload():
+    return {
+        'hits': computed_field_metrics['hits'],
+        'misses': computed_field_metrics['misses'],
+        'singleflightWaits': computed_field_metrics['singleflightWaits'],
+        'byLayer': computed_field_metrics['byLayer'],
+    }
 
 
 def cache_context_stats_payload():

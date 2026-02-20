@@ -80,10 +80,12 @@ Recommended point params:
 - `ceiling` -> `ceiling`
 - `cloud_base` -> `hbas_sc`
 - `thermals` -> `cape_ml`
-- `rain` -> `prr_gsp`
-- `snow` -> `prs_gsp`
-- `hail` -> `prg_gsp`
-- `total_precip` -> backend-specific computed/derived precipitation field
+- `rain` -> precomputed ingest field `rain_rate` = de-accumulated `(rain_gsp + rain_con) / Δt`
+- `snow` -> precomputed ingest field `snow_rate` = de-accumulated `(snow_gsp + snow_con) / Δt`
+- `hail` -> precomputed ingest field `hail_rate` = de-accumulated `grau_gsp / Δt` (0 where unavailable)
+- `total_precip` -> precomputed ingest field `tp_rate` = de-accumulated `tot_prec / Δt`
+  - `Δt = 1h` normally
+  - `Δt = 3h` for ICON-EU steps `>=81`
 
 ---
 

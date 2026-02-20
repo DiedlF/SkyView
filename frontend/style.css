@@ -28,7 +28,7 @@ body {
 /* Leaflet zoom control — always visible, bottom left, above time controls */
 .leaflet-bottom.leaflet-left {
   z-index: 1002 !important;
-  bottom: 90px !important;
+  bottom: 10px !important;
 }
 
 .leaflet-control-zoom {
@@ -412,6 +412,7 @@ body {
 
 /* Align layer dropdowns (wind / precip / clouds) to the same right edge */
 #wind-level,
+#temp-type,
 #precip-type,
 #clouds-type {
   margin-left: auto;
@@ -419,7 +420,8 @@ body {
 }
 
 /* Desktop/tablet widths */
-#wind-level {
+#wind-level,
+#temp-type {
   width: 108px;
 }
 
@@ -430,7 +432,8 @@ body {
 
 /* Slightly narrower on mobile */
 @media (max-width: 768px) {
-  #wind-level {
+  #wind-level,
+  #temp-type {
     width: 96px;
   }
 

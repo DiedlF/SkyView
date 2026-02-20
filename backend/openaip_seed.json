@@ -1,0 +1,44 @@
+[
+  {"name":"Geitau","displayName":"Geitau, DE (glider site)","lat":47.6836,"lon":11.9610,"type":"glider_site","country":"DE"},
+  {"name":"Brauneck","displayName":"Brauneck / Lenggries Glider Site, DE","lat":47.6690,"lon":11.5500,"type":"glider_site","country":"DE"},
+  {"name":"Wallberg","displayName":"Wallberg / Tegernsee Glider Site, DE","lat":47.6900,"lon":11.7650,"type":"glider_site","country":"DE"},
+  {"name":"Kampenwand","displayName":"Kampenwand Glider Site, DE","lat":47.7760,"lon":12.3640,"type":"glider_site","country":"DE"},
+  {"name":"Unterwössen (EDMU)","displayName":"Unterwössen Airfield EDMU, DE","lat":47.7389,"lon":12.4564,"type":"airfield","country":"DE"},
+  {"name":"Bad Tölz","displayName":"Bad Tölz Glider Site, DE","lat":47.7510,"lon":11.5370,"type":"glider_site","country":"DE"},
+  {"name":"Benediktenwand","displayName":"Benediktenwand Glider Site, DE","lat":47.6460,"lon":11.4300,"type":"glider_site","country":"DE"},
+  {"name":"Aalen-Elchingen (EDPA)","displayName":"Aalen-Elchingen Airfield EDPA, DE","lat":48.7772,"lon":10.2647,"type":"airfield","country":"DE"},
+  {"name":"Bremgarten (EDTG)","displayName":"Bremgarten Airfield EDTG, DE","lat":47.9078,"lon":7.6161,"type":"airfield","country":"DE"},
+
+  {"name":"Greifenburg","displayName":"Greifenburg Glider Site, AT","lat":46.7530,"lon":13.1760,"type":"glider_site","country":"AT"},
+  {"name":"Kössen","displayName":"Kössen / Unterberghorn Glider Site, AT","lat":47.6640,"lon":12.3930,"type":"glider_site","country":"AT"},
+  {"name":"Zell am See","displayName":"Zell am See Glider Site, AT","lat":47.3230,"lon":12.7940,"type":"glider_site","country":"AT"},
+  {"name":"Bischling","displayName":"Werfenweng / Bischling Glider Site, AT","lat":47.4620,"lon":13.2490,"type":"glider_site","country":"AT"},
+  {"name":"Seefeld","displayName":"Seefeld in Tirol Glider Site, AT","lat":47.3300,"lon":11.1870,"type":"glider_site","country":"AT"},
+  {"name":"St. Johann in Tirol (LOIJ)","displayName":"St. Johann in Tirol Airfield LOIJ, AT","lat":47.5172,"lon":12.4497,"type":"airfield","country":"AT"},
+  {"name":"Innsbruck (LOWI)","displayName":"Innsbruck Airport LOWI, AT","lat":47.2602,"lon":11.3439,"type":"airport","country":"AT"},
+  {"name":"Hohenems-Dornbirn (LOIH)","displayName":"Hohenems-Dornbirn Airfield LOIH, AT","lat":47.3850,"lon":9.7000,"type":"airfield","country":"AT"},
+  {"name":"Niederöblarn (LOGO)","displayName":"Niederöblarn Airfield LOGO, AT","lat":47.4780,"lon":14.0090,"type":"airfield","country":"AT"},
+
+  {"name":"Samedan (LSZS)","displayName":"Engadin Airport Samedan LSZS, CH","lat":46.5341,"lon":9.8841,"type":"airport","country":"CH"},
+  {"name":"Mollis (LSMF)","displayName":"Mollis Airfield LSMF, CH","lat":47.0800,"lon":9.0650,"type":"airfield","country":"CH"},
+  {"name":"Schänis (LSPV)","displayName":"Schänis Airfield LSPV, CH","lat":47.1740,"lon":9.0360,"type":"airfield","country":"CH"},
+  {"name":"Raron (LSTA)","displayName":"Raron Airfield LSTA, CH","lat":46.3040,"lon":7.8240,"type":"airfield","country":"CH"},
+  {"name":"Locarno (LSZL)","displayName":"Locarno Airport LSZL, CH","lat":46.1610,"lon":8.8780,"type":"airport","country":"CH"},
+  {"name":"Fiesch","displayName":"Fiesch Glider Site, CH","lat":46.4050,"lon":8.1230,"type":"glider_site","country":"CH"},
+  {"name":"Niesen","displayName":"Niesen Glider Site, CH","lat":46.6460,"lon":7.6520,"type":"glider_site","country":"CH"},
+
+  {"name":"Annecy (LFLP)","displayName":"Annecy Airport LFLP, FR","lat":45.9300,"lon":6.1060,"type":"airport","country":"FR"},
+  {"name":"Tallard (LFNA)","displayName":"Gap-Tallard Airfield LFNA, FR","lat":44.4620,"lon":6.0370,"type":"airfield","country":"FR"},
+  {"name":"Saint-André-les-Alpes","displayName":"Saint-André-les-Alpes Glider Site, FR","lat":43.9670,"lon":6.5090,"type":"glider_site","country":"FR"},
+  {"name":"Puimoisson","displayName":"Puimoisson Glider Site, FR","lat":43.8680,"lon":6.1080,"type":"glider_site","country":"FR"},
+  {"name":"Chamonix","displayName":"Chamonix Glider Site, FR","lat":45.9230,"lon":6.8690,"type":"glider_site","country":"FR"},
+
+  {"name":"Lüsen","displayName":"Lüsen / Luson Glider Site, IT","lat":46.6840,"lon":11.7590,"type":"glider_site","country":"IT"},
+  {"name":"Bassano del Grappa","displayName":"Bassano del Grappa Glider Site, IT","lat":45.7810,"lon":11.7350,"type":"glider_site","country":"IT"},
+  {"name":"Meduno","displayName":"Meduno Glider Site, IT","lat":46.2160,"lon":12.7810,"type":"glider_site","country":"IT"},
+  {"name":"Aosta (LIMW)","displayName":"Aosta Airport LIMW, IT","lat":45.7380,"lon":7.3680,"type":"airport","country":"IT"},
+  {"name":"Trento-Mattarello (LIDT)","displayName":"Trento-Mattarello Airfield LIDT, IT","lat":46.0210,"lon":11.1260,"type":"airfield","country":"IT"},
+
+  {"name":"La Cerdanya","displayName":"La Cerdanya Airfield, ES","lat":42.4062,"lon":1.9153,"type":"airfield","country":"ES"},
+  {"name":"Organyà","displayName":"Organyà Glider Site, ES","lat":42.2050,"lon":1.3280,"type":"glider_site","country":"ES"}
+]

@@ -18,12 +18,16 @@ import cfgrib
 import yaml
 from datetime import datetime, timedelta, timezone
 from logging_config import setup_logging
+from constants import ICON_EU_STEP_3H_START
 
 logger = setup_logging(__name__, level="INFO")
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(SCRIPT_DIR, "..", "data")
 CONFIG_PATH = os.path.join(SCRIPT_DIR, "ingest_config.yaml")
+
+# Optional curl bandwidth limit (e.g. "10M", "500K"). Empty/0 disables limiting.
+INGEST_RATE_LIMIT = os.environ.get("SKYVIEW_INGEST_RATE_LIMIT", "").strip()
 
 
 def load_config():
@@ -32,28 +36,55 @@ def load_config():
         return yaml.safe_load(f)
 
 
-def get_active_variables(config):
-    """Collect all enabled single-level variables from config groups."""
-    variables = []
-    for group_name, group in config.get("groups", {}).items():
-        if group.get("enabled", False):
-            variables.extend(group.get("variables", []))
-    # Deduplicate while preserving order
+def _dedupe_keep_order(items):
     seen = set()
-    result = []
-    for v in variables:
+    out = []
+    for v in items:
         if v not in seen:
             seen.add(v)
-            result.append(v)
-    return result
+            out.append(v)
+    return out
 
 
-def get_static_variables(config):
+def _get_profile(config, profile_name):
+    profiles = config.get("profiles", {})
+    if profile_name not in profiles:
+        raise ValueError(f"Unknown ingest profile: {profile_name}. Available: {sorted(profiles.keys())}")
+    return profiles[profile_name]
+
+
+def get_active_variables(config, profile_name="full"):
+    """Collect single-level variables, optionally profile-scoped."""
+    profile = _get_profile(config, profile_name) if config.get("profiles") else None
+
+    if profile and profile.get("variables"):
+        return _dedupe_keep_order(profile.get("variables", []))
+
+    include_groups = profile.get("include_groups") if profile else None
+
+    variables = []
+    for group_name, group in config.get("groups", {}).items():
+        if include_groups is not None and group_name not in include_groups:
+            continue
+        if group.get("enabled", False):
+            variables.extend(group.get("variables", []))
+
+    return _dedupe_keep_order(variables)
+
+
+def get_static_variables(config, profile_name="full"):
+    profile = _get_profile(config, profile_name) if config.get("profiles") else None
+    if profile and "static_variables" in profile:
+        return profile.get("static_variables", ["hsurf"])
     return config.get("static_variables", ["hsurf"])
 
 
-def get_pressure_config(config):
-    pc = config.get("pressure_levels", {})
+def get_pressure_config(config, profile_name="full"):
+    profile = _get_profile(config, profile_name) if config.get("profiles") else None
+    if profile and "pressure_levels" in profile:
+        pc = profile.get("pressure_levels", {})
+    else:
+        pc = config.get("pressure_levels", {})
     return pc.get("variables", []), pc.get("levels", [])
 
 
@@ -104,7 +135,7 @@ def get_latest_run(model="icon-d2"):
     return ref.strftime("%Y%m%d") + f"{hour:02d}"
 
 
-def build_url(run, step, var, model="icon-d2", pressure_level=None, config=None):
+def build_url(run, step, var, model="icon-d2", pressure_level=None, config=None, profile_name="full"):
     """Build DWD download URL for regular-lat-lon data."""
     cfg = MODEL_CONFIG[model]
     run_hour = run[-2:]
@@ -117,15 +148,16 @@ def build_url(run, step, var, model="icon-d2", pressure_level=None, config=None)
     else:
         var_name = var
 
-    static_vars = get_static_variables(config) if config else ["hsurf"]
+    static_vars = get_static_variables(config, profile_name=profile_name) if config else ["hsurf"]
 
     if var in static_vars:
         if model == "icon-d2":
             return (f"{cfg['base_url']}/{run_hour}/{var}/"
                     f"icon-d2_germany_regular-lat-lon_time-invariant_{run}_000_0_{var}.grib2.bz2")
         else:
+            # ICON-EU time-invariant files use a shorter naming scheme (no _000_0 segment).
             return (f"{cfg['base_url']}/{run_hour}/{var_name}/"
-                    f"icon-eu_europe_regular-lat-lon_time-invariant_{run}_000_0_{var_name.upper()}.grib2.bz2")
+                    f"icon-eu_europe_regular-lat-lon_time-invariant_{run}_{var_name.upper()}.grib2.bz2")
 
     if pressure_level:
         if model == "icon-d2":
@@ -149,7 +181,11 @@ def download(url, dest):
     if os.path.exists(dest) and os.path.getsize(dest) > 100:
         return True
     try:
-        r = subprocess.run(["curl", "-sfL", url, "-o", dest], timeout=120, capture_output=True)
+        cmd = ["curl", "-sfL"]
+        if INGEST_RATE_LIMIT and INGEST_RATE_LIMIT not in ("0", "0K", "0M"):
+            cmd.extend(["--limit-rate", INGEST_RATE_LIMIT])
+        cmd.extend([url, "-o", dest])
+        r = subprocess.run(cmd, timeout=120, capture_output=True)
         if r.returncode == 0 and os.path.exists(dest) and os.path.getsize(dest) > 100:
             return True
         if os.path.exists(dest):
@@ -193,7 +229,7 @@ def get_bounds_for_model(model, config):
         return None
 
 
-def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None):
+def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profile_name="full"):
     """Download all variables for one step, optionally crop, save as .npz."""
     out_path = os.path.join(out_dir, f"{step:03d}.npz")
     if os.path.exists(out_path):
@@ -203,9 +239,9 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None):
     if config is None:
         config = load_config()
 
-    variables = get_active_variables(config)
-    static_vars = get_static_variables(config)
-    wind_vars, wind_levels = get_pressure_config(config)
+    variables = get_active_variables(config, profile_name=profile_name)
+    static_vars = get_static_variables(config, profile_name=profile_name)
+    wind_vars, wind_levels = get_pressure_config(config, profile_name=profile_name)
     d2_only = get_d2_only_variables(config)
     bounds = get_bounds_for_model(model, config)
 
@@ -223,15 +259,13 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None):
             logger.debug(f"Step {step:03d}: {var} is D2-only, skipping for EU")
             continue
 
-        url = build_url(run, step, var, model, config=config)
+        url = build_url(run, step, var, model, config=config, profile_name=profile_name)
         bz2_path = os.path.join(tmp_dir, f"{var}_{step:03d}.grib2.bz2")
         grib_path = bz2_path[:-4]
 
         if not download(url, bz2_path):
             if var in optional_vars:
-                if lat_1d is not None:
-                    arrays[var] = np.zeros((len(lat_1d), len(lon_1d)), dtype=np.float32)
-                    logger.debug(f"Step {step:03d}: {var} not available, using zeros")
+                logger.debug(f"Step {step:03d}: optional {var} not available, skipping variable")
                 continue
             else:
                 logger.warning(f"Step {step:03d}: {var} download failed, skipping step")
@@ -240,8 +274,7 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None):
         subprocess.run(["bunzip2", "-f", bz2_path], capture_output=True)
         if not os.path.exists(grib_path):
             if var in optional_vars:
-                if lat_1d is not None:
-                    arrays[var] = np.zeros((len(lat_1d), len(lon_1d)), dtype=np.float32)
+                logger.debug(f"Step {step:03d}: optional {var} decompress failed, skipping variable")
                 continue
             logger.error(f"Step {step:03d}: {var} decompress failed")
             return False
@@ -254,8 +287,7 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None):
                 lon_1d = lon.astype(np.float32)
         except Exception as e:
             if var in optional_vars:
-                if lat_1d is not None:
-                    arrays[var] = np.zeros((len(lat_1d), len(lon_1d)), dtype=np.float32)
+                logger.debug(f"Step {step:03d}: optional {var} parse failed ({e}), skipping variable")
                 continue
             logger.error(f"Step {step:03d}: {var} parse failed: {e}")
             return False
@@ -274,7 +306,7 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None):
         if os.path.exists(svar_cache):
             arrays[svar] = np.load(svar_cache)
         else:
-            url = build_url(run, 0, svar, model, config=config)
+            url = build_url(run, 0, svar, model, config=config, profile_name=profile_name)
             bz2_path = os.path.join(tmp_dir, f"{svar}_000.grib2.bz2")
             grib_path = bz2_path[:-4]
             if download(url, bz2_path):
@@ -295,7 +327,7 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None):
     # Pressure-level wind data
     for plev in wind_levels:
         for wind_var in wind_vars:
-            url = build_url(run, step, wind_var, model, pressure_level=plev, config=config)
+            url = build_url(run, step, wind_var, model, pressure_level=plev, config=config, profile_name=profile_name)
             bz2_path = os.path.join(tmp_dir, f"{wind_var}_{plev}hpa_{step:03d}.grib2.bz2")
             grib_path = bz2_path[:-4]
 
@@ -322,7 +354,7 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None):
     return True
 
 
-def check_new_data_available(run, model="icon-d2", config=None):
+def check_new_data_available(run, model="icon-d2", config=None, profile_name="full"):
     """Quick check: is new run available AND not yet downloaded?"""
     cfg = MODEL_CONFIG[model]
 
@@ -336,17 +368,18 @@ def check_new_data_available(run, model="icon-d2", config=None):
 
     # Quick HEAD check on DWD for first timestep
     first_step = cfg["steps"][0]
-    test_var = "t_2m"  # reliable variable available in both models
-    test_url = build_url(run, first_step, test_var, model, config=config)
+    active_vars = get_active_variables(config, profile_name=profile_name) if config else []
+    test_var = active_vars[0] if active_vars else "t_2m"
+    test_url = build_url(run, first_step, test_var, model, config=config, profile_name=profile_name)
     r = subprocess.run(["curl", "-sfI", test_url], capture_output=True, timeout=10)
     available_dwd = (r.returncode == 0)
 
     return (available_dwd, has_local)
 
 
-def check_variable_urls(run, model, config):
+def check_variable_urls(run, model, config, profile_name="full"):
     """Check which variables resolve (HTTP HEAD) on DWD servers. For --check-only diagnostics."""
-    variables = get_active_variables(config)
+    variables = get_active_variables(config, profile_name=profile_name)
     d2_only = get_d2_only_variables(config)
     cfg = MODEL_CONFIG[model]
     first_step = cfg["steps"][0]
@@ -359,7 +392,7 @@ def check_variable_urls(run, model, config):
         if model == "icon-eu" and var in d2_only:
             skipped.append(var)
             continue
-        url = build_url(run, first_step, var, model, config=config)
+        url = build_url(run, first_step, var, model, config=config, profile_name=profile_name)
         try:
             r = subprocess.run(["curl", "-sfI", url], capture_output=True, timeout=10)
             if r.returncode == 0:
@@ -370,10 +403,10 @@ def check_variable_urls(run, model, config):
             fail.append(var)
 
     # Check pressure levels
-    wind_vars, wind_levels = get_pressure_config(config)
+    wind_vars, wind_levels = get_pressure_config(config, profile_name=profile_name)
     for plev in wind_levels:
         for wv in wind_vars:
-            url = build_url(run, first_step, wv, model, pressure_level=plev, config=config)
+            url = build_url(run, first_step, wv, model, pressure_level=plev, config=config, profile_name=profile_name)
             key = f"{wv}_{plev}hpa"
             try:
                 r = subprocess.run(["curl", "-sfI", url], capture_output=True, timeout=10)
@@ -385,6 +418,98 @@ def check_variable_urls(run, model, config):
                 fail.append(key)
 
     return ok, fail, skipped
+
+
+def _precip_prev_step_and_dt(model: str, step: int) -> tuple[int | None, float]:
+    if model == "icon-eu" and step >= ICON_EU_STEP_3H_START:
+        prev = step - 3
+        return (prev if prev >= 1 else None), 3.0
+    if step >= 2:
+        return step - 1, 1.0
+    return None, 1.0
+
+
+def precompute_precip_rates_for_run(model: str, run: str):
+    """Precompute de-accumulated precip rate fields per step and store in NPZ.
+
+    Added fields:
+      - tp_rate
+      - rain_rate
+      - snow_rate
+      - hail_rate
+    Units are mm/h-equivalent.
+    """
+    run_dir = os.path.join(DATA_DIR, model, run)
+    if not os.path.isdir(run_dir):
+        return
+
+    npz_files = sorted([f for f in os.listdir(run_dir) if f.endswith('.npz')])
+    if not npz_files:
+        return
+
+    prev_acc = None
+    prev_step_seen = None
+
+    for fname in npz_files:
+        step = int(fname[:-4])
+        path = os.path.join(run_dir, fname)
+        z = np.load(path)
+        arrays = {k: z[k] for k in z.files}
+
+        lat = arrays.get('lat')
+        lon = arrays.get('lon')
+        if lat is None or lon is None:
+            continue
+
+        shape = (len(lat), len(lon))
+        zeros = np.zeros(shape, dtype=np.float32)
+
+        tp = arrays.get('tot_prec', zeros)
+        rg = arrays.get('rain_gsp', zeros)
+        rc = arrays.get('rain_con', zeros)
+        sg = arrays.get('snow_gsp', zeros)
+        sc = arrays.get('snow_con', zeros)
+        gg = arrays.get('grau_gsp', zeros)
+
+        prev_step_expected, dt_h = _precip_prev_step_and_dt(model, step)
+        use_prev = prev_acc is not None and prev_step_seen == prev_step_expected
+
+        if use_prev:
+            tp_rate = (tp - prev_acc['tot_prec']) / dt_h
+            rain_rate = ((rg + rc) - (prev_acc['rain_gsp'] + prev_acc['rain_con'])) / dt_h
+            snow_rate = ((sg + sc) - (prev_acc['snow_gsp'] + prev_acc['snow_con'])) / dt_h
+            hail_rate = (gg - prev_acc['grau_gsp']) / dt_h
+        else:
+            tp_rate = tp / dt_h
+            rain_rate = (rg + rc) / dt_h
+            snow_rate = (sg + sc) / dt_h
+            hail_rate = gg / dt_h
+
+        tp_rate = np.maximum(tp_rate, 0.0).astype(np.float32)
+        rain_rate = np.maximum(rain_rate, 0.0).astype(np.float32)
+        snow_rate = np.maximum(snow_rate, 0.0).astype(np.float32)
+        hail_rate = np.maximum(hail_rate, 0.0).astype(np.float32)
+
+        arrays['tp_rate'] = tp_rate
+        arrays['rain_rate'] = rain_rate
+        arrays['snow_rate'] = snow_rate
+        arrays['hail_rate'] = hail_rate
+
+        tmp = path + '.tmp.npz'
+        np.savez_compressed(tmp, **arrays)
+        os.replace(tmp, path)
+
+        prev_acc = {
+            'tot_prec': tp,
+            'rain_gsp': rg,
+            'rain_con': rc,
+            'snow_gsp': sg,
+            'snow_con': sc,
+            'grau_gsp': gg,
+        }
+        prev_step_seen = step
+
+    logger.info(f"Precomputed precip rates for {model} run {run} ({len(npz_files)} steps)")
 
 
 def cleanup_old_runs(model, keep_runs, current_run=None):
@@ -474,11 +599,18 @@ def build_d2_boundary_cache(run: str):
 
     lat = src['lat']
     lon = src['lon']
-    ww = src['ww']
 
     lat_res = float(abs(lat[1] - lat[0])) if len(lat) > 1 else 0.02
     lon_res = float(abs(lon[1] - lon[0])) if len(lon) > 1 else 0.02
-    valid = np.isfinite(ww)
+
+    # Boundary mask: prefer fields that better represent true data coverage.
+    # `ww` can be finite over broad rectangular extents in some runs; `mh` is often stricter.
+    if 'mh' in src.files:
+        valid = np.isfinite(src['mh'])
+    elif 'ww' in src.files:
+        valid = np.isfinite(src['ww'])
+    else:
+        valid = np.ones((len(lat), len(lon)), dtype=bool)
 
     segments = []
     n_i, n_j = valid.shape
@@ -539,21 +671,24 @@ def main():
                         help="Fast check: exit 0 if new data available, 1 otherwise. With --verbose, also checks variable URLs.")
     parser.add_argument("--verbose", action="store_true",
                         help="With --check-only: print variable URL resolution results")
+    parser.add_argument("--profile", type=str, default="full",
+                        help="Ingest profile from ingest_config.yaml (e.g. full, skyview_core)")
     args = parser.parse_args()
 
     config = load_config()
     model = args.model
     cfg = MODEL_CONFIG[model]
+    profile_name = args.profile
 
     run = get_latest_run(model) if args.run == "latest" else args.run
 
     # Fast check mode
     if args.check_only:
-        available, has_local = check_new_data_available(run, model, config)
+        available, has_local = check_new_data_available(run, model, config, profile_name=profile_name)
 
         if args.verbose:
-            logger.info(f"Checking variable URLs for {model} run {run}...")
-            ok, fail, skipped = check_variable_urls(run, model, config)
+            logger.info(f"Checking variable URLs for {model} run {run} (profile={profile_name})...")
+            ok, fail, skipped = check_variable_urls(run, model, config, profile_name=profile_name)
             logger.info(f"  OK ({len(ok)}): {', '.join(ok)}")
             if fail:
                 logger.warning(f"  FAIL ({len(fail)}): {', '.join(fail)}")
@@ -578,8 +713,8 @@ def main():
     else:
         steps = [int(s) for s in args.steps.split(",")]
 
-    variables = get_active_variables(config)
-    logger.info(f"Ingesting {model} run {run}, steps {steps[0]}-{steps[-1]} ({len(steps)} total), {len(variables)} variables")
+    variables = get_active_variables(config, profile_name=profile_name)
+    logger.info(f"Ingesting {model} run {run}, profile={profile_name}, steps {steps[0]}-{steps[-1]} ({len(steps)} total), {len(variables)} variables")
 
     bounds = get_bounds_for_model(model, config)
     if bounds:
@@ -589,7 +724,8 @@ def main():
 
     # Check if run data is available
     first_step = steps[0]
-    test_url = build_url(run, first_step, "t_2m", model, config=config)
+    test_var = variables[0] if variables else "t_2m"
+    test_url = build_url(run, first_step, test_var, model, config=config, profile_name=profile_name)
     r = subprocess.run(["curl", "-sfI", test_url], capture_output=True, timeout=15)
     if r.returncode != 0:
         logger.warning(f"Run {run} not available yet on DWD")
@@ -605,8 +741,15 @@ def main():
             npz = os.path.join(out_dir, f"{step:03d}.npz")
             if os.path.exists(npz):
                 os.unlink(npz)
-        if ingest_step(run, step, tmp_dir, out_dir, model, config):
+        if ingest_step(run, step, tmp_dir, out_dir, model, config, profile_name=profile_name):
             ok += 1
+
+    # Precompute de-accumulated precipitation rates for fast API rendering
+    if ok > 0:
+        try:
+            precompute_precip_rates_for_run(model, run)
+        except Exception as e:
+            logger.warning(f"Precompute precip rates failed: {e}")
 
     # Build cached D2 boundary geometry once per run (for fast frontend border rendering)
     if model == "icon-d2" and ok > 0:

@@ -26,9 +26,14 @@ def calc_wstar(ashfl_s, ashfl_s_prev, mh, t_2m, dt_seconds=3600):
 
     W* = [(g/T₀) × Qₛ × D]^(1/3)
 
+    Notes:
+    - DWD `ashfl_s` in current ICON products behaves like instantaneous sensible heat flux
+      (W/m²), not accumulated J/m². Older/other datasets may be accumulated.
+    - We therefore use a unit heuristic to avoid collapsing W* to ~0 by over-dividing.
+
     Args:
-        ashfl_s: Accumulated sensible heat flux (J/m²) at current step
-        ashfl_s_prev: Accumulated sensible heat flux (J/m²) at previous step (or None)
+        ashfl_s: Sensible heat flux field (usually W/m²; possibly accumulated J/m²)
+        ashfl_s_prev: Previous-step field for de-accum if needed
         mh: Mixed layer height / boundary layer depth (m)
         t_2m: 2m temperature (K)
         dt_seconds: Time between steps (s)
@@ -36,11 +41,19 @@ def calc_wstar(ashfl_s, ashfl_s_prev, mh, t_2m, dt_seconds=3600):
     Returns:
         W* in m/s (2D array), clipped to >= 0
     """
-    # Convert accumulated heat flux to instantaneous rate (W/m²)
-    if ashfl_s_prev is not None:
+    # Heuristic: typical instantaneous flux magnitudes are O(10..500) W/m².
+    # Accumulated J/m² fields over 1h are O(1e4..1e6).
+    try:
+        p99_abs = float(np.nanpercentile(np.abs(ashfl_s), 99))
+    except Exception:
+        p99_abs = 0.0
+    looks_instantaneous = p99_abs < 2000.0
+
+    if looks_instantaneous:
+        qs_wm2 = ashfl_s
+    elif ashfl_s_prev is not None:
         qs_wm2 = (ashfl_s - ashfl_s_prev) / dt_seconds
     else:
-        # First timestep: estimate from accumulated value
         qs_wm2 = ashfl_s / dt_seconds
 
     # Only positive (upward) heat flux creates thermals
@@ -64,16 +77,55 @@ def calc_wstar(ashfl_s, ashfl_s_prev, mh, t_2m, dt_seconds=3600):
 
 
 def calc_climb_rate(wstar, sink_rate=SINK_RATE):
-    """Expected vario reading = W* - glider sink rate, capped at 0.
+    """Expected vario reading = W* - glider sink rate, capped at 0."""
+    return np.maximum(wstar - sink_rate, 0.0)
 
-    Args:
-        wstar: Thermal updraft velocity (m/s)
-        sink_rate: Glider sink rate while thermalling (m/s)
+
+def compute_lapse_factor(delta_t_forecast_c, delta_altitude_km):
+    """Lapse factor = ΔT_forecast / ΔT_theoretical_dry_adiabatic.
+
+    ΔT_theoretical_dry_adiabatic = 9.8 * Δz_km
+    """
+    delta_altitude_km = np.maximum(delta_altitude_km, 0.1)
+    delta_t_theoretical = 9.8 * delta_altitude_km
+    return delta_t_forecast_c / delta_t_theoretical
+
+
+def classify_thermal_strength(t2m_c, td2m_c, t_upper_c, delta_altitude_km):
+    """Heuristic thermal class using lapse + near-surface moisture.
 
     Returns:
-        Expected climb rate (m/s), minimum 0
+        thermal_class: 0..3
+        lapse_factor: normalized instability proxy
+        moisture_class_code: 0 very moist, 1 moist, 2 moderate, 3 dry
     """
-    return np.maximum(wstar - sink_rate, 0.0)
+    delta_t_forecast = t2m_c - t_upper_c
+    lapse_factor = compute_lapse_factor(delta_t_forecast, delta_altitude_km)
+    dT_surface = t2m_c - td2m_c
+
+    base_class = np.where(lapse_factor < 0.6, 0,
+                  np.where(lapse_factor < 0.9, 1,
+                  np.where(lapse_factor < 1.2, 2, 3))).astype(np.int8)
+
+    moisture_class_code = np.where(dT_surface < 2.0, 0,
+                           np.where(dT_surface < 6.0, 1,
+                           np.where(dT_surface < 12.0, 2, 3))).astype(np.int8)
+
+    # very moist -> reduce usable thermal class by one
+    thermal_class = np.where(moisture_class_code == 0, np.maximum(base_class - 1, 0), base_class).astype(np.int8)
+    return thermal_class, lapse_factor, moisture_class_code
+
+
+def calc_climb_rate_from_thermal_class(thermal_class):
+    """Map thermal class (0..3) to representative climb-rate m/s.
+
+    Requested mapping:
+    - 0 -> 0 m/s
+    - 1 -> 1 m/s
+    - 2 -> 2 m/s
+    - 3 -> >3 m/s (represented as 3.2 m/s)
+    """
+    return np.choose(np.clip(thermal_class, 0, 3), [0.0, 1.0, 2.0, 3.2]).astype(np.float32)
 
 
 def calc_lcl(t_2m, td_2m, hsurf):

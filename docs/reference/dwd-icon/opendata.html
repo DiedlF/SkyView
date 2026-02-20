@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html xml:lang="en" lang="en" class="no-js">
+  <head>
+   <meta http-equiv="X-UA-Compatible" content="IE=edge" /> 
+   <base href="https://www.dwd.de/"/>
+   <meta charset="utf-8">
+   <meta name="viewport" content="width=320, minimum-scale=1.0, maximum-scale=1.0" />
+    <title>Wetter und Klima - Deutscher Wetterdienst   -  Our services - Open Data Server</title>
+    <meta name="generator" content="Government Site Builder"/>
+
+    <script type="text/javascript">//<![CDATA[
+      // i18n
+        var PRINT_PAGE_TEXT = 'Print';
+        var PRINT_TOOLTIP = 'Print (opens dialog)';
+        var MOBILENAVIGATION_JSON_URL = 'SiteGlobals/Functions/Navigation_Mobile/EN/mobile_navi_file.json;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?view=renderMobileNavigation';
+        var MOBILENAVIGATION_ACTIVENODE = 'node495490';
+        //constants
+        var CLINKS;
+        CLINKS = CLINKS || {};
+        CLINKS['calendar'] = "SiteGlobals/Functions/Kalender/DE/Kalender.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073";
+        CLINKS['search'] = "SiteGlobals/Forms/Suche/Autosuggest_Formular.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073";
+        CLINKS['search.json'] = "SiteGlobals/Forms/Suche/Autosuggest_Formular.json;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073";
+        CLINKS['requirePath'] = "SiteGlobals/Functions/JavaScript_Optimierung2/_standardlsg";
+        CLINKS['html5player'] = "SiteGlobals/Functions/JavaScript_Optimierung2/libs/jwplayer.html5.js;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=1";
+        CLINKS['renderCityWeather.json?view=renderCityWeather'] = "SiteGlobals/Functions/CityWeather/RenderCityWeather.json;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?view=renderCityWeather";
+        CLINKS['RenderWeatherStatus.html?view=renderWeatherStatus'] = "SiteGlobals/Functions/Unwetterwarnung/RenderWeatherStatus_EN.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?view=renderWeatherStatus";
+        CLINKS['CityWeatherCookiePath.value'] = "/SiteGlobals/";
+        CLINKS['CityWeatherSprite.normal'] = "/SiteGlobals/StyleBundles/Bilder/Allgemein/staedtewetter.svg;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?__blob=normal&amp;v=1";
+        CLINKS['ConsentBoxCookieExpiration.value'] = "360";
+        CLINKS['inkas_wirkungsanalyse'] = "_config/ConsentBoxCookieExpiration.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073";
+        CLINKS['inkas_flaechenanalyse'] = "_config/ConsentBoxCookieExpiration.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073";
+        CLINKS['inkasstart'] = "_config/ConsentBoxCookieExpiration.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073";
+        CLINKS['inkas_wirkungsanalyse_en'] = "_config/ConsentBoxCookieExpiration.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073";
+        CLINKS['inkas_flaechenanalyse_en'] = "_config/ConsentBoxCookieExpiration.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073";
+        CLINKS['inkasstart_en'] = "_config/ConsentBoxCookieExpiration.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073";
+        CLINKS['svgInlineCSS'] = "SiteGlobals/Frontend/inkas/css/inkas-svg.css;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=2";
+        CLINKS['inkasKomplett'] = "SiteGlobals/Frontend/inkas/js/inkasKomplett.js;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=1";
+        CLINKS['config.inkasJson'] = "/inkasbackend/inkas/config.json";
+        CLINKS['texts.inkasJson'] = "/inkasbackend/inkas/texts.json";
+        CLINKS['zeitlichewirkung.inkasCSV'] = "/inkasbackend/inkas/zeitlichewirkung.csv";
+        CLINKS['nrw/config-nrw.inkasJson'] = "/inkasbackend/inkas/nrw/config-nrw.json";
+        CLINKS['nrw/texts-nrw.inkasJson'] = "/inkasbackend/inkas/nrw/texts-nrw.json";
+        CLINKS['image_url_mejs_controls.normal'] = "/SiteGlobals/StyleBundles/Bilder/mediaelement/mejs_controls_svg.svg;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?__blob=normal&amp;v=1";
+        CLINKS.flashplayer = "/SiteGlobals/Functions/VideoPlayer/VideoPlayer.swf;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?__blob=value&amp;v=2";
+        var RQNAMES;
+        RQNAMES = RQNAMES || {};
+        RQNAMES['app/modules/showbox.js'] = "app/modules/showbox%2Ejs";
+        RQNAMES['../__enhanced.js'] = "../__enhanced%2Ejs";
+        RQNAMES['../__modules.js'] = "../__modules%2Ejs";
+        RQNAMES['Addon_UnwetterForm'] = "Addon_UnwetterForm";
+        RQNAMES['Addon_mmenu'] = "Addon_mmenu";
+        RQNAMES['Addon_MobileNavigations'] = "Addon_MobileNavigations";
+        RQNAMES['Addon_Accordion'] = "Addon_Accordion";
+        RQNAMES['Addon_Autosuggest'] = "Addon_Autosuggest";
+        RQNAMES['Addon_StaedteWetter'] = "Addon_StaedteWetter";
+        RQNAMES['Addon_GlossarPopup'] = "Addon_GlossarPopup";
+        RQNAMES['Addon_Lightbox'] = "JQuery_PlugIn_Lightbox";
+        RQNAMES['Addon_Lightbox_a11y'] = "JQuery_PlugIn_a11y";
+        RQNAMES['jQuery_UI_Position'] = "JQuery_UI_Position";
+        RQNAMES['jQuery_UI_Autocomplete'] = "JQuery_UI_Autocomplete";
+        RQNAMES['jQuery_UI_Menu'] = "JQuery_UI_Menu";
+        RQNAMES['libs/hammer.js'] = "libs/hammer%2Ejs";
+        RQNAMES['libs/jquery.ui.mouse.js'] = "libs/jquery.ui.mouse%2Ejs";
+        RQNAMES['libs/jquery.ui.slider.js'] = "libs/jquery.ui.slider%2Ejs";
+        var LABELS;
+        LABELS = LABELS || {};
+        LABELS['MobilesMenueLaed'] = decodeURIComponent("Mobile navigation is loading. Please wait.");
+        LABELS['MenueAusblenden'] = decodeURIComponent("hide navigation");
+        LABELS['MenueEinblenden'] = decodeURIComponent("show navigation");
+        LABELS['Schliessen'] = decodeURIComponent("Close");
+        LABELS['MehrAnzeigen'] = decodeURIComponent("Show more");
+        LABELS['TeilenUeberschrift'] = decodeURIComponent("Share on social media");
+        LABELS['TeilenLink'] = decodeURIComponent("Share this page");
+        LABELS['InkasVergleichenButton'] = decodeURIComponent("compare");
+        LABELS['InkasVergleichEntfernenButton'] = decodeURIComponent("remove comparison");
+        LABELS['TeilenEmailBodytext'] = decodeURIComponent("The sender of this email recommends the following article on www.dwd.de to you%3A%0A%7Burl%7D");
+        LABELS['CONSENT_BUTTON'] = decodeURIComponent("I accept");
+        LABELS['CONSENT_DESCRIPTION'] = decodeURIComponent("Third Party Content");
+        LABELS['CONSENT_LABEL'] = decodeURIComponent("Activation required");
+        LABELS['CONSENT_TEXT'] = decodeURIComponent("We would like to point out that data will be transmitted to third parties after activation.");
+      //]]>
+    </script>
+
+
+    <meta name="description" content="Free provision of spatial data of the DWD via the DWD&#039;s Open Data Server https://opendata.dwd.de"/>
+    <meta name="keywords" content="GDS, FTP, Globaler Datensatz, Grundversorgung, kostenfrei, frei, freie Datensätze, Modelldaten,"/>
+    <link rel="canonical" href="https://www.dwd.de/EN/ourservices/opendata/opendata.html"/>
+    <link rel="copyright" href="" type="text/html" title="Imprint" />
+    <link rel="glossary" href="" type="text/html" title="Glossary" />
+    <link rel="help" href="" type="text/html" title="Help" />
+    <link rel="start" href="EN/Home/home_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" type="text/html" title="Homepage" />
+    <link rel="contents" href="" type="text/html" title="Sitemap" />
+    <link rel="search" href="" type="text/html" title="Search" />
+    <link rel="shortcut icon" href="/SiteGlobals/StyleBundles/Bilder/favicon.ico;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?__blob=normal&amp;v=1" type="image/ico" />
+
+<link rel="stylesheet" href="SiteGlobals/StyleBundles/CSS/_libs/_all.css;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=1" type="text/css" media="screen" />
+
+<link rel="stylesheet" href="SiteGlobals/StyleBundles/CSS/screen/styles.css;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=26" type="text/css" media="screen" />
+<link rel="stylesheet" href="SiteGlobals/StyleBundles/CSS/handheld/handheld_addon_mmenu.css;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=2" type="text/css" media="all and (max-width: 599px)" />
+<link rel="stylesheet"  href="SiteGlobals/StyleBundles/CSS/screen/screen_addon_autosuggest.css;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=2" type="text/css" media ="projection, screen, handheld"  />
+<link rel="stylesheet"  href="SiteGlobals/StyleBundles/CSS/screen/screen_addon_shariff.css;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=3" type="text/css" media ="projection, screen, handheld"  />
+<link rel="stylesheet" href="SiteGlobals/StyleBundles/CSS/screen/materna_additional_stylesheet.css;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=100" type="text/css" media="screen" />
+<link rel="stylesheet" href="SiteGlobals/StyleBundles/CSS/screen/mediaelementplayer.css;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=2" type="text/css" media="screen" />
+<link rel="stylesheet" href="SiteGlobals/StyleBundles/CSS/screen/mediaelementplayer_additional.css;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=1" type="text/css" media="screen" />
+<!-- Additional IE/Win specific style sheet (Conditional Comments) --><!--[if IE 8]><link rel="stylesheet" href="SiteGlobals/StyleBundles/CSS/screen/ie8.css;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=3" type="text/css" media="screen, projection" /><![endif]-->
+<!-- Additional IE/Win specific style sheet (Conditional Comments) --><!--[if lte IE 7]><link rel="stylesheet" href="SiteGlobals/StyleBundles/CSS/screen/ie6-7.css;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=1" type="text/css" media="projection, screen" /><![endif]-->
+<!-- Additional IE/Win specific style sheet (Conditional Comments) --><!--[if lte IE 8]><link rel="stylesheet" href="SiteGlobals/StyleBundles/CSS/screen/screen_iew.css;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=1" type="text/css" media="projection, screen" /><![endif]-->
+<link rel="stylesheet" href="SiteGlobals/StyleBundles/CSS/print/print.css;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=5" type="text/css" media="print" />
+<link rel="stylesheet"  href="SiteGlobals/StyleBundles/CSS/screen/screen_addon_fontawesome.css;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=1" type="text/css" media ="projection, screen, handheld"  />
+<link rel="stylesheet" href="SiteGlobals/StyleBundles/CSS/screen/readspeaker.css;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=2" type="text/css" media="screen" />
+<link rel="stylesheet" href="SiteGlobals/StyleBundles/CSS/screen/jquery.tablesorter.theme.default.css;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=1" type="text/css" media="screen" />
+<link rel="stylesheet"  href="SiteGlobals/StyleBundles/CSS/screen/toodfeed.css;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=21" type="text/css" media ="projection, screen, handheld, print"  />
+<link rel="stylesheet" href="SiteGlobals/Frontend/inkas/css/inkas.css;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=5" type="text/css" media="screen, print" />
+
+
+
+<!--[if IE 8]>
+ <script src="SiteGlobals/Functions/JavaScript/__ie8.js.js;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=1"></script>
+ <![endif]-->
+ <!--[if ! lte IE 7]><!--> 
+<!--
+    <script src="SiteGlobals/Functions/JavaScript/__base.js.js;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=1"></script>
+    <script src="SiteGlobals/Functions/JavaScript/__start.js.js;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=1"></script>
+-->
+    <script src="SiteGlobals/Functions/JavaScript_Optimierung2/__everything.js;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=15"></script>
+ <!--<![endif]-->
+<!--[if IE 8]>
+        <script src="SiteGlobals/Functions/JavaScript/html5shiv.js.js;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=1"></script>
+<![endif]-->
+  </head>
+  <body class=" no-header-bg  lang-en">
+
+
+<a name="Start"></a>
+ <div class="navSkip">
+<ul>
+   <li><a href="EN/ourservices/opendata/opendata.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?nn=495490#Inhalt">Content</a></li>
+   <li><a href="EN/ourservices/opendata/opendata.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?nn=495490#Hauptmenu">Main Menu</a></li>
+   <li><a href="EN/ourservices/opendata/opendata.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?nn=495490#Suche">Search</a></li>
+</ul>
+</div>
+ <header role="banner">
+
+
+  <div id="top-bar" class="slot noWarning">
+   <div class="row">
+      <nav id="nav-meta" role="navigation">
+        <h1>MetaNavigation</h1>
+<a href="#" class="menu-button" title="show navigation"><span>Main-</span>Menue</a>
+
+<ul><li ><a href="EN/press/press_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" title="Press">Press</a></li><li ><a href="EN/service/contact/contact_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" title="Contact">Con­tact</a></li><li ><a title="Deutsch" class="languageLink lang_de" href="DE/leistungen/_functions/Suche/Suche_Formular.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?nn=495490" xml:lang="de" hreflang="de" lang="de">De</a></li></ul>
+
+      </nav>
+<div class="weather weather-data">
+     <p>
+<a href="EN/weather/weather_climate_local/_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" title="to local weather" alt="to local weather">
+
+      <span class="weather-location"></span>
+      <span class="weather-icon icon-1"></span>
+      <span class="weather-temp"></span>
+</a>
+     </p>
+</div>
+      <div class="search-btn">
+         <a title="show search" href="#">zur Suche</a>
+      </div>
+
+
+
+<div class="target-audience">
+<form method="post">
+<div class="select-box">
+<fieldset>
+<label for="select-box-id">Special Users</label>
+
+<select id="select-box-id" class="target" name="navigateTo">
+<option>Special Users</option>
+              <option value='https://www.dwd.de/EN/specialusers/agriculture/agriculture_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073' data-href='https://www.dwd.de/EN/specialusers/agriculture/agriculture_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073'>Agriculture &amp;  Forestry</option>
+              <option value='https://www.dwd.de/EN/specialusers/aviation/aviation_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073' data-href='https://www.dwd.de/EN/specialusers/aviation/aviation_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073'>Aviation</option>
+              <option value='https://www.dwd.de/EN/specialusers/civil_protection/civil_protection_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073' data-href='https://www.dwd.de/EN/specialusers/civil_protection/civil_protection_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073'>Civil Protection</option>
+              <option value='https://www.dwd.de/EN/specialusers/geobusiness/geobusiness_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073' data-href='https://www.dwd.de/EN/specialusers/geobusiness/geobusiness_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073'>Geobusiness</option>
+              <option value='https://www.dwd.de/EN/specialusers/health/health_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073' data-href='https://www.dwd.de/EN/specialusers/health/health_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073'>Health</option>
+              <option value='https://www.dwd.de/EN/specialusers/hobbymet/hobbymet_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073' data-href='https://www.dwd.de/EN/specialusers/hobbymet/hobbymet_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073'>Hobby Meteorologists</option>
+              <option value='https://www.dwd.de/EN/specialusers/research_education/research_education_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073' data-href='https://www.dwd.de/EN/specialusers/research_education/research_education_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073'>Research &amp; Education</option>
+              <option value='https://www.dwd.de/EN/specialusers/shipping/shipping_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073' data-href='https://www.dwd.de/EN/specialusers/shipping/shipping_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073'>Shipping</option>
+              <option value='https://www.dwd.de/EN/specialusers/water_management/water_management_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073' data-href='https://www.dwd.de/EN/specialusers/water_management/water_management_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073'>Water Resources Management</option>
+</select>
+
+<input type="submit" value="&gt;&gt;" class="non-js">
+
+</fieldset>
+</div>
+</form>
+</div>
+
+
+<div class="weather weather-warning">
+            <p class="no-warning">
+            <a href="EN/weather/warnings/warnings_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" title="Severe weather warnings" target="_blank">No se­vere weath­er warn­ing</a>
+            </p>
+</div> 
+   </div><!-- row -->
+  </div><!-- slot -->
+ 
+  <div id="search" class="slot extended">
+   <div class="row">
+    <div class="search-box" role="search">
+
+<form name="ServicebereichSuche" action="SiteGlobals/Forms/Suche/EN/Servicesuche_Formular.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" method="get" enctype="application/x-www-form-urlencoded">
+  
+  <input type="hidden" name="nn" value="495490"/>
+  <input type="hidden" name="resourceId" value="20868" />
+  <input type="hidden" name="input_" value="627548" />
+  <input type="hidden" name="pageLocale" value="en" />
+              
+            
+  <input id="f20868d20870" name="templateQueryString" value="" title="Search item" type="text" placeholder="Search ..." size="26" maxlength="100"/>
+  <input id="f20868d22552" name="sortOrder" value="score desc" type="hidden"/>
+            
+  <input type="submit" name="submitButton" value="Search" class="submit" title="Search"/>
+
+
+</form>
+    </div>
+   </div>
+  </div>  
+
+   <div id="nav" class="slot">
+<div class="PrintLogo"><a href="EN/Home/home_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" id="anfang" title="to homepage"><img src="/SiteGlobals/StyleBundles/Bilder/Farbschema/img/logo.png;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?__blob=normal&amp;v=3" alt="Government Site Builder (Link to homepage)" /></a></div>
+   <div class="row">
+    <nav role="navigation">
+     <h1 class="logo"><a href="EN/Home/home_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">Deutscher Wetterdienst <em>Wetter und Klima aus einer Hand</em></a></h1>    
+     <section>
+      <h1>Navigationsmenue</h1>
+<ul class="level-1"><li class="has-flyout virgin "><a href="EN/weather/weather_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">Weath­er</a>
+      <div class="flyout">
+        <div class="flyout-box-group">
+                <div class="flyout-box">
+          <ul>
+                <li><a href="EN/weather/warnings/warnings_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">Warn­ings</a></li>
+                <li class="last"><a href="EN/weather/weather_climate_local/_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" title="Weather &amp; Climate on-site">Weath­er & Cli­mate on-site</a></li>
+                <li class="last"><a href="EN/weather/weather_world/weather_world_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">Weath­er world­wide</a></li>
+          </ul></div></div></div></li><li class="has-flyout virgin mehrzeiligerTitel"><a href="EN/climate_environment/climateenvironment_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">Cli­mate &amp; <br/>
+En­vi­ron­ment</a>
+      <div class="flyout">
+        <div class="flyout-box-group">
+                <div class="flyout-box">
+          <ul>
+                <li><a href="EN/climate_environment/dkd/dkd_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" title="Deutscher Klimadienst (DKD) ">Deutsch­er Kli­ma­di­enst (DKD) </a></li>
+                <li><a href="EN/climate_environment/climateresearch/climateprediction/climateprediction_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" title="Climate prediction">Cli­mate pre­dic­tion</a></li>
+                <li><a href="EN/climate_environment/cdc/cdc_node_en.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">CDC (Cli­mate Da­ta Cen­ter)</a></li>
+                <li class="last"><a href="EN/climate_environment/climatemonitoring/climatemonitoring_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">Cli­mate mon­i­tor­ing</a></li>
+                <li><a href="EN/climate_environment/climateresearch/climateresearch_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">Cli­mate re­search</a></li>
+                <li><a href="EN/climate_environment/consultancy/consultancy_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">Cli­mate and en­vi­ron­ment con­sul­tan­cy</a></li>
+                <li><a href="EN/climate_environment/climatechange/climatechange_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">Cli­mate change</a></li>
+                <li class="last"><a href="EN/climate_environment/capacitybuilding/capacitybuilding_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">Ca­pac­i­ty build­ing</a></li>
+          </ul></div></div></div></li><li class="has-flyout virgin "><a href="EN/research/research_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">Re­search</a>
+      <div class="flyout">
+        <div class="flyout-box-group">
+                <div class="flyout-box">
+          <ul>
+                <li><a href="EN/research/observing_atmosphere/observingatmosphere_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" title="Observing the atmosphere">Ob­serv­ing the at­mo­sphere</a></li>
+                <li><a href="EN/research/weatherforecasting/weatherforecasting_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">Weath­er fore­cast­ing</a></li>
+                <li><a href="EN/research/climateenvironment/climateenvironment_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">Cli­mate and en­vi­ron­ment</a></li>
+                <li class="last"><a href="EN/research/researchprogramme/herz/herz_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" title="Hans Ertel Centre for Weather Research">Hans Er­tel Cen­tre for Weath­er Re­search</a></li>
+                <li><a href="EN/research/researchprogramme/researchsprogramme_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" title="Research Programmes">Re­search Pro­grammes</a></li>
+                <li><a href="EN/research/international_programme/international_programme_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" title="International Programmes">In­ter­na­tion­al Pro­grammes</a></li>
+                <li class="last"><a href="EN/research/projects/projects_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" title="Projects">Projects</a></li>
+          </ul></div></div></div></li><li class="has-flyout open "><a href="EN/ourservices/_functions/search/search_Formular.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?nn=495490" title="Our services">Our services</a></li><li class="has-flyout virgin "><a href="EN/aboutus/aboutus_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">About us</a>
+      <div class="flyout">
+        <div class="flyout-box-group">
+                <div class="flyout-box">
+          <ul>
+                <li><a href="EN/aboutus/tasks/task_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" title="Sphere of Tasks">Sphere of Tasks</a></li>
+                <li><a href="EN/aboutus/jobs/jobs_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">Jobs & ca­reers</a></li>
+                <li><a href="EN/aboutus/organisation/organisation_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">Or­gan­i­sa­tion</a></li>
+                <li class="last"><a href="EN/aboutus/locations/locations_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">Lo­ca­tions</a></li>
+                <li><a href="EN/aboutus/coop/coop_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">Co-op­er­a­tion</a></li>
+                <li><a href="EN/aboutus/it/it_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">In­for­ma­tion tech­nol­o­gy</a></li>
+                <li><a href="EN/aboutus/observing/observing_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">Ob­serv­ing sys­tem</a></li>
+                <li class="last"><a href="EN/aboutus/library/library_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" title="National Meteorological Library">Na­tion­al Me­te­o­ro­log­i­cal Li­brary</a></li>
+          </ul></div></div></div></li>
+</ul>
+     </section>
+    </nav>
+   </div><!-- row -->
+  </div><!-- slot -->   
+ </header>
+
+<main role="main" id="main">
+ <div id="breadcrumbs" class="slot content">
+   <div class="row">
+    <nav role="navigation">
+     <h1>Breadcrumb-<em> Menü</em></h1>
+     <ul>
+<li class="first"><a href="EN/Home/home_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" title="Homepage">Homepage</a></li><li><a href="EN/ourservices/_functions/search/search_Formular.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?nn=495490" title="Our services">Our services</a></li>
+     </ul>
+    </nav>
+   </div><!-- row -->
+  </div><!-- slot -->
+
+ 
+      
+
+<div class="slot content type-2 service-detail "><div class="row"><section><div class="row"><div class="multi-tab leistungen white "><div class="row"><div class="headline"><h1>Open Data Server <a href="DE/leistungen/opendata/opendata.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" title="Auf Deutsch anzeigen" class="langLink">DE</a></a></h1></div></div><div class="content-wrapper light noFacet"><div class="content-container static"><figure class="picture linksOhne"><img src="/DE/leistungen/opendata/opendata_bild.jpg;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?__blob=poster&amp;v=15" title="Open Data (Source © Deutscher Wetterdienst)" alt="Open Data (Source © Deutscher Wetterdienst)" /><figcaption></figcaption></figure></div></div></div></div></section></div><div class="row details"><section><div class="description article-full more-toggler"><h1>Free provision of spatial data of the DWD via the DWD's Open Data Server https://opendata.dwd.de</h1><p>According to a change in the Deutscher Wetterdienst Act, which has come into effect on 25.7.17, the DWD has been given the legal mandate to make its weather and climate information available mostly free of charge. The DWD price list has been adapted accordingly and is available at <a class="RichTextIntLink NavNode" href="DE/derdwd/preisliste_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" title="Preisliste">www.dwd.de/preisliste</a>. Please also see our conditions of use for further provisions. </p>
+<h3>Possibilities of access</h3>
+
+<p>The range of spatial data offered on the DWD's Open Data Server (<a class="RichTextExtLink ExternalLink" href="https://opendata.dwd.de" title="External link Open Data -Server des DWDs">https://opendata.dwd.de</a>) is wide and includes model forecasts, radar data, current measurements and observations, a large amount of different types of climate data and many more. </p>
+
+<p>The climate data of the DWD will continue to be provided on the server of DWD's Climate Data Center (CDC) at <a class="RichTextExtLink ExternalLink" href="https://opendata.dwd.de/climate_environment/" title="External link zum CDC-OpenData Bereich">https://opendata.dwd.de/climate_environment/CDC/</a>. Users wishing to access these through the Open Data Server will be forwarded from there via the server's climate subtree. </p>
+
+<p>A number of data sets are additionally available from our <a class="RichTextIntLink Flyer" href="DE/leistungen/geodienste/geodienste.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?nn=495490" title="Geodienste (WMS/WFS)">GeoWebService</a> (German language) portal in OGC compatible WMS and WFS formats.</p>
+
+<p><br/>
+</p>
+<table class="tablewithborder"><tbody><tr><td colspan="1" rowspan="1"><p>When using the data server “opendata.dwd.de”, please note that service and availability levels cannot be guaranteed for this service.</p>
+
+<p>For business or management processes that require higher data integrity and continuity, the <a class="RichTextIntLink NavNode" href="EN/service/contact/expertenrat/expertenrat_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" title="Expert advice for businesses ">responsible customer service</a> can request the establishment of secure access via <a class="RichTextIntLink Flyer" href="EN/ourservices/geospatial_data_service/geospatial_data_service.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?nn=495490" title="Geospatial Data Service in the DWD">the geospatial data server service</a>.</p>
+
+<p>Data and provision services specifically certified for aviation are available exclusively from the Aviation Meteorology Department  (<a class="RichTextExtLinkMailTo ExternalLink" href="&#109;&#97;&#105;&#108;&#116;&#111;&#58;&#108;&#117;&#102;&#116;&#102;&#97;&#104;&#114;&#116;&#64;&#100;&#119;&#100;&#46;&#100;&#101;" title="External link E-Mail senden an: luftfahrt@dwd.de">luftfahrt@dwd.de</a>).</p>
+</td></tr></tbody></table>
+<p>More information</p>
+
+<p>Use the server's weather subtree directory (<a class="RichTextExtLink ExternalLink" href="https://opendata.dwd.de/weather/tree.html" target="_blank" rel="noopener noreferrer" title="External link zur Verzeichnisstruktur Open Data weather (Opens in new window)">https://opendata.dwd.de/weather/tree.html</a>).</p>
+
+<p>An <a class="RichTextExtLink ExternalLink" href="https://opendata.dwd.de/climate_environment/" title="External link zum CDC-OpenData Bereich">overview of climate data</a> offered is given separately and can be found on the CDC ftp server. </p>
+
+<p>Information about adaptations, changes and extensions relating to the weather data available will be published in the <a class="RichTextIntLink News" href="DE/leistungen/opendata/neuigkeiten/opendata_start.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?nn=495490" target="_blank" rel="noopener noreferrer" title="DWD startet mit seinem Open Data-Angebot (Opens in new window)">Open Data Server news section</a>. We invite you to subscribe to our <a class="RichTextIntLink FERssGenerator" href="SiteGlobals/Functions/RSSFeed/DE/opendata/opendata_lsb.xml;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?nn=495490" target="_blank" rel="noopener noreferrer" title="Neuigkeiten zu Open Data / DWD Open Data News (RSS) (Opens in new window)">Open Data RSS-news feeds</a> to receive the news automatically.</p>
+
+<p>Changes to the range of climate data offered will be listed in a log file available at <a class="RichTextExtLink ExternalLink" href="https://opendata.dwd.de/climate_environment/CDC/Change_log_CDC_ftp.txt" title="External link Link zur CDC Change Log">https://opendata.dwd.de/climate_environment/CDC/Change_log_CDC_ftp.txt</a>. <br/>
+Users of climate data are recommended to subscribe to our CDC newsletter: <a href="http://www.dwd.de/DE/klimaumwelt/cdc/cdc.html" target="_blank" rel="noopener noreferrer">https://www.dwd.de/DE/klimaumwelt/cdc/cdc.html.</a></p>
+
+<p>For questions relating to climate data, please contact our climate data team by e-mail to <a class="RichTextExtLinkMailTo ExternalLink" href="&#109;&#97;&#105;&#108;&#116;&#111;&#58;&#107;&#108;&#105;&#109;&#97;&#46;&#118;&#101;&#114;&#116;&#114;&#105;&#101;&#98;&#64;&#100;&#119;&#100;&#46;&#100;&#101;" title="External link E-Mail senden an: klima.vertrieb@dwd.de">klima.vertrieb@dwd.de</a>.</p>
+<h1>Contact:</h1>
+<p></p>
+
+
+<div class="address singleview"><strong>Deutscher Wetterdienst
+  </strong>
+  <br/>
+  <div>
+  <span class="value">Frankfurter Straße&nbsp;135</span><br/>
+  <span class="value">63067</span> <span class="value">Offenbach am Main</span><br/>
+  </div>
+</div>
+
+
+<div class="contactData singleview"><strong><span class="341291108-29012010">Service Open Data</span>
+  </strong>
+  <br/>
+  <div class="mail">
+    <span class="label">E-mail</span> <span class="value"><a href="&#109;&#97;&#105;&#108;&#116;&#111;&#58;&#111;&#112;&#101;&#110;&#100;&#97;&#116;&#97;&#64;&#100;&#119;&#100;&#46;&#100;&#101;" title="E-Mail: &#111;&#112;&#101;&#110;&#100;&#97;&#116;&#97;&#64;&#100;&#119;&#100;&#46;&#100;&#101;">&#111;&#112;&#101;&#110;&#100;&#97;&#116;&#97;&#64;&#100;&#119;&#100;&#46;&#100;&#101;</a></span>
+  </div>
+</div><div class="sectionRelated link-list"></div></div><div class="description-aside"><div class="row"><section><div class="sectionRelated link-list"><h1>Access</h1><ul class="links">
+<li><a class="external" href="https://opendata.dwd.de" title="External link Open Data -Server des DWDs (Opens in new window)" target="_blank" rel="noopener noreferrer">Open Data Server</a></li></ul></div><!-- sectionRelated --></section></div><div class="row"><section><div class="sectionRelated link-list"><h1>Try now</h1><ul class="links"><li><a class="external" href="https://dwd-geoportal.de/" title="External link https://dwd-geoportal.de/ (Opens in new window)" target="_blank" rel="noopener noreferrer">DWD-Geoportal (Beta)</a></li></ul></div><!-- sectionRelated --></section></div><div class="row"><section><div class="sectionRelated link-list"><h1>Copyright</h1><ul class="links">
+<li>
+    
+  <a href="EN/service/legal_notice/legal_notice.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?nn=495490&amp;lsbId=627548" title="read the article &quot;Legal notice&quot;">Legal notice</a></li></ul></div></section></div><div class="row"><section><div class="sectionRelated link-list"><h1>News</h1><ul class="links">
+<li>
+    
+  <a href="SiteGlobals/Functions/RSSFeed/DE/opendata/opendata_lsb.xml;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?nn=495490" title="read the article &quot;Neuigkeiten zu Open Data / DWD Open Data News (RSS)&quot;">Neuigkeiten zu Open Data / DWD Open Data News (RSS)</a></li>
+<li>
+  <a href="DE/service/newsletter/form/geodienste/geodienste_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" title="Geodienste - Anmeldeformular" class="themenLink">Geodienste</a>
+</li></ul></div></section></div><div class="row"><section><div class="sectionRelated link-list"><h1>More information (partly German language)</h1><ul class="links">
+<li>
+    
+  <a href="DE/leistungen/geodienste/help/service_level_description.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?nn=495490&amp;lsbId=627548" title="read the article &quot;Service Level Description for the IT services providing geodata&quot;">Service Level Description for the IT services providing geodata</a></li>
+<li>
+    
+  <a href="DE/leistungen/opendata/hilfe.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?nn=495490&amp;lsbId=627548" title="read the article &quot;Open Data Weather - Erläuternde Dateien (content in general)&quot;">Open Data Weather - Erläuternde Dateien (content in general)</a></li></ul></div></section></div></div></section></div></div><!-- Werwandte Leitungen -->
+    <div class="slot content results">
+        <div class="row">
+
+            <section class="teaser-group"><h1>other services</h1>
+<div class="teaser"><div class="teaser-box"><a href="EN/ourservices/cdc/cdc.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?nn=495490"><img src="/DE/leistungen/cdc/bilder/bild_leistungen_cdc-ftp_300x168px.jpg;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?__blob=normal&amp;v=2" title="CDC FTP-Server " alt="CDC FTP-Server " /><h2>Open Data area of the Climate Data Center</h2><p>Free access to many climate data from DWD's Climate Data Center (<abbr title="Climate Data Center">CDC</abbr>), especially for further processing</p>
+</a></div></div>
+            </section>
+        </div>
+
+    </div>
+<!-- slot content -->
+
+      
+
+</main>
+<script type="text/javascript">
+<!--
+window.rsConf = {general: {usePost: true}};
+//-->
+</script>
+
+<script src="SiteGlobals/Functions/ReadSpeakerModul/ReadSpeakerSandbox/readspeakerScript.js;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=1&amp;pids=embhl" type="text/javascript"></script>
+
+
+
+ <footer role="contentinfo" class="dwd-services">
+<section class="materna-shariff-bar">
+  <div class="row">
+      <div class="materna-shariff subtle" data-lang="en">
+        <a id="materna-shariff-bar-opener"><span>Share this page</span></a>
+      </div>
+   </div>
+</section>
+  <section class="services">
+   <div class="slot">
+    <div class="row">
+     <nav role="navigation">
+      <h1>Service-Navigations-<em> Menü</em></h1>
+      <ul>
+<li class="service-1">
+       <a href="EN/aboutus/library/library_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073"  title="National Meteorological Library"><span><span>National Meteorological Library</span></span></a>
+</li>
+<li class="service-2">
+       <a href="EN/press/mediathek_socialmedia/social_media_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073"  title="Social media"><span><span>Social media</span></span></a>
+</li>
+<li class="service-3">
+       <a class="external" href="http://www.dwd.de/lexikon" title="External link Weather glossary (Opens in new window)" target="_blank" rel="noopener noreferrer"><span><span>Weather glossary</span></span></a>
+</li>
+<li class="service-4">
+       <a class="external" href="https://www.dwd-shop.de/" title="External link WetterShop (Opens in new window)" target="_blank" rel="noopener noreferrer"><span><span>WetterShop</span></span></a>
+</li>
+<li class="service-5">
+       <a href="EN/aboutus/jobs/jobs_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" ><span><span>Jobs &amp; careers</span></span></a>
+</li>
+      </ul>
+     </nav>
+    </div><!-- row -->
+   </div><!-- slot -->
+  </section>
+</footer>
+<footer role="contentinfo">
+<section class="site-index">
+   <h1>Inhatsverzeichnis</h1>
+   <div class="slot">
+    <div class="row">
+         <nav class="box mod teaser type-2 link-list">
+      <div class="teaser-box">
+       <h1>DWD-Services</h1>
+       <ul>
+<li>
+       <a href="EN/service/archiv/archiv_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073"  title="News &amp; topics of interest (archive)">News archive</a>
+</li>
+<li>
+       <a href="EN/service/events/events_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073"  title="Events">Events</a>
+</li>
+<li>
+       <a href="EN/service/newsletter/newsletters_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" >Newsletters</a>
+</li>
+<li>
+       <a href="EN/service/dwd_apps/dwd-apps_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" >DWD apps</a>
+</li>
+<li>
+       <a href="EN/service/dwd_quick_links/dwd_quick_links_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073"  title="DWD quick links">DWD quick links</a>
+</li>
+       </ul>
+      </div>
+     </nav>
+     <nav class="box" role="navigation">
+      <div class="box-box">
+            <h1><a href="EN/weather/weather_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">Weath­er</a></h1>
+            <ul id="footer-links-1">
+              <li><a href="EN/weather/warnings/warnings_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" ><span><span>Warnings</span></span></a></li>
+              <li><a href="EN/weather/weather_climate_local/_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073"  title="Weather &amp; Climate on-site"><span><span>Weather &amp; Climate on-site</span></span></a></li>
+              <li><a href="EN/weather/weather_world/weather_world_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" ><span><span>Weather worldwide</span></span></a></li>
+              </ul>
+        </div><!-- box-box -->
+     </nav><!-- box -->
+     <nav class="box" role="navigation">
+      <div class="box-box">
+            <h1><a href="EN/climate_environment/climateenvironment_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">Cli­mate &amp; <br/>
+En­vi­ron­ment</a></h1>
+            <ul id="footer-links-2">
+              <li><a href="EN/climate_environment/dkd/dkd_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073"  title="Deutscher Klimadienst (DKD) "><span><span>Deutscher Klimadienst (DKD) </span></span></a></li>
+              <li><a href="EN/climate_environment/climateresearch/climateprediction/climateprediction_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073"  title="Climate prediction"><span><span>Climate prediction</span></span></a></li>
+              <li><a href="EN/climate_environment/cdc/cdc_node_en.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" ><span><span>CDC (Climate Data Center)</span></span></a></li>
+              <li><a href="EN/climate_environment/climatemonitoring/climatemonitoring_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" ><span><span>Climate monitoring</span></span></a></li>
+              <li><a href="EN/climate_environment/climateresearch/climateresearch_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" ><span><span>Climate research</span></span></a></li>
+              <li><a href="EN/climate_environment/consultancy/consultancy_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" ><span><span>Climate and environment consultancy</span></span></a></li>
+              <li><a href="EN/climate_environment/climatechange/climatechange_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" ><span><span>Climate change</span></span></a></li>
+              <li><a href="EN/climate_environment/capacitybuilding/capacitybuilding_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" ><span><span>Capacity building</span></span></a></li>
+              </ul>
+        </div><!-- box-box -->
+     </nav><!-- box -->
+     <nav class="box" role="navigation">
+      <div class="box-box">
+            <h1><a href="EN/research/research_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">Re­search</a></h1>
+            <ul id="footer-links-3">
+              <li><a href="EN/research/observing_atmosphere/observingatmosphere_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073"  title="Observing the atmosphere"><span><span>Observing the atmosphere</span></span></a></li>
+              <li><a href="EN/research/weatherforecasting/weatherforecasting_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" ><span><span>Weather forecasting</span></span></a></li>
+              <li><a href="EN/research/climateenvironment/climateenvironment_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" ><span><span>Climate and environment</span></span></a></li>
+              <li><a href="EN/research/researchprogramme/herz/herz_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073"  title="Hans Ertel Centre for Weather Research"><span><span>Hans Ertel Centre for Weather Research</span></span></a></li>
+              <li><a href="EN/research/researchprogramme/researchsprogramme_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073"  title="Research Programmes"><span><span>Research Programmes</span></span></a></li>
+              <li><a href="EN/research/international_programme/international_programme_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073"  title="International Programmes"><span><span>International Programmes</span></span></a></li>
+              <li><a href="EN/research/projects/projects_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073"  title="Projects"><span><span>Projects</span></span></a></li>
+              </ul>
+        </div><!-- box-box -->
+     </nav><!-- box -->
+     <nav class="box" role="navigation">
+      <div class="box-box">
+            <h1><a href="EN/aboutus/aboutus_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073">About us</a></h1>
+            <ul id="footer-links-4">
+              <li><a href="EN/aboutus/tasks/task_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073"  title="Sphere of Tasks"><span><span>Sphere of Tasks</span></span></a></li>
+              <li><a href="EN/aboutus/jobs/jobs_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" ><span><span>Jobs &amp; careers</span></span></a></li>
+              <li><a href="EN/aboutus/organisation/organisation_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" ><span><span>Organisation</span></span></a></li>
+              <li><a href="EN/aboutus/locations/locations_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" ><span><span>Locations</span></span></a></li>
+              <li><a href="EN/aboutus/coop/coop_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" ><span><span>Co-operation</span></span></a></li>
+              <li><a href="EN/aboutus/it/it_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" ><span><span>Information technology</span></span></a></li>
+              <li><a href="EN/aboutus/observing/observing_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" ><span><span>Observing system</span></span></a></li>
+              <li><a href="EN/aboutus/library/library_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073"  title="National Meteorological Library"><span><span>National Meteorological Library</span></span></a></li>
+              </ul>
+        </div><!-- box-box -->
+     </nav><!-- box -->
+    </div><!-- row -->
+   </div><!-- slot -->
+</section>
+<section class="social-services">
+   <div class="slot">
+    <div class="row">
+     <div class="box youtube">
+      <div class="box-box">
+       <a href="http://www.youtube.com/user/DWDderWetterdienst" target="_blank" rel="noopener noreferrer" title="External link to DWD on YouTube (opens in new window)">
+        <span class="logo">You Tube</span>
+        <p>
+          Weather warning clips and much more
+        </p>
+       </a>
+      </div><!-- box-box -->
+     </div><!-- box -->
+     <div class="box facebook">
+      <div class="box-box">
+       <a href="https://www.facebook.com/DeutscherWetterdienst" target="_blank" rel="noopener noreferrer" title="External link to DWD on Facebook (opens in new window)">
+        <span class="logo">Facebook</span>
+        <p>
+          Weather and climate - informing and entertaining
+        </p>
+       </a>
+      </div><!-- box-box -->
+     </div><!-- box -->
+     <div class="box mastodon">
+      <div class="box-box">
+       <a href="https://social.bund.de/@DeutscherWetterdienst " target="_blank" rel="noopener noreferrer" title="External link to DWD on Mastodon (opens in new window)">
+        <span class="logo">mastodon</span>
+        <p>
+          @Deutscher Wetterdienst  on social.bund.de acros the channel Mastodon
+        </p>
+       </a>
+      </div><!-- box-box -->
+     </div><!-- box -->
+     <div class="box bluesky">
+      <div class="box-box">
+       <a href="https://bsky.app/profile/dwdderwetterdienst.bsky.social" target="_blank" rel="noopener noreferrer" title="External link to DWD on Bluesky (opens in new window)">
+        <span class="logo">bluesky</span>
+        <p>
+          Up-to-date weather and climate information
+        </p>
+       </a>
+      </div><!-- box-box -->
+     </div><!-- box -->
+  
+  <div class="box linkedin">
+      <div class="box-box">
+       <a href="https://de.linkedin.com/company/deutscher-wetterdienst" target="_blank" rel="noopener noreferrer" title="External link to DWD on LinkedIn (opens in new window)">
+        <span class="logo">LinkedIn</span>
+        <p>
+          Employer information on LinkedIn
+        </p>
+       </a>
+      </div><!-- box-box -->
+     </div><!-- box -->
+  
+     <div class="box instagram">
+      <div class="box-box">
+       <a href="https://www.instagram.com/deutscherwetterdienst/" target="_blank" rel="noopener noreferrer" title="External Link to DWD Instagram (Opens new window)">
+        <span class="logo">Instagram</span>
+        <p>
+          Post your ‘I love’ weather snapshots on #ichliebewetter
+        </p>
+       </a>
+      </div><!-- box-box -->
+     </div><!-- box -->
+    </div><!-- row -->
+   </div><!-- slot -->
+</section>
+<section class="legal">
+   <div class="slot">
+    <div class="row">
+     <div class="box info">
+      <div class="box-box">
+       <p>
+        The Deutscher Wetterdienst is a higher federal authority under the Federal Ministry of Transport.
+       </p>
+       <address>Deutscher Wetterdienst, Frankfurter Straße 135, 63067 Offenbach, Germany</address>
+      </div><!-- box-box -->
+     </div><!-- box -->
+<div class="box links">
+      <div class="box-box">
+       <ul>
+<li>
+       <a href="EN/service/imprint/imprint_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" >Imprint</a>
+</li>
+<li>
+       <a href="EN/service/dataprotection/dataprotection_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" >Data Protection</a>
+</li>
+<li>
+       <a href="EN/service/disclaimer/disclaimer_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" >Disclaimer</a>
+</li>
+<li>
+       <a href="EN/service/terms/terms_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073" >Terms &amp; Conditions</a>
+</li>
+<li>
+       <a href="EN/service/qm/qm_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073"  title="Quality management">QM</a>
+</li>
+<li>
+       <a href="EN/service/legal_notice/legal_notice_node.html;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073"  title="Legal notice">Legal notice</a>
+</li>
+       </ul>
+      </div><!-- box-box -->
+     </div><!-- box -->
+    </div><!-- row -->
+   </div><!-- slot -->
+  </section>
+ </footer>
+
+ <!--[if ! lte IE 8]><!--> 
+<!--
+ <script type="text/javascript">
+  preloader.modules = "SiteGlobals/Functions/JavaScript/__modules.js.js;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=3";
+  preloader.enhanced= "SiteGlobals/Functions/JavaScript/__enhanced.js.js;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=4";
+  preloader.everything = "SiteGlobals/Functions/JavaScript_Optimierung2/__everything.js;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=15";
+  preloader.loadEverything = true;
+ </script>
+ <script src="SiteGlobals/Functions/JavaScript/__preload.js.js;jsessionid=8EAC5C8FFA5085E10C89909D897B566F.live21073?v=1"></script>
+-->
+
+ <!--<![endif]-->
+
+  </body>
+</html>

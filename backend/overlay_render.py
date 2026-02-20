@@ -88,6 +88,51 @@ def colormap_clouds(val):
     return (grey, grey, grey, 210)
 
 
+def _temp_to_c(v):
+    tv = float(v)
+    # ICON temperatures are in Kelvin; keep Celsius input unchanged if already plausible.
+    return tv - 273.15 if tv > 170 else tv
+
+
+def colormap_temperature(v):
+    if v is None:
+        return None
+    c = _temp_to_c(v)
+    # Display range: -30 .. +40 °C
+    t = min(max((c + 30.0) / 70.0, 0.0), 1.0)
+    return (int(40 + 215 * t), int(90 + 110 * (1 - abs(t - 0.5) * 2)), int(230 - 210 * t), int(95 + 125 * t))
+
+
+def colormap_mh(v):
+    if v is None or float(v) <= 0:
+        return None
+    t = min(float(v) / 3000.0, 1.0)
+    return (int(220 * (1 - t)), int(90 + 150 * t), int(40 + 60 * t), int(100 + 120 * t))
+
+
+def colormap_ashfl(v):
+    if v is None or float(v) < 20:
+        return None
+    t = min((float(v) - 20.0) / 380.0, 1.0)
+    return (int(70 + 185 * t), int(170 - 110 * t), int(240 - 220 * t), int(95 + 120 * t))
+
+
+def colormap_relhum(v):
+    if v is None or float(v) < 1:
+        return None
+    t = min(max(float(v), 0.0) / 100.0, 1.0)
+    return (int(230 - 170 * t), int(230 - 120 * t), int(230 - 40 * t), int(80 + 140 * t))
+
+
+def colormap_dew_spread(v):
+    if v is None or float(v) < 0:
+        return None
+    d = float(v)
+    # Kelvin difference equals Celsius difference.
+    t = min(max(d, 0.0) / 25.0, 1.0)
+    return (int(70 + 185 * t), int(200 - 130 * t), int(220 - 180 * t), int(90 + 130 * t))
+
+
 def colormap_thermals(val):
     cape = float(val)
     if cape < 50:
@@ -97,9 +142,11 @@ def colormap_thermals(val):
 
 
 def colormap_ceiling(v):
-    if v <= 0:
+    # Keep missing/no-ceiling markers transparent.
+    # ICON uses very high sentinel values (~20700m) for "no relevant ceiling".
+    if v <= 0 or v >= 20000:
         return None
-    # Values above 9900m are clamped to max color instead of being suppressed.
+    # Real high ceilings above 9900m are clamped to max color.
     t = max(0.0, min(float(v), 9900.0)) / 9900.0
     return (int(220 * (1 - t)), int(60 + 180 * t), int(30 + 50 * t), int(200 - 60 * t))
 
@@ -167,14 +214,24 @@ SIGWX_LUT = _build_sigwx_lut()
 
 OVERLAY_CONFIGS = {
     "total_precip": {"var": "total_precip", "cmap": colormap_total_precip, "computed": True},
-    "rain": {"var": "prr_gsp", "cmap": colormap_rain},
-    "snow": {"var": "prs_gsp", "cmap": colormap_snow},
-    "hail": {"var": "prg_gsp", "cmap": colormap_hail},
+    "rain": {"var": "rain_amount", "cmap": colormap_rain, "computed": True},
+    "snow": {"var": "snow_amount", "cmap": colormap_snow, "computed": True},
+    "hail": {"var": "hail_amount", "cmap": colormap_hail, "computed": True},
     "clouds_low": {"var": "clcl", "cmap": colormap_clouds},
     "clouds_mid": {"var": "clcm", "cmap": colormap_clouds},
     "clouds_high": {"var": "clch", "cmap": colormap_clouds},
     "clouds_total": {"var": "clct", "cmap": colormap_clouds},
     "clouds_total_mod": {"var": "clct_mod", "cmap": colormap_clouds},
+    "t_2m": {"var": "t_2m", "cmap": colormap_temperature},
+    "t_950hpa": {"var": "t_950hpa", "cmap": colormap_temperature},
+    "t_850hpa": {"var": "t_850hpa", "cmap": colormap_temperature},
+    "t_700hpa": {"var": "t_700hpa", "cmap": colormap_temperature},
+    "t_500hpa": {"var": "t_500hpa", "cmap": colormap_temperature},
+    "t_300hpa": {"var": "t_300hpa", "cmap": colormap_temperature},
+    "mh": {"var": "mh", "cmap": colormap_mh},
+    "ashfl_s": {"var": "ashfl_s", "cmap": colormap_ashfl},
+    "relhum_2m": {"var": "relhum_2m", "cmap": colormap_relhum},
+    "dew_spread_2m": {"var": "dew_spread_2m", "cmap": colormap_dew_spread, "computed": True},
     "dry_conv_top": {"var": "htop_dc", "cmap": colormap_ceiling},
     "sigwx": {"var": "ww", "cmap": colormap_sigwx},
     "ceiling": {"var": "ceiling", "cmap": colormap_ceiling},
@@ -204,7 +261,7 @@ def colorize_layer_vectorized(layer: str, sampled: np.ndarray, valid: np.ndarray
             rgba[..., 3][mask] = np.clip(a[mask] if isinstance(a, np.ndarray) else a, 0, 255).astype(np.uint8) if isinstance(a, np.ndarray) else np.uint8(a)
 
     if layer in ("total_precip", "rain", "snow", "hail"):
-        mmh = v * 3600.0
+        mmh = v
         m = valid & (mmh >= 0.1)
         if np.any(m):
             t = np.clip(mmh / 5.0, 0.0, 1.0)
@@ -226,8 +283,44 @@ def colorize_layer_vectorized(layer: str, sampled: np.ndarray, valid: np.ndarray
             set_rgba(m, grey, grey, grey, 210)
         return rgba
 
-    if layer in ("ceiling", "dry_conv_top"):
+    if layer.startswith("t_"):
+        m = valid & np.isfinite(v)
+        if np.any(m):
+            vc = np.where(v > 170.0, v - 273.15, v)
+            t = np.clip((vc + 30.0) / 70.0, 0.0, 1.0)
+            set_rgba(m, 40 + 215 * t, 90 + 110 * (1 - np.abs(t - 0.5) * 2), 230 - 210 * t, 95 + 125 * t)
+        return rgba
+
+    if layer == "mh":
         m = valid & (v > 0)
+        if np.any(m):
+            t = np.clip(v / 3000.0, 0.0, 1.0)
+            set_rgba(m, 220 * (1 - t), 90 + 150 * t, 40 + 60 * t, 100 + 120 * t)
+        return rgba
+
+    if layer == "ashfl_s":
+        m = valid & (v >= 20)
+        if np.any(m):
+            t = np.clip((v - 20.0) / 380.0, 0.0, 1.0)
+            set_rgba(m, 70 + 185 * t, 170 - 110 * t, 240 - 220 * t, 95 + 120 * t)
+        return rgba
+
+    if layer == "relhum_2m":
+        m = valid & (v >= 1)
+        if np.any(m):
+            t = np.clip(v / 100.0, 0.0, 1.0)
+            set_rgba(m, 230 - 170 * t, 230 - 120 * t, 230 - 40 * t, 80 + 140 * t)
+        return rgba
+
+    if layer == "dew_spread_2m":
+        m = valid & (v >= 0)
+        if np.any(m):
+            t = np.clip(v / 25.0, 0.0, 1.0)
+            set_rgba(m, 70 + 185 * t, 200 - 130 * t, 220 - 180 * t, 90 + 130 * t)
+        return rgba
+
+    if layer in ("ceiling", "dry_conv_top"):
+        m = valid & (v > 0) & (v < 20000)
         if np.any(m):
             t = np.clip(v / 9900.0, 0.0, 1.0)
             set_rgba(m, 220 * (1 - t), 60 + 180 * t, 30 + 50 * t, 200 - 60 * t)

@@ -4,6 +4,41 @@
 import os
 import sys
 import math
+import asyncio
+
+# ─── Auto-load .marker_auth_secret.env (and any other *.env files in backend dir) ───
+# This ensures secrets are available regardless of how the server is launched
+# (direct python3 call, nohup, systemd, etc.) without requiring manual `source`.
+def _load_env_file(path: str) -> None:
+    """Parse shell-style `export KEY="VALUE"` or `KEY=VALUE` env files into os.environ."""
+    import re
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                # Strip leading 'export ' if present
+                line = re.sub(r"^export\s+", "", line)
+                if "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                key = key.strip()
+                # Strip surrounding quotes (single or double)
+                val = val.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = val
+    except FileNotFoundError:
+        pass
+    except Exception as _e:
+        print(f"Warning: could not load env file {path}: {_e}", file=sys.stderr)
+
+_BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+for _env_file in [
+    os.path.join(_BACKEND_DIR, ".marker_auth_secret.env"),
+    os.path.join(_BACKEND_DIR, ".env"),
+]:
+    _load_env_file(_env_file)
 import time
 import atexit
 import uuid
@@ -11,7 +46,10 @@ import json
 import base64
 import hmac
 import hashlib
+import glob
+import subprocess
 import requests
+from email.utils import parsedate_to_datetime
 from time import perf_counter
 import numpy as np
 from datetime import datetime, timedelta, timezone
@@ -37,18 +75,38 @@ from overlay_data import (
 )
 from weather_codes import ww_to_symbol
 from symbol_logic import aggregate_symbol_cell
-from point_data import build_overlay_values
-from classify import classify_cloud_type, classify_point as classify_point_core
+from point_data import build_overlay_values, POINT_KEYS
+from classify import classify_point as classify_point_core
 from time_contract import get_available_runs as tc_get_available_runs, get_merged_timeline as tc_get_merged_timeline, resolve_time as tc_resolve_time
 from grid_utils import bbox_indices as _bbox_indices, slice_array as _slice_array
+from grid_aggregation import build_grid_context, choose_cell_groups
 from status_ops import build_status_payload, build_perf_payload
-from feedback_ops import make_feedback_entry, append_feedback, read_feedback_list
+from feedback_ops import make_feedback_entry, append_feedback, read_feedback_list, update_feedback_status
 from model_caps import get_models_payload
 from response_headers import build_overlay_headers, build_tile_headers
+from usage_stats import record_visit, get_usage_stats, get_marker_stats
+from services.model_select import resolve_eu_time_strict as svc_resolve_eu_time_strict, load_eu_data_strict as svc_load_eu_data_strict
+from services.data_loader import load_step_data
+from services.app_state import AppState
+from routers.core import build_core_router
+from routers.point import build_point_router
+from routers.domain import build_domain_router
+from routers.weather import build_weather_router
+from routers.overlay import build_overlay_router
+from routers.ops import build_ops_router
+from routers.admin import build_admin_router
+from constants import (
+    CELL_SIZES_BY_ZOOM,
+    CAPE_CONV_THRESHOLD,
+    ICON_EU_STEP_3H_START,
+    EU_STRICT_MAX_DELTA_HOURS_DEFAULT,
+)
 from cache_state import (
     TILE_CACHE_MAX_ITEMS_DESKTOP, TILE_CACHE_MAX_ITEMS_MOBILE, TILE_CACHE_TTL_SECONDS,
     tile_cache_desktop, tile_cache_mobile, cache_stats, perf_recent, perf_totals, computed_field_cache,
-    perf_record, computed_cache_get, computed_cache_set, tile_cache_prune, tile_cache_get, tile_cache_set,
+    overlay_phase_recent, overlay_phase_totals, overlay_phase_record,
+    perf_record, computed_cache_get_or_compute, computed_metrics_payload,
+    tile_cache_prune, tile_cache_get, tile_cache_set,
     symbols_cache_get, symbols_cache_set, symbols_cache_stats_payload,
     rotate_caches_for_context, cache_context_stats_payload,
 )
@@ -87,6 +145,11 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    try:
+        _flush_fallback_stats(force=True)
+    except Exception:
+        pass
+
 
 app = FastAPI(title="Skyview API", lifespan=lifespan)
 
@@ -112,26 +175,93 @@ app.add_middleware(
 
 api_error_counters = {"4xx": 0, "5xx": 0}
 
-# Fallback/blending observability counters (process-local, reset on restart)
-fallback_stats = {
-    "euResolveAttempts": 0,
-    "euResolveSuccess": 0,
-    "strictTimeDenied": 0,
-    "overlayFallback": 0,
-    "overlayTileFallback": 0,
-    "symbolsBlended": 0,
-    "windBlended": 0,
-    "pointFallback": 0,
-}
+# Consolidated runtime state (PR3)
+app_state = AppState(
+    fallback_stats={
+        "euResolveAttempts": 0,
+        "euResolveSuccess": 0,
+        "strictTimeDenied": 0,
+        "overlayFallback": 0,
+        "overlayTileFallback": 0,
+        "symbolsBlended": 0,
+        "windBlended": 0,
+        "pointFallback": 0,
+    }
+)
+
+_FALLBACK_STATS_PATH = os.path.join(DATA_DIR, "fallback_stats.json")
+_fallback_stats_lock = threading.Lock()
+_last_fallback_flush_mono = 0.0
+_FALLBACK_FLUSH_INTERVAL_SECONDS = 30.0
+
+
+def _load_persisted_fallback_stats() -> None:
+    try:
+        if not os.path.exists(_FALLBACK_STATS_PATH):
+            return
+        with open(_FALLBACK_STATS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return
+        for k in app_state.fallback_stats.keys():
+            v = data.get(k)
+            if isinstance(v, int):
+                app_state.fallback_stats[k] = v
+    except Exception:
+        pass
+
+
+def _flush_fallback_stats(force: bool = False) -> None:
+    global _last_fallback_flush_mono
+    now = time.monotonic()
+    if (not force) and (now - _last_fallback_flush_mono) < _FALLBACK_FLUSH_INTERVAL_SECONDS:
+        return
+    with _fallback_stats_lock:
+        os.makedirs(os.path.dirname(_FALLBACK_STATS_PATH), exist_ok=True)
+        tmp = _FALLBACK_STATS_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(app_state.fallback_stats, f, ensure_ascii=False)
+        os.replace(tmp, _FALLBACK_STATS_PATH)
+        _last_fallback_flush_mono = now
+
+
+_load_persisted_fallback_stats()
+
+
+def _set_fallback_current(endpoint: str, decision: str, source_model: Optional[str] = None, detail: Optional[dict] = None) -> None:
+    now_iso = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+    app_state.fallback_current["updatedAt"] = now_iso
+    app_state.fallback_current["endpoints"][endpoint] = {
+        "updatedAt": now_iso,
+        "decision": decision,
+        "sourceModel": source_model,
+        "detail": detail or {},
+    }
+
+EU_STRICT_MAX_DELTA_HOURS = EU_STRICT_MAX_DELTA_HOURS_DEFAULT
+EU_STRICT_MAX_DELTA_HOURS_3H = float(os.environ.get("SKYVIEW_EU_STRICT_MAX_DELTA_HOURS_3H", "1.6"))
+
+# Optional proactive overlay warmup to smooth first-tile latency on context switches.
+OVERLAY_WARMUP_ENABLED = os.environ.get("SKYVIEW_OVERLAY_WARMUP", "1").strip().lower() not in ("0", "false", "no", "off")
+OVERLAY_WARMUP_MIN_INTERVAL_SECONDS = float(os.environ.get("SKYVIEW_OVERLAY_WARMUP_MIN_INTERVAL", "2.0"))
+_warmup_lock = threading.Lock()
+_last_overlay_warmup: Dict[str, float] = {"key": "", "ts": 0.0}
+
 
 # Small process-local cache to avoid repeated strict EU time resolution work
 # for identical (time_str, max_delta_hours) pairs during bursty requests.
-_eu_strict_cache: OrderedDict[tuple[str, float], Optional[tuple[str, int, str]]] = OrderedDict()
+# value: (result, monotonic_ts)
 _EU_STRICT_CACHE_MAX = 64
+_EU_STRICT_CACHE_TTL_SECONDS = float(os.environ.get("SKYVIEW_EU_STRICT_CACHE_TTL_SECONDS", "300"))
 
-last_nominatim_request: float = 0.0
+# Circuit-breaker/backoff for repeated EU missing-on-disk situations
+_EU_MISSING_BACKOFF_SECONDS = float(os.environ.get("SKYVIEW_EU_MISSING_BACKOFF_SECONDS", "60"))
 
-feedback_rates: Dict[str, Deque[float]] = {}
+# /api/location_search hardening: process-local IP rate limiting + response cache
+LOCATION_SEARCH_WINDOW_SECONDS = float(os.environ.get("SKYVIEW_LOCATION_SEARCH_WINDOW_SECONDS", "60"))
+LOCATION_SEARCH_MAX_REQUESTS_PER_WINDOW = int(os.environ.get("SKYVIEW_LOCATION_SEARCH_MAX_PER_WINDOW", "30"))
+LOCATION_SEARCH_CACHE_TTL_SECONDS = float(os.environ.get("SKYVIEW_LOCATION_SEARCH_CACHE_TTL_SECONDS", "300"))
+_LOCATION_SEARCH_CACHE_MAX_ITEMS = 512
 
 
 @app.exception_handler(HTTPException)
@@ -170,12 +300,36 @@ async def log_requests(request: Request, call_next):
         logger.info(
             f"{request.method} {request.url.path} - {response.status_code} - {duration_ms:.2f}ms - rid={request_id}"
         )
-    
+
+    # Usage tracking: count real page loads only (avoid inflating with API/static requests).
+    if (
+        request.method == "GET"
+        and response.status_code < 400
+        and request.url.path in ("/", "/index.html")
+    ):
+        try:
+            client_ip = request.client.host if request.client else "unknown"
+            ua = request.headers.get("user-agent", "")
+            al = request.headers.get("accept-language", "")
+            record_visit(
+                USAGE_STATS_FILE,
+                ip=client_ip,
+                user_agent=ua,
+                accept_lang=al,
+                salt=USAGE_HASH_SALT,
+                path=request.url.path,
+            )
+        except Exception as e:
+            logger.debug(f"Usage tracking skipped: {e}")
+
+    try:
+        _flush_fallback_stats()
+    except Exception:
+        pass
     return response
 
 
 data_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
-
 
 def _acquire_single_instance_or_exit(pid_file: str):
     """Simple PID-file guard to prevent accidental multi-process launches."""
@@ -218,55 +372,17 @@ def classify_point(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ce
 
 
 def load_data(run: str, step: int, model: str, keys: Optional[List[str]] = None) -> Dict[str, Any]:
-    """Load .npz data for a given run/step/model.
-    
-    Args:
-        keys: If provided, only load these keys (plus lat/lon). Saves memory for large grids.
-              If None, loads all keys (backward compat).
-    """
-    cache_key = f"{model}/{run}/{step:03d}"
-    
-    # Check cache — if we have it and it has all requested keys, use it
-    if cache_key in data_cache:
-        data_cache.move_to_end(cache_key)
-        cached = data_cache[cache_key]
-        if keys is None or all(k in cached for k in keys):
-            logger.debug(f"Cache hit: {cache_key}")
-            return cached
-
-    model_dir = model.replace("_", "-")
-    path = os.path.join(DATA_DIR, model_dir, run, f"{step:03d}.npz")
-    if not os.path.exists(path):
-        logger.error(f"Data not found: {path}")
-        raise FileNotFoundError(f"Data not found: {path}")
-
-    logger.debug(f"Loading data: {cache_key}" + (f" (keys: {len(keys)})" if keys else " (all)"))
-    npz = np.load(path)
-    
-    if keys is not None:
-        # Selective loading: always include lat/lon + requested keys
-        load_keys = set(keys) | {"lat", "lon"}
-        arrays = {k: npz[k] for k in load_keys if k in npz.files}
-        # Also load any keys already in cache
-        if cache_key in data_cache:
-            for k, v in data_cache[cache_key].items():
-                if k not in arrays:
-                    arrays[k] = v
-    else:
-        arrays = {k: npz[k] for k in npz.files}
-
-    # Compute valid time
-    run_dt = datetime.strptime(run, "%Y%m%d%H")
-    valid_dt = run_dt + timedelta(hours=step)
-    arrays["validTime"] = valid_dt.isoformat() + "Z"
-    arrays["_run"] = run
-    arrays["_step"] = step
-
-    if len(data_cache) >= 8:
-        evicted_key, _ = data_cache.popitem(last=False)
-        logger.info(f"LRU Cache eviction: {evicted_key}")
-    data_cache[cache_key] = arrays
-    return arrays
+    """Load .npz data for a given run/step/model (service-backed)."""
+    return load_step_data(
+        data_dir=DATA_DIR,
+        model=model,
+        run=run,
+        step=step,
+        cache=data_cache,
+        cache_max_items=8,
+        keys=keys,
+        logger=logger,
+    )
 
 
 def get_available_runs():
@@ -348,128 +464,29 @@ def _merge_axis_aligned_segments(segments, eps: float = 1e-9):
 # ─── API Endpoints ───
 
 
-@app.get("/api/health")
-async def health():
-    runs = get_available_runs()
-    return {"status": "ok", "runs": len(runs), "cache": len(data_cache)}
+# Phase-2 modularization: core health/model/timeline endpoints moved to router
+app.include_router(build_core_router(
+    get_available_runs=get_available_runs,
+    get_merged_timeline=get_merged_timeline,
+    get_models_payload=get_models_payload,
+    data_cache=data_cache,
+))
+app.include_router(build_domain_router(
+    get_merged_timeline=get_merged_timeline,
+    resolve_time_with_cache_context=resolve_time_with_cache_context,
+    load_data=load_data,
+    _freshness_minutes_from_run=_freshness_minutes_from_run,
+    _merge_axis_aligned_segments=_merge_axis_aligned_segments,
+    DATA_DIR=DATA_DIR,
+))
 
-
-@app.get("/api/d2_domain")
-async def api_d2_domain(time: str = Query("latest")):
-    """Return ICON-D2 domain bounds and boundary of last valid cells."""
-    run, step, _ = resolve_time_with_cache_context(time, "icon_d2")
-    d = load_data(run, step, "icon_d2", keys=["ww"])
-
-    # Fast path: use precomputed run-level boundary generated at ingestion.
-    run_dir = os.path.join(DATA_DIR, "icon-d2", run)
-    boundary_cache_path = os.path.join(run_dir, "_d2_boundary.json")
-    if os.path.exists(boundary_cache_path):
-        try:
-            with open(boundary_cache_path, "r", encoding="utf-8") as f:
-                bc = json.load(f)
-            return {
-                "model": "icon_d2",
-                "run": run,
-                "validTime": d["validTime"],
-                "bbox": bc.get("bbox"),
-                "cellEdgeBbox": {
-                    **(bc.get("cellEdgeBbox") or {}),
-                    "latRes": bc.get("latRes"),
-                    "lonRes": bc.get("lonRes"),
-                },
-                "boundarySegments": bc.get("boundarySegments", []),
-                "diagnostics": {
-                    "dataFreshnessMinutes": _freshness_minutes_from_run(run),
-                    "validCells": bc.get("validCells", 0),
-                    "boundarySegmentCount": bc.get("boundarySegmentCount", 0),
-                    "source": "precomputed",
-                },
-            }
-        except Exception:
-            pass
-
-    # Fallback path: compute boundary if cache file is not present.
-    lat = d["lat"]
-    lon = d["lon"]
-    ww = d.get("ww")
-    lat_min = float(np.min(lat))
-    lat_max = float(np.max(lat))
-    lon_min = float(np.min(lon))
-    lon_max = float(np.max(lon))
-    lat_res = float(abs(lat[1] - lat[0])) if len(lat) > 1 else 0.02
-    lon_res = float(abs(lon[1] - lon[0])) if len(lon) > 1 else 0.02
-    valid = np.isfinite(ww) if ww is not None else np.ones((len(lat), len(lon)), dtype=bool)
-
-    segments = []
-    n_i, n_j = valid.shape
-    for i in range(n_i):
-        lat_lo = float(lat[i]) - lat_res / 2.0
-        lat_hi = float(lat[i]) + lat_res / 2.0
-        for j in range(n_j):
-            if not valid[i, j]:
-                continue
-            lon_lo = float(lon[j]) - lon_res / 2.0
-            lon_hi = float(lon[j]) + lon_res / 2.0
-            if i == n_i - 1 or not valid[i + 1, j]:
-                segments.append([[lat_hi, lon_lo], [lat_hi, lon_hi]])
-            if i == 0 or not valid[i - 1, j]:
-                segments.append([[lat_lo, lon_lo], [lat_lo, lon_hi]])
-            if j == n_j - 1 or not valid[i, j + 1]:
-                segments.append([[lat_lo, lon_hi], [lat_hi, lon_hi]])
-            if j == 0 or not valid[i, j - 1]:
-                segments.append([[lat_lo, lon_lo], [lat_hi, lon_lo]])
-
-    segments = _merge_axis_aligned_segments(segments)
-
-    return {
-        "model": "icon_d2",
-        "run": run,
-        "validTime": d["validTime"],
-        "bbox": {
-            "latMin": lat_min,
-            "lonMin": lon_min,
-            "latMax": lat_max,
-            "lonMax": lon_max,
-        },
-        "cellEdgeBbox": {
-            "latMin": lat_min - lat_res / 2.0,
-            "lonMin": lon_min - lon_res / 2.0,
-            "latMax": lat_max + lat_res / 2.0,
-            "lonMax": lon_max + lon_res / 2.0,
-            "latRes": lat_res,
-            "lonRes": lon_res,
-        },
-        "boundarySegments": segments,
-        "diagnostics": {
-            "dataFreshnessMinutes": _freshness_minutes_from_run(run),
-            "validCells": int(np.count_nonzero(valid)),
-            "boundarySegmentCount": len(segments),
-            "source": "computed",
-        },
-    }
-
-
-@app.get("/api/models")
-async def api_models():
-    """Return model capabilities for frontend timestep filtering."""
-    return get_models_payload()
-
-
-@app.get("/api/timesteps")
-async def api_timesteps():
-    merged = get_merged_timeline()
-    return {"runs": get_available_runs(), "merged": merged}
-
-
-@app.get("/api/symbols")
 async def api_symbols(
     zoom: int = Query(8, ge=5, le=12),
     bbox: str = Query("30,-30,72,45"),
     time: str = Query("latest"),
     model: Optional[str] = Query(None),
 ):
-    cell_sizes = {5: 2.0, 6: 1.0, 7: 0.5, 8: 0.25, 9: 0.12, 10: 0.06, 11: 0.03, 12: 0.02}
-    cell_size = cell_sizes[zoom]
+    cell_size = CELL_SIZES_BY_ZOOM[zoom]
 
     parts = bbox.split(",")
     if len(parts) != 4:
@@ -482,13 +499,7 @@ async def api_symbols(
 
     # Short-TTL response cache for repeated pan/zoom requests
     cache_bbox = f"{lat_min:.4f},{lon_min:.4f},{lat_max:.4f},{lon_max:.4f}"
-    eu_cache_key = ""
-    if model_used == "icon_d2":
-        eu_strict = _resolve_eu_time_strict(time)
-        if eu_strict is not None:
-            run_eu_k, step_eu_k, model_eu_k = eu_strict
-            eu_cache_key = f"|eu:{run_eu_k}:{step_eu_k}"
-    symbols_cache_key = f"{model_used}|{run}|{step}{eu_cache_key}|z{zoom}|{cache_bbox}"
+    symbols_cache_key = f"{model_used}|{run}|{step}|z{zoom}|{cache_bbox}"
     cached_symbols = symbols_cache_get(symbols_cache_key)
     if cached_symbols is not None:
         return cached_symbols
@@ -533,74 +544,69 @@ async def api_symbols(
         c_hsurf = _slice_array(d["hsurf"], li, lo) if "hsurf" in d else np.zeros_like(ww)
 
     # Prepare EU fallback arrays over same padded bbox when D2 is primary model
+    eu_data_missing = False
     if model_used == "icon_d2":
-        try:
-            eu_strict = _resolve_eu_time_strict(time)
-            if eu_strict is not None:
-                run_eu, step_eu, model_eu = eu_strict
-                d_eu = load_data(run_eu, step_eu, model_eu, keys=symbol_keys)
-                lat_eu = d_eu["lat"]
-                lon_eu = d_eu["lon"]
-                li_eu, lo_eu = _bbox_indices(lat_eu, lon_eu, lat_min - pad, lon_min - pad, lat_max + pad, lon_max + pad)
-                if not (li_eu is not None and len(li_eu) == 0):
-                    c_lat_eu = lat_eu[li_eu] if li_eu is not None else lat_eu
-                    c_lon_eu = lon_eu[lo_eu] if lo_eu is not None else lon_eu
-                    ww_eu = _slice_array(d_eu["ww"], li_eu, lo_eu)
-                    ceil_arr_eu = _slice_array(d_eu["ceiling"], li_eu, lo_eu)
-                    c_clcl_eu = _slice_array(d_eu["clcl"], li_eu, lo_eu) if "clcl" in d_eu else np.zeros_like(ww_eu)
-                    c_clcm_eu = _slice_array(d_eu["clcm"], li_eu, lo_eu) if "clcm" in d_eu else np.zeros_like(ww_eu)
-                    c_clch_eu = _slice_array(d_eu["clch"], li_eu, lo_eu) if "clch" in d_eu else np.zeros_like(ww_eu)
-                    c_cape_eu = _slice_array(d_eu["cape_ml"], li_eu, lo_eu) if "cape_ml" in d_eu else np.zeros_like(ww_eu)
-                    c_htop_dc_eu = _slice_array(d_eu["htop_dc"], li_eu, lo_eu) if "htop_dc" in d_eu else np.zeros_like(ww_eu)
-                    c_hbas_sc_eu = _slice_array(d_eu["hbas_sc"], li_eu, lo_eu) if "hbas_sc" in d_eu else np.zeros_like(ww_eu)
-                    c_htop_sc_eu = _slice_array(d_eu["htop_sc"], li_eu, lo_eu) if "htop_sc" in d_eu else np.zeros_like(ww_eu)
-                    c_lpi_eu = _slice_array(d_eu["lpi"], li_eu, lo_eu) if "lpi" in d_eu else np.zeros_like(ww_eu)
-                    c_hsurf_eu = _slice_array(d_eu["hsurf"], li_eu, lo_eu) if "hsurf" in d_eu else np.zeros_like(ww_eu)
-        except Exception:
-            d_eu = None
+        # Only attempt EU load when it can add value:
+        # - viewport (with pad) extends outside D2 domain, OR
+        # - D2 weather signal has non-finite gaps in viewport.
+        needs_eu_for_coverage = (
+            (lat_min - pad) < d2_lat_min
+            or (lat_max + pad) > d2_lat_max
+            or (lon_min - pad) < d2_lon_min
+            or (lon_max + pad) > d2_lon_max
+        )
+        needs_eu_for_signal = bool(ww.size) and bool(np.any(~np.isfinite(ww)))
+        if needs_eu_for_coverage or needs_eu_for_signal:
+            try:
+                eu_fb = _load_eu_data_strict(time, symbol_keys)
+                if eu_fb is not None and eu_fb.get("missing"):
+                    eu_data_missing = True
+                    eu_fb = None
+                if eu_fb is not None:
+                    d_eu = eu_fb["data"]
+                    lat_eu = d_eu["lat"]
+                    lon_eu = d_eu["lon"]
+                    li_eu, lo_eu = _bbox_indices(lat_eu, lon_eu, lat_min - pad, lon_min - pad, lat_max + pad, lon_max + pad)
+                    if not (li_eu is not None and len(li_eu) == 0):
+                        c_lat_eu = lat_eu[li_eu] if li_eu is not None else lat_eu
+                        c_lon_eu = lon_eu[lo_eu] if lo_eu is not None else lon_eu
+                        ww_eu = _slice_array(d_eu["ww"], li_eu, lo_eu)
+                        ceil_arr_eu = _slice_array(d_eu["ceiling"], li_eu, lo_eu)
+                        c_clcl_eu = _slice_array(d_eu["clcl"], li_eu, lo_eu) if "clcl" in d_eu else np.zeros_like(ww_eu)
+                        c_clcm_eu = _slice_array(d_eu["clcm"], li_eu, lo_eu) if "clcm" in d_eu else np.zeros_like(ww_eu)
+                        c_clch_eu = _slice_array(d_eu["clch"], li_eu, lo_eu) if "clch" in d_eu else np.zeros_like(ww_eu)
+                        c_cape_eu = _slice_array(d_eu["cape_ml"], li_eu, lo_eu) if "cape_ml" in d_eu else np.zeros_like(ww_eu)
+                        c_htop_dc_eu = _slice_array(d_eu["htop_dc"], li_eu, lo_eu) if "htop_dc" in d_eu else np.zeros_like(ww_eu)
+                        c_hbas_sc_eu = _slice_array(d_eu["hbas_sc"], li_eu, lo_eu) if "hbas_sc" in d_eu else np.zeros_like(ww_eu)
+                        c_htop_sc_eu = _slice_array(d_eu["htop_sc"], li_eu, lo_eu) if "htop_sc" in d_eu else np.zeros_like(ww_eu)
+                        c_lpi_eu = _slice_array(d_eu["lpi"], li_eu, lo_eu) if "lpi" in d_eu else np.zeros_like(ww_eu)
+                        c_hsurf_eu = _slice_array(d_eu["hsurf"], li_eu, lo_eu) if "hsurf" in d_eu else np.zeros_like(ww_eu)
+            except Exception:
+                d_eu = None
 
-    # **GLOBAL FIXED GRID** for absolute stability
-    # Use data grid origin as fixed anchor (stable across requests)
-    # Align grid to global anchor (data origin) but start from bbox for performance
-    anchor_lat = float(lat.min())
-    anchor_lon = float(lon.min())
-    # At highest zoom, shift anchor by half cell so symbol centers match native pixel centers
-    # while preserving strict equidistant spacing.
-    if zoom >= 12:
-        anchor_lat -= cell_size / 2.0
-        anchor_lon -= cell_size / 2.0
-    lat_start = anchor_lat + np.floor((lat_min - anchor_lat) / cell_size) * cell_size
-    lon_start = anchor_lon + np.floor((lon_min - anchor_lon) / cell_size) * cell_size
-    lat_edges = np.arange(lat_start, lat_max + cell_size, cell_size)
-    lon_edges = np.arange(lon_start, lon_max + cell_size, cell_size)
-
-    # Pre-bin cropped lat/lon indices onto aggregation grid once (avoids per-cell mask scans)
-    lat_cell_count = max(0, len(lat_edges) - 1)
-    lon_cell_count = max(0, len(lon_edges) - 1)
-    lat_groups = [[] for _ in range(lat_cell_count)]
-    lon_groups = [[] for _ in range(lon_cell_count)]
-
-    for idx, v in enumerate(c_lat):
-        bi = int(np.floor((float(v) - lat_start) / cell_size))
-        if 0 <= bi < lat_cell_count:
-            lat_groups[bi].append(idx)
-    for idx, v in enumerate(c_lon):
-        bj = int(np.floor((float(v) - lon_start) / cell_size))
-        if 0 <= bj < lon_cell_count:
-            lon_groups[bj].append(idx)
-
-    lat_groups_eu = lon_groups_eu = None
-    if d_eu is not None and c_lat_eu is not None and c_lon_eu is not None:
-        lat_groups_eu = [[] for _ in range(lat_cell_count)]
-        lon_groups_eu = [[] for _ in range(lon_cell_count)]
-        for idx, v in enumerate(c_lat_eu):
-            bi = int(np.floor((float(v) - lat_start) / cell_size))
-            if 0 <= bi < lat_cell_count:
-                lat_groups_eu[bi].append(idx)
-        for idx, v in enumerate(c_lon_eu):
-            bj = int(np.floor((float(v) - lon_start) / cell_size))
-            if 0 <= bj < lon_cell_count:
-                lon_groups_eu[bj].append(idx)
+    # Shared GridContext (symbols/wind)
+    ctx = build_grid_context(
+        lat=lat,
+        lon=lon,
+        c_lat=c_lat,
+        c_lon=c_lon,
+        lat_min=lat_min,
+        lon_min=lon_min,
+        lat_max=lat_max,
+        lon_max=lon_max,
+        cell_size=cell_size,
+        zoom=zoom,
+        d2_lat_min=d2_lat_min,
+        d2_lat_max=d2_lat_max,
+        d2_lon_min=d2_lon_min,
+        d2_lon_max=d2_lon_max,
+        c_lat_eu=c_lat_eu if d_eu is not None else None,
+        c_lon_eu=c_lon_eu if d_eu is not None else None,
+    )
+    lat_edges = ctx.lat_edges
+    lon_edges = ctx.lon_edges
+    lat_cell_count = ctx.lat_cell_count
+    lon_cell_count = ctx.lon_cell_count
 
     symbols = []
     used_eu_any = False
@@ -616,9 +622,15 @@ async def api_symbols(
             if lat_hi < lat_min or lat_lo > lat_max or lon_hi < lon_min or lon_lo > lon_max:
                 continue
 
-            # Select source model by location: D2 inside D2 domain, EU outside.
-            in_d2_domain = (d2_lat_min <= lat_c <= d2_lat_max) and (d2_lon_min <= lon_c <= d2_lon_max)
-            use_eu = (not in_d2_domain) and (lat_groups_eu is not None and lon_groups_eu is not None)
+            # Select source model by location.
+            # Default policy: for icon_d2 selection, do NOT render EU outside D2 domain.
+            in_d2_domain = bool(ctx.in_d2_grid[i, j]) if ctx.in_d2_grid.size else False
+            use_eu, cli_list, clo_list = choose_cell_groups(
+                ctx,
+                i,
+                j,
+                prefer_eu=((not in_d2_domain) and (ctx.eu is not None)),
+            )
 
             if use_eu:
                 used_eu_any = True
@@ -635,8 +647,6 @@ async def api_symbols(
                 src_htop_sc = c_htop_sc_eu
                 src_lpi = c_lpi_eu
                 src_hsurf = c_hsurf_eu
-                cli_list = lat_groups_eu[i]
-                clo_list = lon_groups_eu[j]
             else:
                 src_lat = c_lat
                 src_lon = c_lon
@@ -651,14 +661,12 @@ async def api_symbols(
                 src_htop_sc = c_htop_sc
                 src_lpi = c_lpi
                 src_hsurf = c_hsurf
-                cli_list = lat_groups[i]
-                clo_list = lon_groups[j]
 
             cli = np.asarray(cli_list, dtype=int) if cli_list else np.empty((0,), dtype=int)
             clo = np.asarray(clo_list, dtype=int) if clo_list else np.empty((0,), dtype=int)
 
             # If D2-selected cell has no finite weather signal, fall back to EU where available.
-            if (not use_eu) and (lat_groups_eu is not None and lon_groups_eu is not None) and len(cli) > 0 and len(clo) > 0:
+            if (not use_eu) and (ctx.eu is not None) and len(cli) > 0 and len(clo) > 0:
                 d2_has_signal = np.any(np.isfinite(src_ww[np.ix_(cli, clo)]))
                 if not d2_has_signal:
                     use_eu = True
@@ -676,8 +684,8 @@ async def api_symbols(
                     src_htop_sc = c_htop_sc_eu
                     src_lpi = c_lpi_eu
                     src_hsurf = c_hsurf_eu
-                    cli_list = lat_groups_eu[i]
-                    clo_list = lon_groups_eu[j]
+                    cli_list = ctx.eu.lat_groups[i]
+                    clo_list = ctx.eu.lon_groups[j]
                     cli = np.asarray(cli_list, dtype=int) if cli_list else np.empty((0,), dtype=int)
                     clo = np.asarray(clo_list, dtype=int) if clo_list else np.empty((0,), dtype=int)
 
@@ -693,7 +701,7 @@ async def api_symbols(
             # Fast-path for likely clear/non-convective low-zoom cells to reduce first-hit latency.
             if zoom <= 9 and max_ww <= 3:
                 cell_cape = src_cape[np.ix_(cli, clo)]
-                conv_signal = np.any(np.isfinite(cell_cape) & (cell_cape > 50))
+                conv_signal = np.any(np.isfinite(cell_cape) & (cell_cape > CAPE_CONV_THRESHOLD))
                 cell_ceil = src_ceil[np.ix_(cli, clo)]
                 ceil_valid = cell_ceil[np.isfinite(cell_ceil) & (cell_ceil > 0) & (cell_ceil < 20000)]
                 if (not conv_signal) and len(ceil_valid) == 0:
@@ -771,7 +779,7 @@ async def api_symbols(
             })
 
     if used_eu_any and used_d2_any:
-        fallback_stats["symbolsBlended"] += 1
+        app_state.fallback_stats["symbolsBlended"] += 1
 
     effective_run = run
     effective_valid_time = d["validTime"]
@@ -789,6 +797,13 @@ async def api_symbols(
         resolved_model = model_used
         fallback_decision = "primary_model_only"
 
+    _set_fallback_current(
+        "symbols",
+        fallback_decision,
+        source_model=resolved_model,
+        detail={"requestedTime": time},
+    )
+
     result = {
         "symbols": symbols,
         "run": effective_run,
@@ -802,13 +817,14 @@ async def api_symbols(
             "requestedModel": model,
             "requestedTime": time,
             "sourceModel": resolved_model,
+            "strictWindowHours": EU_STRICT_MAX_DELTA_HOURS,
+            "euDataMissing": eu_data_missing,
         },
     }
     symbols_cache_set(symbols_cache_key, result)
     return result
 
 
-@app.get("/api/wind")
 async def api_wind(
     zoom: int = Query(8, ge=5, le=12),
     bbox: str = Query("30,-30,72,45"),
@@ -817,8 +833,7 @@ async def api_wind(
     level: str = Query("10m"),
 ):
     """Return wind barb data on the same grid as convection symbols."""
-    cell_sizes = {5: 2.0, 6: 1.0, 7: 0.5, 8: 0.25, 9: 0.12, 10: 0.06, 11: 0.03, 12: 0.02}
-    cell_size = cell_sizes[zoom]
+    cell_size = CELL_SIZES_BY_ZOOM[zoom]
 
     parts = bbox.split(",")
     if len(parts) != 4:
@@ -826,13 +841,15 @@ async def api_wind(
     lat_min, lon_min, lat_max, lon_max = map(float, parts)
 
     # Select wind variables based on level
-    if level == "10m":
+    gust_mode = (level == "gust10m")
+    if level == "10m" or gust_mode:
         u_key, v_key = "u_10m", "v_10m"
     else:
         u_key, v_key = f"u_{level}hpa", f"v_{level}hpa"
 
     run, step, model_used = resolve_time_with_cache_context(time, model)
-    d = load_data(run, step, model_used, keys=[u_key, v_key])
+    wind_keys = [u_key, v_key] + (["vmax_10m"] if gust_mode else [])
+    d = load_data(run, step, model_used, keys=wind_keys)
 
     lat = d["lat"]
     lon = d["lon"]
@@ -840,10 +857,11 @@ async def api_wind(
     d2_lon_min, d2_lon_max = float(np.min(lon)), float(np.max(lon))
 
     d_eu = None
-    c_lat_eu = c_lon_eu = u_eu = v_eu = None
+    gust = None
+    c_lat_eu = c_lon_eu = u_eu = v_eu = gust_eu = None
 
     # Check if wind data is available
-    if u_key not in d or v_key not in d:
+    if u_key not in d or v_key not in d or (gust_mode and "vmax_10m" not in d):
         return {"barbs": [], "run": run, "model": model_used, "validTime": d["validTime"], "level": level, "count": 0}
 
     # Bbox-slice before computation.
@@ -861,14 +879,24 @@ async def api_wind(
         c_lon = lon[lo] if lo is not None else lon
         u = _slice_array(d[u_key], li, lo)
         v = _slice_array(d[v_key], li, lo)
+        gust = _slice_array(d["vmax_10m"], li, lo) if gust_mode and "vmax_10m" in d else None
 
+    wind_eu_data_missing = False
     if model_used == "icon_d2":
-        try:
-            eu_strict = _resolve_eu_time_strict(time)
-            if eu_strict is not None:
-                run_eu, step_eu, model_eu = eu_strict
-                d_eu = load_data(run_eu, step_eu, model_eu, keys=[u_key, v_key])
-                if u_key in d_eu and v_key in d_eu:
+        needs_eu_for_coverage = (
+            (lat_min - pad) < d2_lat_min
+            or (lat_max + pad) > d2_lat_max
+            or (lon_min - pad) < d2_lon_min
+            or (lon_max + pad) > d2_lon_max
+        )
+        needs_eu_for_signal = bool(u.size) and (np.any(~np.isfinite(u)) or np.any(~np.isfinite(v)))
+        if needs_eu_for_coverage or needs_eu_for_signal:
+            eu_fb_wind = _load_eu_data_strict(time, wind_keys)
+            if eu_fb_wind is not None and eu_fb_wind.get("missing"):
+                wind_eu_data_missing = True
+            elif eu_fb_wind is not None:
+                d_eu = eu_fb_wind["data"]
+                if u_key in d_eu and v_key in d_eu and (not gust_mode or "vmax_10m" in d_eu):
                     lat_eu = d_eu["lat"]
                     lon_eu = d_eu["lon"]
                     li_eu, lo_eu = _bbox_indices(lat_eu, lon_eu, lat_min - pad, lon_min - pad, lat_max + pad, lon_max + pad)
@@ -877,48 +905,31 @@ async def api_wind(
                         c_lon_eu = lon_eu[lo_eu] if lo_eu is not None else lon_eu
                         u_eu = _slice_array(d_eu[u_key], li_eu, lo_eu)
                         v_eu = _slice_array(d_eu[v_key], li_eu, lo_eu)
-        except Exception:
-            d_eu = None
+                        gust_eu = _slice_array(d_eu["vmax_10m"], li_eu, lo_eu) if gust_mode and "vmax_10m" in d_eu else None
 
-    # Same fixed grid as symbols for alignment
-    # Align grid to global anchor (data origin) but start from bbox for performance
-    anchor_lat = float(lat.min())
-    anchor_lon = float(lon.min())
-    if zoom >= 12:
-        anchor_lat -= cell_size / 2.0
-        anchor_lon -= cell_size / 2.0
-    lat_start = anchor_lat + np.floor((lat_min - anchor_lat) / cell_size) * cell_size
-    lon_start = anchor_lon + np.floor((lon_min - anchor_lon) / cell_size) * cell_size
-    lat_edges = np.arange(lat_start, lat_max + cell_size, cell_size)
-    lon_edges = np.arange(lon_start, lon_max + cell_size, cell_size)
-
-    lat_cell_count = max(0, len(lat_edges) - 1)
-    lon_cell_count = max(0, len(lon_edges) - 1)
-
-    # Pre-bin indices once (same strategy as /api/symbols)
-    lat_groups = [[] for _ in range(lat_cell_count)]
-    lon_groups = [[] for _ in range(lon_cell_count)]
-    for idx, v_lat in enumerate(c_lat):
-        bi = int(np.floor((float(v_lat) - lat_start) / cell_size))
-        if 0 <= bi < lat_cell_count:
-            lat_groups[bi].append(idx)
-    for idx, v_lon in enumerate(c_lon):
-        bj = int(np.floor((float(v_lon) - lon_start) / cell_size))
-        if 0 <= bj < lon_cell_count:
-            lon_groups[bj].append(idx)
-
-    lat_groups_eu = lon_groups_eu = None
-    if c_lat_eu is not None and c_lon_eu is not None and u_eu is not None and v_eu is not None:
-        lat_groups_eu = [[] for _ in range(lat_cell_count)]
-        lon_groups_eu = [[] for _ in range(lon_cell_count)]
-        for idx, v_lat in enumerate(c_lat_eu):
-            bi = int(np.floor((float(v_lat) - lat_start) / cell_size))
-            if 0 <= bi < lat_cell_count:
-                lat_groups_eu[bi].append(idx)
-        for idx, v_lon in enumerate(c_lon_eu):
-            bj = int(np.floor((float(v_lon) - lon_start) / cell_size))
-            if 0 <= bj < lon_cell_count:
-                lon_groups_eu[bj].append(idx)
+    # Shared GridContext (symbols/wind)
+    ctx = build_grid_context(
+        lat=lat,
+        lon=lon,
+        c_lat=c_lat,
+        c_lon=c_lon,
+        lat_min=lat_min,
+        lon_min=lon_min,
+        lat_max=lat_max,
+        lon_max=lon_max,
+        cell_size=cell_size,
+        zoom=zoom,
+        d2_lat_min=d2_lat_min,
+        d2_lat_max=d2_lat_max,
+        d2_lon_min=d2_lon_min,
+        d2_lon_max=d2_lon_max,
+        c_lat_eu=c_lat_eu if (c_lat_eu is not None and u_eu is not None and v_eu is not None) else None,
+        c_lon_eu=c_lon_eu if (c_lon_eu is not None and u_eu is not None and v_eu is not None) else None,
+    )
+    lat_edges = ctx.lat_edges
+    lon_edges = ctx.lon_edges
+    lat_cell_count = ctx.lat_cell_count
+    lon_cell_count = ctx.lon_cell_count
 
     barbs = []
     used_eu_any = False
@@ -932,8 +943,13 @@ async def api_wind(
             if lat_hi < lat_min or lat_lo > lat_max or lon_hi < lon_min or lon_lo > lon_max:
                 continue
 
-            in_d2_domain = (d2_lat_min <= lat_c <= d2_lat_max) and (d2_lon_min <= lon_c <= d2_lon_max)
-            use_eu = (not in_d2_domain) and (lat_groups_eu is not None and lon_groups_eu is not None)
+            in_d2_domain = bool(ctx.in_d2_grid[i, j]) if ctx.in_d2_grid.size else False
+            use_eu, cli_list, clo_list = choose_cell_groups(
+                ctx,
+                i,
+                j,
+                prefer_eu=((not in_d2_domain) and (ctx.eu is not None)),
+            )
 
             if use_eu:
                 used_eu_any = True
@@ -941,15 +957,13 @@ async def api_wind(
                 src_lon = c_lon_eu
                 src_u = u_eu
                 src_v = v_eu
-                cli_list = lat_groups_eu[i]
-                clo_list = lon_groups_eu[j]
+                src_gust = gust_eu
             else:
                 src_lat = c_lat
                 src_lon = c_lon
                 src_u = u
                 src_v = v
-                cli_list = lat_groups[i]
-                clo_list = lon_groups[j]
+                src_gust = gust
 
             cli = np.asarray(cli_list, dtype=int) if cli_list else np.empty((0,), dtype=int)
             clo = np.asarray(clo_list, dtype=int) if clo_list else np.empty((0,), dtype=int)
@@ -962,14 +976,15 @@ async def api_wind(
             mean_v = float(np.nanmean(cell_v))
 
             # If D2-selected cell has no finite wind, try EU fallback for this cell.
-            if (not use_eu) and (lat_groups_eu is not None and lon_groups_eu is not None) and (np.isnan(mean_u) or np.isnan(mean_v)):
+            if (not use_eu) and (ctx.eu is not None) and (np.isnan(mean_u) or np.isnan(mean_v)):
                 used_eu_any = True
                 src_lat = c_lat_eu
                 src_lon = c_lon_eu
                 src_u = u_eu
                 src_v = v_eu
-                cli_list = lat_groups_eu[i]
-                clo_list = lon_groups_eu[j]
+                src_gust = gust_eu
+                cli_list = ctx.eu.lat_groups[i]
+                clo_list = ctx.eu.lon_groups[j]
                 cli = np.asarray(cli_list, dtype=int) if cli_list else np.empty((0,), dtype=int)
                 clo = np.asarray(clo_list, dtype=int) if clo_list else np.empty((0,), dtype=int)
                 if len(cli) == 0 or len(clo) == 0:
@@ -982,7 +997,11 @@ async def api_wind(
             if np.isnan(mean_u) or np.isnan(mean_v):
                 continue
 
-            speed_ms = math.sqrt(mean_u ** 2 + mean_v ** 2)
+            if gust_mode and src_gust is not None:
+                cell_g = src_gust[np.ix_(cli, clo)]
+                speed_ms = float(np.nanmax(cell_g)) if np.any(np.isfinite(cell_g)) else float('nan')
+            else:
+                speed_ms = math.sqrt(mean_u ** 2 + mean_v ** 2)
             speed_kt = speed_ms * 1.94384
             dir_deg = (math.degrees(math.atan2(-mean_u, -mean_v)) + 360) % 360
 
@@ -1002,9 +1021,15 @@ async def api_wind(
             })
 
     if used_eu_any:
-        fallback_stats["windBlended"] += 1
+        app_state.fallback_stats["windBlended"] += 1
 
     resolved_model = "blended" if used_eu_any else model_used
+    _set_fallback_current(
+        "wind",
+        "blended_d2_eu" if used_eu_any else "primary_model_only",
+        source_model=resolved_model,
+        detail={"requestedTime": time},
+    )
     return {
         "barbs": barbs,
         "run": run,
@@ -1018,164 +1043,18 @@ async def api_wind(
             "requestedModel": model,
             "requestedTime": time,
             "sourceModel": resolved_model,
+            "euDataMissing": wind_eu_data_missing,
         },
     }
 
-
-@app.get("/api/point")
-async def api_point(
-    lat: float = Query(...),
-    lon: float = Query(...),
-    time: str = Query("latest"),
-    model: Optional[str] = Query(None),
-    wind_level: str = Query("10m"),
-    zoom: Optional[int] = Query(None, ge=5, le=12),
-):
-    # Load all keys for point endpoint (needs many variables for overlay_values)
-    run, step, model_used = resolve_time_with_cache_context(time, model)
-    d = load_data(run, step, model_used)
-    fallback_decision = "primary_model_only"
-
-    # Phase 3: model-source transparency + EU fallback outside D2 domain.
-    if model_used == "icon_d2":
-        lat_d2 = d["lat"]
-        lon_d2 = d["lon"]
-        in_d2_domain = (float(np.min(lat_d2)) <= lat <= float(np.max(lat_d2))) and (float(np.min(lon_d2)) <= lon <= float(np.max(lon_d2)))
-        li_d2 = int(np.argmin(np.abs(lat_d2 - lat)))
-        lo_d2 = int(np.argmin(np.abs(lon_d2 - lon)))
-        d2_has_signal = False
-        for k in ("ww", "ceiling", "cape_ml", "hbas_sc"):
-            if k in d:
-                v = float(d[k][li_d2, lo_d2])
-                if np.isfinite(v):
-                    d2_has_signal = True
-                    break
-        if (not in_d2_domain) or (not d2_has_signal):
-            trigger = "outside_d2_domain" if (not in_d2_domain) else "d2_missing_signal"
-            try:
-                eu_strict = _resolve_eu_time_strict(time)
-                if eu_strict is not None:
-                    run_eu, step_eu, model_eu = eu_strict
-                    rotate_caches_for_context(f"{model_eu}|{run_eu}|{step_eu}")
-                    d = load_data(run_eu, step_eu, model_eu)
-                    run, step, model_used = run_eu, step_eu, model_eu
-                    fallback_stats["pointFallback"] += 1
-                    fallback_decision = f"eu_fallback:{trigger}"
-                else:
-                    fallback_decision = f"strict_time_denied:{trigger}"
-            except Exception:
-                fallback_decision = f"fallback_error:{trigger}"
-
-    # Match nearest model gridpoint to avoid empty-cell errors at later timesteps
-    lat_arr = d["lat"]
-    lon_arr = d["lon"]
-    li0 = int(np.argmin(np.abs(lat_arr - lat)))
-    lo0 = int(np.argmin(np.abs(lon_arr - lon)))
-    li = np.array([li0], dtype=int)
-    lo = np.array([lo0], dtype=int)
-
-    vars_out = ["ww", "clcl", "clcm", "clch", "clct", "cape_ml",
-                "htop_dc", "hbas_sc", "htop_sc", "lpi", "ceiling"]
-    result = {}
-
-    def scalar(vname, reducer="max"):
-        if vname not in d:
-            return None
-        cell = d[vname][np.ix_(li, lo)]
-        val = float(np.nanmax(cell)) if reducer == "max" else float(np.nanmean(cell))
-        return None if np.isnan(val) else val
-
-    for v in vars_out:
-        val = scalar(v, "max")
-        if val is None:
-            result[v] = None
-        elif v == "ceiling" and val > 20000:
-            result[v] = None
-        else:
-            result[v] = round(val, 1)
-
-    clcl = scalar("clcl") or 0.0
-    clcm = scalar("clcm") or 0.0
-    clch = scalar("clch") or 0.0
-    cape_ml = scalar("cape_ml") or 0.0
-    htop_dc = scalar("htop_dc") or 0.0
-    hbas_sc = scalar("hbas_sc") or 0.0
-    htop_sc = scalar("htop_sc") or 0.0
-    lpi = scalar("lpi") or 0.0
-    hsurf = scalar("hsurf") or 0.0
-
-    ceiling_val = scalar("ceiling") or 0.0
-    best_type = classify_point(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling_val, hsurf)
-    result["cloudType"] = best_type
-
-    ww_max = int(scalar("ww") or 0)
-    ww_sym = ww_to_symbol(ww_max) if ww_max > 10 else None
-    sym = ww_sym or best_type
-    result["symbol"] = sym
-    result["cloudTypeName"] = sym.title()
-    result["ww"] = ww_max
-
-    # Cloud base: mirror symbol label logic
-    ceil_cell = d["ceiling"][np.ix_(li, lo)] if "ceiling" in d else np.array([])
-    htop_cell = d["htop_dc"][np.ix_(li, lo)] if "htop_dc" in d else np.array([])
-    hbas_cell = d["hbas_sc"][np.ix_(li, lo)] if "hbas_sc" in d else np.array([])
-    valid_ceil = ceil_cell[(ceil_cell > 0) & (ceil_cell < 20000)] if ceil_cell.size else np.array([])
-    valid_hbas = hbas_cell[(hbas_cell > 0) & np.isfinite(hbas_cell)] if hbas_cell.size else np.array([])
-
-    if sym in ("cu_hum", "cu_con", "cb") and len(valid_hbas) > 0:
-        result["cloudBaseHm"] = int(np.min(valid_hbas) / 100)
-    elif sym in ("st", "ac", "ci", "fog", "rime_fog") and len(valid_ceil) > 0:
-        result["cloudBaseHm"] = int(np.min(valid_ceil) / 100)
-    elif sym == "blue_thermal" and htop_cell.size and np.any(htop_cell > 0):
-        result["cloudBaseHm"] = int(np.max(htop_cell[htop_cell > 0]) / 100)
-    else:
-        result["cloudBaseHm"] = None
-
-    # Overlay values at this point (for displaying active overlay info)
-    overlay_values = build_overlay_values(
-        d=d,
-        li=li,
-        lo=lo,
-        ww_max=ww_max,
-        ceil_cell=ceil_cell,
-        wind_level=wind_level,
-        zoom=zoom,
-        lat=lat,
-        lon=lon,
-        lat_arr=lat_arr,
-        lon_arr=lon_arr,
-    )
-    result["overlay_values"] = overlay_values
-
-    # Explorer/Skyview contract convergence: provide raw values dictionary as well
-    result["values"] = {k: result.get(k) for k in [
-        "ww", "clcl", "clcm", "clch", "clct", "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi", "ceiling"
-    ]}
-
-    # Closest point lat/lon for precision
-    li0 = int(np.argmin(np.abs(lat_arr - lat)))
-    lo0 = int(np.argmin(np.abs(lon_arr - lon)))
-    result["lat"] = round(float(lat_arr[li0]), 4)
-    result["lon"] = round(float(lon_arr[lo0]), 4)
-    result["validTime"] = d["validTime"]
-    result["run"] = run
-    result["model"] = model_used
-    result["sourceModel"] = model_used
-    result["diagnostics"] = {
-        "dataFreshnessMinutes": _freshness_minutes_from_run(run),
-        "fallbackDecision": fallback_decision,
-        "requestedModel": model,
-        "requestedTime": time,
-        "sourceModel": model_used,
-    }
-
-    return result
 
 
 # ─── Feedback endpoint ───
 
 FEEDBACK_FILE = os.path.join(DATA_DIR, "feedback.json")
 MARKERS_FILE = os.path.join(DATA_DIR, "markers.json")
+USAGE_STATS_FILE = os.path.join(DATA_DIR, "usage_stats.json")
+USAGE_HASH_SALT = os.environ.get("SKYVIEW_USAGE_SALT", "skyview-usage-default-salt")
 OPENAIP_SEED_FILE = os.path.join(SCRIPT_DIR, "openaip_seed.json")
 MARKER_AUTH_SECRET = os.environ.get("SKYVIEW_MARKER_AUTH_SECRET", "")
 MARKER_AUTH_CONFIGURED = bool(MARKER_AUTH_SECRET and len(MARKER_AUTH_SECRET) >= 16 and MARKER_AUTH_SECRET != "dev-marker-secret-change-me")
@@ -1257,7 +1136,6 @@ def _verify_marker_token(client_id: str, token: str) -> bool:
     except Exception:
         return False
 
-@app.post("/api/feedback")
 async def api_feedback(request: Request):
     """Store user feedback with context."""
     try:
@@ -1271,7 +1149,7 @@ async def api_feedback(request: Request):
 
     ip = str(request.client.host)
     now = time.time()
-    times = feedback_rates.setdefault(ip, deque())
+    times = app_state.feedback_rates.setdefault(ip, deque())
     while times and times[0] < now - 60:
         times.popleft()
     if len(times) >= 5:
@@ -1288,11 +1166,49 @@ async def api_feedback(request: Request):
     return {"status": "ok", "id": entry["id"]}
 
 
-@app.get("/api/feedback")
-async def api_feedback_list():
-    """List all feedback entries (for admin use)."""
+async def api_feedback_list(
+    status: Optional[str] = Query(None),
+    q: Optional[str] = Query(None),
+    limit: int = Query(200, ge=1, le=2000),
+):
+    """List feedback entries with optional status/text filtering (for admin use)."""
     feedback = read_feedback_list(FEEDBACK_FILE)
-    return {"feedback": feedback, "count": len(feedback)}
+
+    if status:
+        status_l = status.strip().lower()
+        feedback = [f for f in feedback if str(f.get("status", "new")).lower() == status_l]
+
+    if q:
+        ql = q.strip().lower()
+        if ql:
+            def _hit(it: dict) -> bool:
+                msg = str(it.get("message", "")).lower()
+                typ = str(it.get("type", "")).lower()
+                ctx = json.dumps(it.get("context", {}), ensure_ascii=False).lower()
+                return (ql in msg) or (ql in typ) or (ql in ctx)
+            feedback = [f for f in feedback if _hit(f)]
+
+    feedback.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+    total = len(feedback)
+    feedback = feedback[:limit]
+    return {"feedback": feedback, "count": len(feedback), "total": total}
+
+
+async def api_feedback_update(item_id: int, request: Request):
+    """Update feedback workflow status (new|triaged|resolved)."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "Invalid JSON")
+
+    new_status = str(body.get("status", "")).strip().lower()
+    if new_status not in {"new", "triaged", "resolved"}:
+        raise HTTPException(400, "status must be one of: new, triaged, resolved")
+
+    updated = update_feedback_status(FEEDBACK_FILE, item_id, new_status)
+    if updated is None:
+        raise HTTPException(404, "feedback item not found")
+    return {"status": "ok", "feedback": updated}
 
 
 def _default_marker_for_client(client_id: str) -> Dict[str, Any]:
@@ -1320,7 +1236,6 @@ def _marker_for_client(client_id: str) -> Dict[str, Any]:
     return _default_marker_for_client(client_id)
 
 
-@app.get("/api/marker_profile")
 async def api_marker_profile(clientId: str = Query(..., min_length=3, max_length=128)):
     marker = _marker_for_client(clientId)
     return {
@@ -1331,7 +1246,6 @@ async def api_marker_profile(clientId: str = Query(..., min_length=3, max_length
     }
 
 
-@app.get("/api/marker_auth")
 async def api_marker_auth(clientId: str = Query(..., min_length=3, max_length=128)):
     if not MARKER_AUTH_CONFIGURED:
         raise HTTPException(503, "Marker auth is not configured; marker editing disabled")
@@ -1339,7 +1253,6 @@ async def api_marker_auth(clientId: str = Query(..., min_length=3, max_length=12
     return {"clientId": clientId, **tok}
 
 
-@app.post("/api/marker_profile")
 async def api_marker_profile_set(request: Request):
     if not MARKER_AUTH_CONFIGURED:
         raise HTTPException(503, "Marker auth is not configured; marker editing disabled")
@@ -1385,13 +1298,65 @@ async def api_marker_profile_set(request: Request):
     return {"status": "ok", "marker": marker}
 
 
-@app.get("/api/location_search")
-async def api_location_search(q: str = Query(..., min_length=2, max_length=120), limit: int = Query(8, ge=1, le=20)):
+def _location_search_client_key(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        return xff.split(",")[0].strip()[:128]
+    client = request.client.host if request.client else "unknown"
+    return str(client)[:128]
+
+
+def _location_search_check_rate_limit(client_key: str):
+    now = time.monotonic()
+    with app_state.location_search_lock:
+        dq = app_state.location_search_rate.setdefault(client_key, deque())
+        while dq and (now - dq[0]) > LOCATION_SEARCH_WINDOW_SECONDS:
+            dq.popleft()
+        if len(dq) >= LOCATION_SEARCH_MAX_REQUESTS_PER_WINDOW:
+            raise HTTPException(429, "Rate limit exceeded for location search")
+        dq.append(now)
+
+
+def _location_search_cache_get(cache_key: tuple[str, int]):
+    now = time.monotonic()
+    with app_state.location_search_lock:
+        item = app_state.location_search_cache.get(cache_key)
+        if item is None:
+            return None
+        payload, ts = item
+        if (now - ts) > LOCATION_SEARCH_CACHE_TTL_SECONDS:
+            try:
+                del app_state.location_search_cache[cache_key]
+            except Exception:
+                pass
+            return None
+        app_state.location_search_cache.move_to_end(cache_key)
+        return payload
+
+
+def _location_search_cache_set(cache_key: tuple[str, int], payload: dict):
+    with app_state.location_search_lock:
+        app_state.location_search_cache[cache_key] = (payload, time.monotonic())
+        app_state.location_search_cache.move_to_end(cache_key)
+        while len(app_state.location_search_cache) > _LOCATION_SEARCH_CACHE_MAX_ITEMS:
+            app_state.location_search_cache.popitem(last=False)
+
+
+async def api_location_search(request: Request, q: str = Query(..., min_length=2, max_length=120), limit: int = Query(8, ge=1, le=20)):
     """Free-text search biased towards glider fields / airfields / airports.
 
     Uses a small local OpenAIP-style seed list first, then enriches with Nominatim.
     """
-    ql = q.strip().lower()
+    qn = q.strip()
+    ql = qn.lower()
+
+    # Robust server-side rate limit by client key (in addition to upstream-friendly Nominatim pacing below).
+    _location_search_check_rate_limit(_location_search_client_key(request))
+
+    cache_key = (ql, int(limit))
+    cached = _location_search_cache_get(cache_key)
+    if cached is not None:
+        return cached
 
     def _score_item(name: str, display_name: str, cls: str, typ: str, seed_boost: int = 0) -> int:
         s = seed_boost
@@ -1431,27 +1396,29 @@ async def api_location_search(q: str = Query(..., min_length=2, max_length=120),
         except Exception:
             continue
 
-    # 2) Nominatim enrichment (rate-limited: max 1 req/s)
-    global last_nominatim_request
+    # 2) Nominatim enrichment (paced: max ~1 req/s process-local)
     now = time.monotonic()
-    if now - last_nominatim_request < 1.0:
-        raise HTTPException(429, "Rate limit exceeded. Max 1 Nominatim request per second.")
-    last_nominatim_request = now
+    wait_s = 1.0 - (now - app_state.last_nominatim_request)
+    if wait_s > 0:
+        await asyncio.sleep(min(wait_s, 1.0))
+    app_state.last_nominatim_request = time.monotonic()
 
     rows = []
     try:
-        r = requests.get(
-            "https://nominatim.openstreetmap.org/search",
-            params={
-                "q": q,
-                "format": "jsonv2",
-                "addressdetails": 1,
-                "limit": max(limit * 3, 15),
-                "extratags": 1,
-            },
-            headers={"User-Agent": "skyview/1.0"},
-            timeout=8,
-        )
+        def _nominatim_fetch():
+            return requests.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={
+                    "q": qn,
+                    "format": "jsonv2",
+                    "addressdetails": 1,
+                    "limit": max(limit * 3, 15),
+                    "extratags": 1,
+                },
+                headers={"User-Agent": "skyview/1.0"},
+                timeout=8,
+            )
+        r = await asyncio.to_thread(_nominatim_fetch)
         if r.status_code == 200:
             j = r.json()
             rows = j if isinstance(j, list) else []
@@ -1487,17 +1454,17 @@ async def api_location_search(q: str = Query(..., min_length=2, max_length=120),
         seen.add(key)
         dedup.append(r)
 
-    return {"results": dedup[:limit], "count": min(len(dedup), limit)}
+    payload = {"results": dedup[:limit], "count": min(len(dedup), limit)}
+    _location_search_cache_set(cache_key, payload)
+    return payload
 
 
 # Backward-compat endpoints (legacy marker list API)
-@app.get("/api/markers")
 async def api_markers_list(clientId: str = Query(..., min_length=3, max_length=128)):
     marker = _marker_for_client(clientId)
     return {"markers": [marker], "count": 1}
 
 
-@app.delete("/api/markers")
 async def api_markers_reset_default(
     clientId: str = Query(..., min_length=3, max_length=128),
     markerAuthToken: str = Query(""),
@@ -1522,7 +1489,6 @@ from PIL import Image
 OVERLAY_CONFIGS = RENDER_OVERLAY_CONFIGS
 
 
-@app.get("/api/overlay")
 async def api_overlay(
     layer: str = Query(...),
     bbox: str = Query("30,-30,72,45"),
@@ -1545,12 +1511,22 @@ async def api_overlay(
     run, step, model_used = resolve_time_with_cache_context(time, model)
     d = load_data(run, step, model_used, keys=overlay_keys)
 
-    # Optional EU fallback outside D2 domain (Phase 1)
-    eu_fb = _try_load_eu_fallback(time, cfg) if model_used == "icon_d2" else None
-    overlay_fallback_used = False
-
     lat = d["lat"]
     lon = d["lon"]
+
+    # EU spatial fill for areas outside D2 domain (strict-only, no recovery)
+    eu_fb = None
+    if model_used == "icon_d2":
+        d2_lat_min, d2_lat_max = float(np.min(lat)), float(np.max(lat))
+        d2_lon_min, d2_lon_max = float(np.min(lon)), float(np.max(lon))
+        overlaps_outside_d2 = (
+            lat_min < d2_lat_min or lat_max > d2_lat_max or lon_min < d2_lon_min or lon_max > d2_lon_max
+        )
+        if overlaps_outside_d2:
+            _eu_raw = _try_load_eu_fallback(time, cfg)
+            if _eu_raw is not None and not _eu_raw.get("missing"):
+                eu_fb = _eu_raw
+    overlay_fallback_used = False
     cmap_fn = cfg["cmap"]
 
     # Clamp bbox to actual data extent to prevent stretching
@@ -1589,7 +1565,7 @@ async def api_overlay(
             d = eu_fb["data"]
             run, step, model_used = eu_fb["run"], eu_fb["step"], eu_fb["model"]
             overlay_fallback_used = True
-            fallback_stats["overlayFallback"] += 1
+            app_state.fallback_stats["overlayFallback"] += 1
             lat = d["lat"]
             lon = d["lon"]
             data_lat_min, data_lat_max = float(lat.min()), float(lat.max())
@@ -1621,7 +1597,7 @@ async def api_overlay(
 
     # Handle computed variables
     if cfg.get("computed"):
-        cropped = compute_computed_field_cropped(cfg["var"], d, li, lo)
+        cropped = compute_computed_field_cropped(cfg["var"], d, li, lo, model_used, step)
         h, w = cropped.shape
     else:
         var_name = cfg["var"]
@@ -1689,6 +1665,13 @@ async def api_overlay(
     img.save(buf, format="PNG", optimize=True)
     buf.seek(0)
 
+    _set_fallback_current(
+        "overlay",
+        "eu_fallback:outside_d2_domain" if overlay_fallback_used else "primary_model_only",
+        source_model=model_used,
+        detail={"requestedTime": time, "layer": layer},
+    )
+
     return Response(
         content=buf.getvalue(),
         media_type="image/png",
@@ -1733,15 +1716,24 @@ def _regular_grid_indices(vals: np.ndarray, q: np.ndarray) -> np.ndarray:
     return np.clip(idx, 0, len(vals) - 1)
 
 
+def _precip_prev_step_and_dt(model_used: str, step: int) -> tuple[Optional[int], float]:
+    if model_used == "icon_eu" and step >= ICON_EU_STEP_3H_START:
+        prev = step - 3
+        return (prev if prev >= 1 else None), 3.0
+    if step >= 2:
+        return step - 1, 1.0
+    return None, 1.0
+
+
 def _overlay_source_field(layer: str, cfg: dict, d: dict, model_used: str, run: str, step: int):
     """Return source field for overlay rendering (full-grid) with computed caching."""
     if cfg.get("computed"):
         comp_key = f"{model_used}|{run}|{step}|{layer}"
-        src = computed_cache_get(comp_key)
-        if src is None:
-            src = compute_computed_field_full(cfg["var"], d)
-            computed_cache_set(comp_key, src)
-        return src
+        return computed_cache_get_or_compute(
+            comp_key,
+            layer=layer,
+            compute_fn=lambda: compute_computed_field_full(cfg["var"], d, model_used, step),
+        )
 
     vname = cfg["var"]
     if vname not in d and layer == "clouds_total_mod" and "clct" in d:
@@ -1754,82 +1746,88 @@ def _overlay_source_field(layer: str, cfg: dict, d: dict, model_used: str, run: 
     return src
 
 
-def _resolve_eu_time_strict(time_str: str, max_delta_hours: float = 2.0):
-    """Resolve EU run/step only if close enough to requested time.
-
-    Accepts ISO-8601 timestamps or the sentinel "latest".
-    """
-    t = (time_str or "").strip()
-    cache_key = (t or "latest", float(max_delta_hours))
-    if cache_key in _eu_strict_cache:
-        _eu_strict_cache.move_to_end(cache_key)
-        return _eu_strict_cache[cache_key]
-
-    fallback_stats["euResolveAttempts"] += 1
+def _maybe_warmup_overlay_context(layer: str, cfg: dict, d: dict, model_used: str, run: str, step: int):
+    """Proactively precompute field cache once per context/layer to reduce burst misses."""
+    if not OVERLAY_WARMUP_ENABLED:
+        return
+    ctx_key = f"{model_used}|{run}|{step}|{layer}"
+    now = time.time()
+    should_run = False
+    with _warmup_lock:
+        if _last_overlay_warmup.get("key") != ctx_key or (now - float(_last_overlay_warmup.get("ts", 0.0))) > OVERLAY_WARMUP_MIN_INTERVAL_SECONDS:
+            _last_overlay_warmup["key"] = ctx_key
+            _last_overlay_warmup["ts"] = now
+            should_run = True
+    if not should_run:
+        return
     try:
-        run_eu, step_eu, model_eu = resolve_time(t or "latest", "icon_eu")
-        if model_eu != "icon_eu":
-            result = None
-        else:
-            # lightweight validTime computation without loading fields
-            run_dt = datetime.strptime(run_eu, "%Y%m%d%H").replace(tzinfo=timezone.utc)
-            vt = run_dt + timedelta(hours=step_eu)
-
-            # Explicit non-ISO handling: latest/current request should pass strictness check.
-            if t == "" or t.lower() == "latest":
-                fallback_stats["euResolveSuccess"] += 1
-                result = (run_eu, step_eu, model_eu)
-            else:
-                # ISO target time (timezone-naive is treated as UTC)
-                try:
-                    target = datetime.fromisoformat(t.replace("Z", "+00:00"))
-                    if target.tzinfo is None:
-                        target = target.replace(tzinfo=timezone.utc)
-                except Exception:
-                    fallback_stats["strictTimeDenied"] += 1
-                    result = None
-                else:
-                    if abs((vt - target).total_seconds()) > max_delta_hours * 3600.0:
-                        fallback_stats["strictTimeDenied"] += 1
-                        result = None
-                    else:
-                        fallback_stats["euResolveSuccess"] += 1
-                        result = (run_eu, step_eu, model_eu)
+        _overlay_source_field(layer, cfg, d, model_used, run, step)
     except Exception:
-        result = None
-
-    _eu_strict_cache[cache_key] = result
-    _eu_strict_cache.move_to_end(cache_key)
-    while len(_eu_strict_cache) > _EU_STRICT_CACHE_MAX:
-        _eu_strict_cache.popitem(last=False)
-    return result
+        # Warmup must never fail the request path.
+        pass
 
 
-def _try_load_eu_fallback(time_str: str, cfg: dict, max_delta_hours: float = 2.0):
-    """Load ICON-EU fallback, but only when temporally consistent with request time."""
+def _resolve_eu_time_strict(time_str: str, max_delta_hours: float = EU_STRICT_MAX_DELTA_HOURS):
+    """Resolve EU run/step only if close enough to requested time (service-backed)."""
+    return svc_resolve_eu_time_strict(
+        time_str=time_str,
+        max_delta_hours=max_delta_hours,
+        max_delta_hours_3h=EU_STRICT_MAX_DELTA_HOURS_3H,
+        resolve_time_fn=resolve_time,
+        cache=app_state.eu_strict_cache,
+        cache_ttl_seconds=_EU_STRICT_CACHE_TTL_SECONDS,
+        cache_max=_EU_STRICT_CACHE_MAX,
+        fallback_stats=app_state.fallback_stats,
+        logger=logger,
+    )
+
+
+def _load_eu_data_strict(
+    time_str: str,
+    keys: list[str],
+    max_delta_hours: float = EU_STRICT_MAX_DELTA_HOURS,
+) -> Optional[Dict[str, Any]]:
+    """Load ICON-EU data strictly matching the requested time (service-backed)."""
+    payload, updated_until = svc_load_eu_data_strict(
+        time_str=time_str,
+        keys=keys,
+        max_delta_hours=max_delta_hours,
+        resolve_eu_time_strict_fn=_resolve_eu_time_strict,
+        load_data_fn=load_data,
+        eu_missing_until_mono=app_state.eu_missing_until_mono,
+        eu_missing_backoff_seconds=_EU_MISSING_BACKOFF_SECONDS,
+        logger=logger,
+    )
+    app_state.eu_missing_until_mono = updated_until
+    return payload
+
+
+def _try_load_eu_fallback(time_str: str, cfg: dict, max_delta_hours: float = EU_STRICT_MAX_DELTA_HOURS):
+    """Load ICON-EU fallback for overlay endpoints (strict, no recovery)."""
     overlay_keys = build_overlay_keys(cfg)
-    try:
-        eu_strict = _resolve_eu_time_strict(time_str, max_delta_hours=max_delta_hours)
-        if eu_strict is None:
-            return None
-        run_eu, step_eu, model_eu = eu_strict
-        d_eu = load_data(run_eu, step_eu, model_eu, keys=overlay_keys)
-        return {
-            "run": run_eu,
-            "step": step_eu,
-            "model": model_eu,
-            "data": d_eu,
-        }
-    except Exception:
-        return None
+    return _load_eu_data_strict(time_str, overlay_keys, max_delta_hours=max_delta_hours)
+
+app.include_router(build_point_router(
+    resolve_time_with_cache_context=resolve_time_with_cache_context,
+    load_data=load_data,
+    POINT_KEYS=POINT_KEYS,
+    _resolve_eu_time_strict=_resolve_eu_time_strict,
+    _load_eu_data_strict=_load_eu_data_strict,
+    rotate_caches_for_context=rotate_caches_for_context,
+    fallback_stats=app_state.fallback_stats,
+    classify_point=classify_point,
+    ww_to_symbol=ww_to_symbol,
+    build_overlay_values=build_overlay_values,
+    _freshness_minutes_from_run=_freshness_minutes_from_run,
+    _set_fallback_current=_set_fallback_current,
+))
 
 
-@app.get("/api/status")
 async def api_status():
     """Aggregate ingest freshness, model/run state, cache/perf metrics and error counters."""
     runs = get_available_runs()
     merged = get_merged_timeline()
-    return build_status_payload(
+    payload = build_status_payload(
         runs=runs,
         merged=merged,
         tile_cache_prune_fn=tile_cache_prune,
@@ -1844,12 +1842,48 @@ async def api_status():
         cache_context_stats=cache_context_stats_payload(),
         perf_recent=perf_recent,
         perf_totals=perf_totals,
+        overlay_phase_recent=overlay_phase_recent,
+        overlay_phase_totals=overlay_phase_totals,
+        computed_field_metrics=computed_metrics_payload(),
         api_error_counters=api_error_counters,
-        fallback_stats=fallback_stats,
+        fallback_stats=app_state.fallback_stats,
     )
 
+    # Override freshness semantics: minutes since latest fully ingested run became complete.
+    timings = await asyncio.to_thread(_ingest_model_timings)
+    full_times = [
+        t.get("latestRunFullyIngestedAt")
+        for t in timings.values()
+        if t.get("latestRunFullyIngestedAt")
+    ]
+    if full_times:
+        latest_full_iso = sorted(full_times)[-1]
+        try:
+            dt = datetime.fromisoformat(latest_full_iso.replace("Z", "+00:00"))
+            payload["ingest"]["freshnessMinutes"] = round((datetime.now(timezone.utc) - dt).total_seconds() / 60.0, 1)
+            payload["ingest"]["latestFullIngestedAt"] = latest_full_iso
+        except Exception:
+            pass
 
-@app.get("/api/cache_stats")
+    for mk in ("icon_d2", "icon_eu"):
+        if mk in payload.get("ingestHealth", {}).get("models", {}) and mk in timings:
+            payload["ingestHealth"]["models"][mk]["latestRunAvailableAt"] = timings[mk].get("latestRunAvailableAt")
+            payload["ingestHealth"]["models"][mk]["latestRunFullyAvailableOnDwdAt"] = timings[mk].get("latestRunFullyAvailableOnDwdAt")
+            payload["ingestHealth"]["models"][mk]["modelCalculationMinutes"] = timings[mk].get("modelCalculationMinutes")
+            payload["ingestHealth"]["models"][mk]["latestRunFullyIngestedAt"] = timings[mk].get("latestRunFullyIngestedAt")
+            payload["ingestHealth"]["models"][mk]["ingestDurationMinutes"] = timings[mk].get("ingestDurationMinutes")
+            payload["ingestHealth"]["models"][mk]["freshnessMinutesSinceFullIngest"] = timings[mk].get("freshnessMinutesSinceFullIngest")
+
+    # Panel-relevant fallback status: current snapshot, not cumulative counters.
+    payload["fallback"] = {
+        "updatedAt": app_state.fallback_current.get("updatedAt"),
+        "endpoints": app_state.fallback_current.get("endpoints", {}),
+        "strictWindowHours": EU_STRICT_MAX_DELTA_HOURS,
+    }
+
+    return payload
+
+
 async def api_cache_stats():
     tile_cache_prune("desktop")
     tile_cache_prune("mobile")
@@ -1863,10 +1897,20 @@ async def api_cache_stats():
         },
         "metrics": cache_stats,
         "computedFieldCacheItems": len(computed_field_cache),
+        "computedFieldMetrics": computed_metrics_payload(),
     }
 
 
-@app.get("/api/perf_stats")
+async def api_usage_stats(days: int = Query(30, ge=1, le=365)):
+    usage = get_usage_stats(USAGE_STATS_FILE, days=days)
+    usage["markers"] = get_marker_stats(MARKERS_FILE)
+    usage["notes"] = {
+        "privacy": "unique visitors are estimated via hashed fingerprint (ip+ua+lang+salt)",
+        "scope": "visits counted on '/' and '/index.html' page loads",
+    }
+    return usage
+
+
 async def api_perf_stats(reset: bool = Query(False, description="Reset perf counters after returning stats")):
     payload = build_perf_payload(perf_recent, perf_totals)
 
@@ -1876,12 +1920,20 @@ async def api_perf_stats(reset: bool = Query(False, description="Reset perf coun
         perf_totals['hits'] = 0
         perf_totals['misses'] = 0
         perf_totals['totalMs'] = 0.0
+        overlay_phase_recent.clear()
+        overlay_phase_totals['requests'] = 0
+        overlay_phase_totals['hits'] = 0
+        overlay_phase_totals['misses'] = 0
+        overlay_phase_totals['loadMs'] = 0.0
+        overlay_phase_totals['sourceMs'] = 0.0
+        overlay_phase_totals['colorizeMs'] = 0.0
+        overlay_phase_totals['encodeMs'] = 0.0
+        overlay_phase_totals['totalMs'] = 0.0
         payload['reset'] = True
 
     return payload
 
 
-@app.get("/api/overlay_tile/{z}/{x}/{y}.png")
 async def api_overlay_tile(
     z: int,
     x: int,
@@ -1892,6 +1944,10 @@ async def api_overlay_tile(
     clientClass: str = Query("desktop"),
 ):
     t0 = perf_counter()
+    t_load_ms = 0.0
+    t_source_ms = 0.0
+    t_colorize_ms = 0.0
+    t_encode_ms = 0.0
 
     if layer not in OVERLAY_CONFIGS:
         raise HTTPException(400, f"Unknown layer: {layer}")
@@ -1901,17 +1957,53 @@ async def api_overlay_tile(
 
     overlay_keys = build_overlay_keys(cfg)
 
+    t_load0 = perf_counter()
     run, step, model_used = resolve_time_with_cache_context(time, model)
     d = load_data(run, step, model_used, keys=overlay_keys)
     lat = d["lat"]
     lon = d["lon"]
 
-    eu_fb = _try_load_eu_fallback(time, cfg) if model_used == "icon_d2" else None
+    # EU load only if the tile extends outside D2 bounds.
+    _eu_raw_tile = None
+    eu_fb = None
+    if model_used == "icon_d2":
+        d2_lat_min, d2_lat_max = float(np.min(lat)), float(np.max(lat))
+        d2_lon_min, d2_lon_max = float(np.min(lon)), float(np.max(lon))
+        minx, miny, maxx, maxy = _tile_bounds_3857(z, x, y)
+        lon0, lat0 = _merc_to_lonlat(minx, miny)
+        lon1, lat1 = _merc_to_lonlat(maxx, maxy)
+        t_lon_min, t_lon_max = min(lon0, lon1), max(lon0, lon1)
+        t_lat_min, t_lat_max = min(lat0, lat1), max(lat0, lat1)
+        overlaps_outside_d2 = (
+            t_lat_min < d2_lat_min or t_lat_max > d2_lat_max or t_lon_min < d2_lon_min or t_lon_max > d2_lon_max
+        )
+        if overlaps_outside_d2:
+            _eu_raw_tile = _try_load_eu_fallback(time, cfg)
+            eu_fb = _eu_raw_tile if (_eu_raw_tile is not None and not _eu_raw_tile.get("missing")) else None
+    t_load_ms += (perf_counter() - t_load0) * 1000.0
+
+    # Warm cache once per context/layer to smooth bursty tile starts.
+    _maybe_warmup_overlay_context(layer, cfg, d, model_used, run, step)
+    if eu_fb is not None:
+        try:
+            _maybe_warmup_overlay_context(layer, cfg, eu_fb["data"], eu_fb["model"], eu_fb["run"], eu_fb["step"])
+        except Exception:
+            pass
     eu_key = f"|eu:{eu_fb['run']}:{eu_fb['step']}" if eu_fb else ""
     cache_key = f"{client_class}|{model_used}|{run}|{step}{eu_key}|{layer}|{z}|{x}|{y}"
     cached = tile_cache_get(client_class, cache_key)
     if cached is not None:
-        perf_record((perf_counter() - t0) * 1000.0, True)
+        total_ms = (perf_counter() - t0) * 1000.0
+        perf_record(total_ms, True)
+        overlay_phase_record(
+            layer=layer,
+            cache_hit=True,
+            load_ms=t_load_ms,
+            source_ms=t_source_ms,
+            colorize_ms=t_colorize_ms,
+            encode_ms=t_encode_ms,
+            total_ms=total_ms,
+        )
         source_model_hdr = "blended" if eu_fb else model_used
         return Response(
             content=cached,
@@ -1941,9 +2033,21 @@ async def api_overlay_tile(
         # If primary D2 misses this tile, allow EU fallback coverage.
         if eu_fb is None:
             empty = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+            t_enc0 = perf_counter()
             b = io.BytesIO(); empty.save(b, format="PNG", optimize=True); png = b.getvalue()
+            t_encode_ms += (perf_counter() - t_enc0) * 1000.0
             tile_cache_set(client_class, cache_key, png)
-            perf_record((perf_counter() - t0) * 1000.0, False)
+            total_ms = (perf_counter() - t0) * 1000.0
+            perf_record(total_ms, False)
+            overlay_phase_record(
+                layer=layer,
+                cache_hit=False,
+                load_ms=t_load_ms,
+                source_ms=t_source_ms,
+                colorize_ms=t_colorize_ms,
+                encode_ms=t_encode_ms,
+                total_ms=total_ms,
+            )
             return Response(
                 content=png,
                 media_type="image/png",
@@ -1961,6 +2065,7 @@ async def api_overlay_tile(
             )
 
     # source field(s): primary + optional EU fallback
+    t_src0 = perf_counter()
     src = _overlay_source_field(layer, cfg, d, model_used, run, step)
 
     d_eu = None
@@ -1974,6 +2079,7 @@ async def api_overlay_tile(
         lon_eu = d_eu["lon"]
         data_lat_min_eu, data_lat_max_eu = float(np.min(lat_eu)), float(np.max(lat_eu))
         data_lon_min_eu, data_lon_max_eu = float(np.min(lon_eu)), float(np.max(lon_eu))
+    t_source_ms += (perf_counter() - t_src0) * 1000.0
 
     xs = np.linspace(minx, maxx, 256, endpoint=False) + (maxx - minx) / 512.0
     ys = np.linspace(maxy, miny, 256, endpoint=False) - (maxy - miny) / 512.0
@@ -2000,14 +2106,28 @@ async def api_overlay_tile(
             sampled[fill_mask] = sampled_eu[fill_mask]
             valid = valid | fill_mask
             source_model_hdr = "blended"
-            fallback_stats["overlayTileFallback"] += 1
+            app_state.fallback_stats["overlayTileFallback"] += 1
 
+    t_col0 = perf_counter()
     rgba = colorize_layer_vectorized(layer, sampled, valid)
+    t_colorize_ms += (perf_counter() - t_col0) * 1000.0
 
     img = Image.fromarray(rgba, mode="RGBA")
+    t_enc0 = perf_counter()
     b = io.BytesIO(); img.save(b, format="PNG", optimize=True); png = b.getvalue()
+    t_encode_ms += (perf_counter() - t_enc0) * 1000.0
     tile_cache_set(client_class, cache_key, png)
-    perf_record((perf_counter() - t0) * 1000.0, False)
+    total_ms = (perf_counter() - t0) * 1000.0
+    perf_record(total_ms, False)
+    overlay_phase_record(
+        layer=layer,
+        cache_hit=False,
+        load_ms=t_load_ms,
+        source_ms=t_source_ms,
+        colorize_ms=t_colorize_ms,
+        encode_ms=t_encode_ms,
+        total_ms=total_ms,
+    )
 
     return Response(
         content=png,
@@ -2025,6 +2145,347 @@ async def api_overlay_tile(
         ),
     )
 
+
+# Phase-3 modularization: bind large endpoint groups via routers
+app.include_router(build_weather_router(
+    api_symbols=api_symbols,
+    api_wind=api_wind,
+))
+app.include_router(build_overlay_router(
+    api_overlay=api_overlay,
+    api_overlay_tile=api_overlay_tile,
+))
+
+
+def _tail_lines(path: str, limit: int = 300) -> list[str]:
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        return [ln.rstrip("\n") for ln in lines[-limit:]]
+    except Exception:
+        return []
+
+
+def _dir_size_bytes(path: str) -> int:
+    total = 0
+    if not os.path.isdir(path):
+        return 0
+    for root, _, files in os.walk(path):
+        for fn in files:
+            fp = os.path.join(root, fn)
+            try:
+                total += os.path.getsize(fp)
+            except Exception:
+                pass
+    return int(total)
+
+
+_dwd_run_available_cache: OrderedDict[str, tuple[Optional[str], float]] = OrderedDict()
+
+
+def _fetch_dwd_run_fully_available_at(model_key: str, run: Optional[str]) -> Optional[str]:
+    """Best-effort DWD full-run availability via Last-Modified on final-step ww file."""
+    if not run:
+        return None
+    cache_key = f"{model_key}:{run}"
+    now_mono = time.monotonic()
+    cached = _dwd_run_available_cache.get(cache_key)
+    if cached and (now_mono - cached[1]) < 900:
+        _dwd_run_available_cache.move_to_end(cache_key)
+        return cached[0]
+
+    hh = run[-2:]
+    if model_key == "icon_d2":
+        url = (
+            f"https://opendata.dwd.de/weather/nwp/icon-d2/grib/{hh}/ww/"
+            f"icon-d2_germany_regular-lat-lon_single-level_{run}_048_2d_ww.grib2.bz2"
+        )
+    else:
+        url = (
+            f"https://opendata.dwd.de/weather/nwp/icon-eu/grib/{hh}/ww/"
+            f"icon-eu_europe_regular-lat-lon_single-level_{run}_120_WW.grib2.bz2"
+        )
+
+    iso = None
+    try:
+        r = requests.head(url, timeout=6)
+        if r.status_code < 400:
+            lm = r.headers.get("Last-Modified")
+            if lm:
+                dt = parsedate_to_datetime(lm)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                iso = dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    except Exception:
+        iso = None
+
+    _dwd_run_available_cache[cache_key] = (iso, now_mono)
+    _dwd_run_available_cache.move_to_end(cache_key)
+    while len(_dwd_run_available_cache) > 32:
+        _dwd_run_available_cache.popitem(last=False)
+    return iso
+
+
+def _ingest_model_timings() -> dict[str, dict[str, Any]]:
+    """Per-model run timing diagnostics from local files.
+
+    latestRunAvailableAt uses runTime from timeline; latestRunFullyIngestedAt uses max mtime of
+    npz files in the newest run that has full expected step coverage.
+    """
+    now = datetime.now(timezone.utc)
+    expected_steps = {"icon_d2": 48, "icon_eu": 92}
+    runs = get_available_runs()
+    by_model = {
+        "icon_d2": next((r for r in runs if r.get("model") == "icon_d2"), None),
+        "icon_eu": next((r for r in runs if r.get("model") == "icon_eu"), None),
+    }
+    out: dict[str, dict[str, Any]] = {}
+
+    for model_dir, model_key in (("icon-d2", "icon_d2"), ("icon-eu", "icon_eu")):
+        base = os.path.join(DATA_DIR, model_dir)
+        run_dirs = sorted([d for d in os.listdir(base) if d.isdigit()], reverse=True) if os.path.isdir(base) else []
+        full_dt = None
+        full_steps = None
+        full_run = None
+        for run in run_dirs:
+            npz_files = sorted(glob.glob(os.path.join(base, run, "*.npz")))
+            if len(npz_files) >= expected_steps[model_key]:
+                full_dt = datetime.fromtimestamp(max(os.path.getmtime(p) for p in npz_files), tz=timezone.utc)
+                full_steps = len(npz_files)
+                full_run = run
+                break
+
+        freshness = round((now - full_dt).total_seconds() / 60.0, 1) if full_dt else None
+        latest = by_model.get(model_key)
+        latest_run = latest.get("run") if latest else None
+        latest_run_start_iso = None
+        if latest_run:
+            try:
+                latest_run_start_iso = datetime.strptime(latest_run, "%Y%m%d%H").replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+            except Exception:
+                latest_run_start_iso = None
+
+        dwd_available_iso = _fetch_dwd_run_fully_available_at(model_key, latest_run)
+
+        calc_minutes = None
+        if latest_run_start_iso and dwd_available_iso:
+            try:
+                rs = datetime.fromisoformat(latest_run_start_iso.replace("Z", "+00:00"))
+                da = datetime.fromisoformat(dwd_available_iso.replace("Z", "+00:00"))
+                calc_minutes = round((da - rs).total_seconds() / 60.0, 1)
+            except Exception:
+                calc_minutes = None
+
+        ingest_minutes = None
+        full_iso = full_dt.isoformat().replace("+00:00", "Z") if full_dt else None
+        if dwd_available_iso and full_iso and latest_run and full_run == latest_run:
+            try:
+                da = datetime.fromisoformat(dwd_available_iso.replace("Z", "+00:00"))
+                fi = datetime.fromisoformat(full_iso.replace("Z", "+00:00"))
+                ingest_minutes = round((fi - da).total_seconds() / 60.0, 1)
+            except Exception:
+                ingest_minutes = None
+
+        out[model_key] = {
+            "latestRun": latest_run,
+            "latestRunStartAt": latest_run_start_iso,
+            "latestRunAvailableAt": latest.get("runTime") if latest else None,
+            "latestRunFullyAvailableOnDwdAt": dwd_available_iso,
+            "modelCalculationMinutes": calc_minutes,
+            "latestRunFullyIngestedRun": full_run,
+            "latestRunFullyIngestedAt": full_iso,
+            "latestRunFullyIngestedSteps": full_steps,
+            "ingestDurationMinutes": ingest_minutes,
+            "freshnessMinutesSinceFullIngest": freshness,
+        }
+    return out
+
+
+async def api_admin_storage():
+    """Storage + ingest/admin overview (runs, timings, tmp state, markers, usage)."""
+    expected_steps = {"icon_d2": 48, "icon_eu": 92}
+    model_timings = await asyncio.to_thread(_ingest_model_timings)
+
+    out: dict[str, Any] = {
+        "models": {},
+        "totalBytes": 0,
+        "ingest": {},
+        "tmp": {},
+        "markers": get_marker_stats(MARKERS_FILE),
+        "usage": get_usage_stats(USAGE_STATS_FILE, days=30),
+    }
+
+    for model_dir, model_key in (("icon-d2", "icon_d2"), ("icon-eu", "icon_eu")):
+        base = os.path.join(DATA_DIR, model_dir)
+        model_total = _dir_size_bytes(base)
+        runs = sorted([d for d in os.listdir(base) if d.isdigit()], reverse=True) if os.path.isdir(base) else []
+        run_items: list[dict[str, Any]] = []
+        latest_full_ingested_at = None
+        latest_full_ingested_step_count = None
+
+        for run in runs:
+            rp = os.path.join(base, run)
+            npz_files = sorted(glob.glob(os.path.join(rp, "*.npz")))
+            run_bytes = sum(os.path.getsize(p) for p in npz_files if os.path.exists(p))
+            latest_npz_mtime = None
+            if npz_files:
+                latest_npz_mtime = datetime.fromtimestamp(max(os.path.getmtime(p) for p in npz_files), tz=timezone.utc)
+
+            run_items.append({
+                "run": run,
+                "npzFiles": len(npz_files),
+                "bytes": int(run_bytes),
+                "latestNpzsUpdatedAt": latest_npz_mtime.isoformat().replace("+00:00", "Z") if latest_npz_mtime else None,
+            })
+
+            if latest_full_ingested_at is None and len(npz_files) >= expected_steps[model_key]:
+                latest_full_ingested_at = latest_npz_mtime
+                latest_full_ingested_step_count = len(npz_files)
+
+        mt = model_timings.get(model_key, {})
+
+        out["models"][model_key] = {
+            "path": base,
+            "totalBytes": int(model_total),
+            "runs": run_items,
+            "latestRun": mt.get("latestRun") or (run_items[0]["run"] if run_items else None),
+            "latestRunStartAt": mt.get("latestRunStartAt"),
+            "latestRunAvailableAt": mt.get("latestRunAvailableAt"),
+            "latestRunFullyAvailableOnDwdAt": mt.get("latestRunFullyAvailableOnDwdAt"),
+            "modelCalculationMinutes": mt.get("modelCalculationMinutes"),
+            "latestRunFullyIngestedAt": mt.get("latestRunFullyIngestedAt"),
+            "latestRunFullyIngestedSteps": mt.get("latestRunFullyIngestedSteps") or latest_full_ingested_step_count,
+            "ingestDurationMinutes": mt.get("ingestDurationMinutes"),
+            "freshnessMinutesSinceFullIngest": mt.get("freshnessMinutesSinceFullIngest"),
+        }
+        out["totalBytes"] += int(model_total)
+
+    # tmp folder visibility
+    tmp_dir = os.path.join(DATA_DIR, "tmp")
+    tmp_entries = []
+    if os.path.isdir(tmp_dir):
+        for name in sorted(os.listdir(tmp_dir)):
+            p = os.path.join(tmp_dir, name)
+            try:
+                sz = _dir_size_bytes(p) if os.path.isdir(p) else os.path.getsize(p)
+            except Exception:
+                sz = 0
+            tmp_entries.append({"name": name, "isDir": os.path.isdir(p), "bytes": int(sz)})
+
+    lock_path = "/tmp/skyview-ingest.lock"
+    lock_info = {"exists": os.path.exists(lock_path), "path": lock_path, "ageSeconds": None}
+    if lock_info["exists"]:
+        try:
+            lock_info["ageSeconds"] = int(time.time() - os.path.getmtime(lock_path))
+        except Exception:
+            pass
+
+    running = []
+    try:
+        def _find_ingest_procs():
+            pr = subprocess.run(["pgrep", "-af", "ingest.py"], capture_output=True, text=True, timeout=2)
+            if pr.returncode == 0 and pr.stdout.strip():
+                return [ln.strip() for ln in pr.stdout.strip().splitlines() if ln.strip()]
+            return []
+        running = await asyncio.to_thread(_find_ingest_procs)
+    except Exception:
+        pass
+
+    out["tmp"] = {
+        "path": tmp_dir,
+        "count": len(tmp_entries),
+        "entries": tmp_entries,
+    }
+    out["ingest"] = {
+        "lock": lock_info,
+        "runningProcesses": running,
+        "isRunning": bool(running) or bool(lock_info.get("exists")),
+    }
+
+    return out
+
+
+async def api_admin_logs(
+    limit: int = Query(300, ge=50, le=2000),
+    level: str = Query("all", description="all|error|warn|info|debug"),
+):
+    """Recent backend logs for admin/status view with basic level filtering."""
+
+    def _collect_logs_payload():
+        logs_dir = os.path.join(SCRIPT_DIR, "logs")
+        files = sorted(glob.glob(os.path.join(logs_dir, "*.log")) + glob.glob(os.path.join(logs_dir, "*.out")))
+
+        lvl = (level or "all").strip().lower()
+        needles = {
+            "error": ["error", "exception", "traceback", "critical"],
+            "warn": ["warn", "warning"],
+            "info": ["info"],
+            "debug": ["debug"],
+        }.get(lvl)
+
+        payload: list[dict[str, Any]] = []
+        for fp in files[-10:]:
+            lines = _tail_lines(fp, limit=limit)
+            if needles:
+                lines = [ln for ln in lines if any(n in ln.lower() for n in needles)]
+            payload.append({
+                "file": os.path.basename(fp),
+                "path": fp,
+                "sizeBytes": os.path.getsize(fp) if os.path.exists(fp) else 0,
+                "tail": lines,
+            })
+
+        ingest_artifacts = [
+            {"name": os.path.basename(p), "path": os.path.abspath(p), "sizeBytes": os.path.getsize(p)}
+            for p in sorted(glob.glob(os.path.join(logs_dir, "*ingest*"))) if os.path.isfile(p)
+        ]
+        regression_artifacts = [
+            {"name": os.path.basename(p), "path": os.path.abspath(p), "sizeBytes": os.path.getsize(p)}
+            for p in sorted(glob.glob(os.path.join(SCRIPT_DIR, "..", "scripts", "qa_*.py"))) if os.path.isfile(p)
+        ]
+
+        return {
+            "logs": payload,
+            "count": len(payload),
+            "artifacts": {
+                "ingest": ingest_artifacts,
+                "regression": regression_artifacts,
+            },
+        }
+
+    return await asyncio.to_thread(_collect_logs_payload)
+
+
+async def admin_view():
+    """Simple Skyview admin/status dashboard page."""
+    p = os.path.join(FRONTEND_DIR, "admin.html")
+    if not os.path.isfile(p):
+        raise HTTPException(404, "admin.html not found")
+    return FileResponse(p)
+
+
+
+# Phase-4 modularization: ops/admin endpoints bound via routers
+app.include_router(build_ops_router(
+    api_feedback=api_feedback,
+    api_feedback_list=api_feedback_list,
+    api_feedback_update=api_feedback_update,
+    api_marker_profile=api_marker_profile,
+    api_marker_auth=api_marker_auth,
+    api_marker_profile_set=api_marker_profile_set,
+    api_location_search=api_location_search,
+    api_markers_list=api_markers_list,
+    api_markers_reset_default=api_markers_reset_default,
+))
+app.include_router(build_admin_router(
+    api_status=api_status,
+    api_cache_stats=api_cache_stats,
+    api_usage_stats=api_usage_stats,
+    api_perf_stats=api_perf_stats,
+    api_admin_storage=api_admin_storage,
+    api_admin_logs=api_admin_logs,
+    admin_view=admin_view,
+))
 
 # ─── Static Frontend (must be LAST) ───
 # html=True serves index.html for directory requests

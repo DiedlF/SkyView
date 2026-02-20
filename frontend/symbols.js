@@ -7,7 +7,7 @@ const LABEL_OFFSET = 14;
 
 // ─── WMO ww code → symbol file mapping ───
 // Keep this list trimmed to codes actually used by backend/weather_codes.py.
-const ICON_D2_WW = [0,1,2,3,45,48,51,53,55,56,57,61,63,65,66,67,71,73,75,77,80,81,82,85,86,95,96];
+const ICON_D2_WW = [0,1,2,3,45,48,50,51,53,56,57,60,61,63,66,67,70,71,73,77,80,81,82,85,86,95,96]; // Note: drizzle, rain and snow symbols are mapped to a smaller set of ww codes deliberately 
 const WW_SYMBOLS = Object.fromEntries(
   ICON_D2_WW.map((ww) => [ww, `/geodata/ww-symbols/wmo4677_ww${String(ww).padStart(2, '0')}.svg`])
 );
@@ -154,14 +154,14 @@ function _typeToWw(type) {
   // Keep aligned with backend/weather_codes.py ww_to_symbol mapping.
   const map = {
     'fog': 45, 'rime_fog': 48,
-    'drizzle_light': 51, 'drizzle_moderate': 53, 'drizzle_dense': 55,
+    'drizzle_light': 50, 'drizzle_moderate': 51, 'drizzle_dense': 53,
     'freezing_drizzle': 56, 'freezing_drizzle_heavy': 57,
-    'rain_slight': 61, 'rain_moderate': 63, 'rain_heavy': 65,
+    'rain_slight': 60, 'rain_moderate': 61, 'rain_heavy': 63,
     'freezing_rain': 66, 'freezing_rain_heavy': 67,
     'rain_shower': 80, 'rain_shower_moderate': 81,
     // Backend currently maps ww82 to rain_shower_moderate; keep alias for compatibility.
     'rain_shower_heavy': 82,
-    'snow_slight': 71, 'snow_moderate': 73, 'snow_heavy': 75,
+    'snow_slight': 70, 'snow_moderate': 71, 'snow_heavy': 73,
     'snow_grains': 77,
     'snow_shower': 85, 'snow_shower_heavy': 86,
     'thunderstorm': 95, 'thunderstorm_hail': 96,

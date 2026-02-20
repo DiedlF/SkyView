@@ -15,6 +15,53 @@ d2_bounds:
 retention:
   keep_runs: 1           # Latest run only
 
+# Optional ingest profiles (Phase 4 migration)
+# - full: legacy behavior (all enabled groups)
+# - skyview_core: minimal set needed for Skyview core app; Explorer may miss variables
+profiles:
+  full:
+    include_groups:
+      - aviation
+      - surface_weather
+      - severe_weather
+      - soaring
+
+  skyview_core:
+    variables:
+      # Skyview overlays / symbols / computed fields
+      - ww
+      - cape_ml
+      - htop_dc
+      - hbas_sc
+      - htop_sc
+      - lpi
+      - ceiling
+      - clcl
+      - clcm
+      - clch
+      - clct
+      - clct_mod
+      - mh
+      - ashfl_s
+      - t_2m
+      - td_2m
+      - relhum_2m
+      # Wind + gusts
+      - u_10m
+      - v_10m
+      - vmax_10m
+      # Accumulated precipitation components (needed for precip-rate precompute)
+      - tot_prec
+      - rain_gsp
+      - rain_con
+      - snow_gsp
+      - snow_con
+      - grau_gsp
+      # Helpful aviation context still used in point/overlay summaries
+      - vis
+      - hzerocl
+      - snowlmt
+
 groups:
   aviation:
     enabled: true
@@ -90,7 +137,7 @@ static_variables:
   - hsurf
 
 pressure_levels:
-  variables: [u, v]
+  variables: [u, v, t]
   levels: [950, 850, 700, 500, 300]
 
 # Variables that may not exist in ICON-EU (will be skipped gracefully)

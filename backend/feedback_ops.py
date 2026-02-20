@@ -48,3 +48,26 @@ def read_feedback_list(feedback_file: str):
             return json.load(f)
     except Exception:
         return []
+
+
+def update_feedback_status(feedback_file: str, item_id: int, status: str) -> dict | None:
+    """Update one feedback item status in-place; returns updated entry or None."""
+    allowed = {"new", "triaged", "resolved"}
+    if status not in allowed:
+        raise ValueError(f"Invalid status: {status}")
+
+    with feedback_lock:
+        items = read_feedback_list(feedback_file)
+        updated = None
+        for it in items:
+            if int(it.get("id", -1)) == int(item_id):
+                it["status"] = status
+                it["updatedAt"] = datetime.now(timezone.utc).isoformat() + "Z"
+                updated = it
+                break
+        if updated is None:
+            return None
+        os.makedirs(os.path.dirname(feedback_file), exist_ok=True)
+        with open(feedback_file, "w") as f:
+            json.dump(items, f, indent=2)
+        return updated

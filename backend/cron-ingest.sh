@@ -13,6 +13,8 @@ cd "$(dirname "$0")"
 
 LOCKFILE="/tmp/skyview-ingest.lock"
 LOCKFILE_AGE_MAX=3600  # 60 minutes (increased for larger download set)
+INGEST_PROFILE="${SKYVIEW_INGEST_PROFILE:-skyview_core}"
+export SKYVIEW_INGEST_RATE_LIMIT="${SKYVIEW_INGEST_RATE_LIMIT:-10M}"
 
 # Check for stale lock (process died without cleanup)
 if [ -f "$LOCKFILE" ]; then
@@ -31,15 +33,15 @@ touch "$LOCKFILE"
 trap "rm -f $LOCKFILE" EXIT
 
 # Check and ingest ICON-D2 (2.2km, 48h, full grid)
-python3 ingest.py --model icon-d2 --check-only 2>/dev/null
+python3 ingest.py --model icon-d2 --profile "$INGEST_PROFILE" --check-only 2>/dev/null
 if [ $? -eq 0 ]; then
-    python3 ingest.py --model icon-d2 --steps all
+    python3 ingest.py --model icon-d2 --profile "$INGEST_PROFILE" --steps all
 fi
 
 # Check and ingest ICON-EU (6.5km, 120h, cropped to D2 bounds)
-python3 ingest.py --model icon-eu --check-only 2>/dev/null
+python3 ingest.py --model icon-eu --profile "$INGEST_PROFILE" --check-only 2>/dev/null
 if [ $? -eq 0 ]; then
-    python3 ingest.py --model icon-eu --steps all
+    python3 ingest.py --model icon-eu --profile "$INGEST_PROFILE" --steps all
 fi
 
 # Lock automatically removed by trap on exit

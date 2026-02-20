@@ -37,6 +37,77 @@ function showGlobalError(msg) {
   }, 6000);
 }
 
+function ensureFallbackBanner() {
+  let el = document.getElementById('fallback-timestep-banner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'fallback-timestep-banner';
+    el.style.position = 'fixed';
+    el.style.left = '50%';
+    el.style.top = '12px';
+    el.style.transform = 'translateX(-50%)';
+    el.style.background = 'rgba(160,110,20,0.95)';
+    el.style.color = '#fff';
+    el.style.padding = '8px 12px';
+    el.style.borderRadius = '8px';
+    el.style.fontSize = '12px';
+    el.style.zIndex = '9998';
+    el.style.maxWidth = '90vw';
+    el.style.textAlign = 'center';
+    el.style.display = 'none';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function ensureEuMissingBanner() {
+  let el = document.getElementById('eu-missing-banner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'eu-missing-banner';
+    el.style.position = 'fixed';
+    el.style.left = '50%';
+    el.style.top = '12px';
+    el.style.transform = 'translateX(-50%)';
+    el.style.background = 'rgba(160,110,20,0.95)';
+    el.style.color = '#fff';
+    el.style.padding = '8px 14px';
+    el.style.borderRadius = '8px';
+    el.style.fontSize = '12px';
+    el.style.zIndex = '9998';
+    el.style.maxWidth = '90vw';
+    el.style.textAlign = 'center';
+    el.style.display = 'none';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function updateFallbackBanner(data) {
+  // EU data missing: show infobox when the expected EU timestep is absent from disk (ingest gap).
+  // Areas outside ICON-D2 domain will have no data for this timestep.
+  const el = ensureEuMissingBanner();
+  const infoEl = document.getElementById('fallback-info');
+  const infoSep = document.getElementById('fallback-info-sep');
+  const missing = data?.diagnostics?.euDataMissing;
+
+  if (!missing) {
+    el.style.display = 'none';
+    if (infoEl) infoEl.style.display = 'none';
+    if (infoSep) infoSep.style.display = 'none';
+    return;
+  }
+
+  el.textContent = '⚠ EU weather data missing for this timestep — areas outside ICON-D2 domain may be incomplete';
+  el.style.display = 'block';
+
+  if (infoEl) {
+    infoEl.textContent = 'EU data missing';
+    infoEl.style.display = 'inline';
+  }
+  if (infoSep) infoSep.style.display = 'inline';
+}
+
 window.addEventListener('unhandledrejection', (event) => {
   console.error('Unhandled promise rejection:', event.reason);
   showGlobalError('Network/API error. Please retry or reload.');
@@ -55,6 +126,7 @@ const I18N = {
     'info.zoom': 'Zoom:',
     'layer.convection': 'Convection',
     'layer.wind': 'Wind',
+    'layer.wind.gust10m': '10m Gusts',
     'layer.overlay.title': 'Overlay (ICON)',
     'layer.none': 'None',
     'layer.precip': 'Precipitation',
@@ -67,16 +139,22 @@ const I18N = {
     'layer.clouds.mid': 'Mid',
     'layer.clouds.high': 'High',
     'layer.clouds.total': 'Total',
+    'layer.temperature': 'Temperature',
+    'layer.temp.t2m': '2m',
     'layer.diagnostic': 'Diagnostic',
     'layer.cloudbase': 'Cloud base (convective)',
     'layer.dryconv': 'Dry Convection Top',
+    'layer.mh': 'Boundary layer depth',
+    'layer.ashfl': 'Surface heat flux',
+    'layer.relhum': 'Relative humidity 2m',
+    'layer.dewspread': 'Dew point spread 2m',
     'layer.sigwx': 'Significant weather',
     'layer.ceiling': 'Ceiling',
     'layer.convthickness': 'Cloud thickness (convective)',
     'layer.lpi': 'LPI',
     'layer.experimental': 'Experimental',
-    'layer.climbrate': 'Climb Rate',
-    'layer.lcl': 'Cloud Base (LCL)',
+    'layer.climbrate': 'Climb Rate (lapse_rate)',
+    'layer.lcl': 'Cloud Base (spread * 125)',
     'layer.marker': 'Marker',
     helpTitle: 'How to read Skyview',
     helpHtml: `
@@ -154,6 +232,7 @@ const I18N = {
     'info.zoom': 'Zoom:',
     'layer.convection': 'Konvektion',
     'layer.wind': 'Wind',
+    'layer.wind.gust10m': '10m Böen',
     'layer.overlay.title': 'Overlay (ICON)',
     'layer.none': 'Keines',
     'layer.precip': 'Niederschlag',
@@ -166,16 +245,22 @@ const I18N = {
     'layer.clouds.mid': 'Mittel',
     'layer.clouds.high': 'Hoch',
     'layer.clouds.total': 'Gesamt',
+    'layer.temperature': 'Temperatur',
+    'layer.temp.t2m': '2m',
     'layer.diagnostic': 'Diagnostik',
     'layer.cloudbase': 'Wolkenbasis (konvektiv)',
     'layer.dryconv': 'Konvektionshöhe trocken',
+    'layer.mh': 'Durchmischungshöhe',
+    'layer.ashfl': 'Bodenwärmestrom',
+    'layer.relhum': 'Relative Feuchte 2m',
+    'layer.dewspread': 'Taupunktdifferenz 2m',
     'layer.sigwx': 'Signifikantes Wetter',
     'layer.ceiling': 'Haupt-Wolkenuntergrenze',
     'layer.convthickness': 'Wolkenmächtigkeit (konvektiv)',
     'layer.lpi': 'LPI',
     'layer.experimental': 'Experimentell',
-    'layer.climbrate': 'Steigwerte',
-    'layer.lcl': 'Wolkenbasis (LCL)',
+    'layer.climbrate': 'Steigwerte (lapse_rate)',
+    'layer.lcl': 'Wolkenbasis (Spread * 125)',
     'layer.marker': 'Markierung',
     helpTitle: 'Skyview Erklärung',
     helpHtml: `
@@ -371,10 +456,20 @@ const LEGEND_CONFIGS = {
   clouds_high: { title: 'Cloud Cover: High', gradient: 'linear-gradient(to right, rgb(225,225,225), rgb(45,45,45))', labels: ['1%', '100%'] },
   clouds_total: { title: 'Cloud Cover: Total', gradient: 'linear-gradient(to right, rgb(225,225,225), rgb(45,45,45))', labels: ['1%', '100%'] },
   clouds_total_mod: { title: 'Cloud Cover: Total_mod', gradient: 'linear-gradient(to right, rgb(225,225,225), rgb(45,45,45))', labels: ['1%', '100%'] },
+  t_2m: { title: 'Temperature 2m', gradient: 'linear-gradient(to right, rgb(40,90,230), rgb(120,180,200), rgb(220,210,90), rgb(255,80,20))', labels: ['-30 °C', '+40 °C'] },
+  t_950hpa: { title: 'Temperature 950 hPa', gradient: 'linear-gradient(to right, rgb(40,90,230), rgb(120,180,200), rgb(220,210,90), rgb(255,80,20))', labels: ['-30 °C', '+40 °C'] },
+  t_850hpa: { title: 'Temperature 850 hPa', gradient: 'linear-gradient(to right, rgb(40,90,230), rgb(120,180,200), rgb(220,210,90), rgb(255,80,20))', labels: ['-30 °C', '+40 °C'] },
+  t_700hpa: { title: 'Temperature 700 hPa', gradient: 'linear-gradient(to right, rgb(40,90,230), rgb(120,180,200), rgb(220,210,90), rgb(255,80,20))', labels: ['-30 °C', '+40 °C'] },
+  t_500hpa: { title: 'Temperature 500 hPa', gradient: 'linear-gradient(to right, rgb(40,90,230), rgb(120,180,200), rgb(220,210,90), rgb(255,80,20))', labels: ['-30 °C', '+40 °C'] },
+  t_300hpa: { title: 'Temperature 300 hPa', gradient: 'linear-gradient(to right, rgb(40,90,230), rgb(120,180,200), rgb(220,210,90), rgb(255,80,20))', labels: ['-30 °C', '+40 °C'] },
   dry_conv_top: { title: 'Dry Convection Top', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '9900m'] },
   sigwx: { title: 'Significant weather', gradient: 'linear-gradient(to right, rgba(0,0,0,0), rgb(205,205,205), rgb(145,145,145), rgb(85,85,85), rgb(160,170,40), rgb(70,180,80), rgb(70,180,210), rgb(145,110,230), rgb(220,40,80))', labels: ['ww0 clear', 'ww severe'] },
   ceiling: { title: 'Ceiling', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '9900m'] },
   cloud_base: { title: 'Cloud base (convective)', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '5000m'] },
+  mh: { title: 'Boundary layer depth', gradient: 'linear-gradient(to right, rgb(220,90,40), rgb(160,170,60), rgb(80,240,100))', labels: ['0m', '3000m+'] },
+  ashfl_s: { title: 'Surface heat flux', gradient: 'linear-gradient(to right, rgb(70,170,240), rgb(170,120,120), rgb(255,60,20))', labels: ['20 W/m²', '400+ W/m²'] },
+  relhum_2m: { title: 'Relative humidity 2m', gradient: 'linear-gradient(to right, rgb(230,230,230), rgb(120,150,190), rgb(60,110,190))', labels: ['0%', '100%'] },
+  dew_spread_2m: { title: 'Dew point spread 2m', gradient: 'linear-gradient(to right, rgb(70,200,220), rgb(170,140,110), rgb(255,70,40))', labels: ['0 K', '25+ K'] },
   conv_thickness: { title: 'Cloud thickness (convective)', gradient: 'linear-gradient(to right, rgb(40,220,60), rgb(200,200,40), rgb(240,80,40))', labels: ['0m', '6000m'] },
   lpi: { title: 'LPI', gradient: 'linear-gradient(to right, rgb(70,190,80), rgb(160,150,60), rgb(255,70,40))', labels: ['0', '20+'] },
   thermals: { title: 'CAPE_ml', gradient: 'linear-gradient(to right, rgb(50,180,50), rgb(150,150,50), rgb(220,100,30), rgb(255,50,50))', labels: ['50 J/kg', '1000+ J/kg'] },
@@ -545,6 +640,7 @@ async function loadSymbols() {
       if (!res.ok) await throwHttpError(res, 'API');
       const data = await res.json();
       markApiSuccess();
+      updateFallbackBanner(data);
       symbolLayer.clearLayers();
       data.symbols.forEach(sym => {
         if (!sym.clickable) return;
@@ -584,6 +680,7 @@ async function loadSymbols() {
     } catch (e) {
       console.error('Error loading symbols:', e);
       markApiFailure('symbols', e);
+      updateFallbackBanner(null);
       // Optionally show error in UI
       symbolLayer.clearLayers();
     }
@@ -594,17 +691,30 @@ async function loadSymbols() {
 const OVERLAY_META = {
   total_precip: { label: 'Total precip', unit: 'mm/h', decimals: 2 },
   rain: { label: 'Rain', unit: 'mm/h', decimals: 2 },
+  rain_amount: { label: 'Rain', unit: 'mm/h', decimals: 2 },
   snow: { label: 'Snow', unit: 'mm/h', decimals: 2 },
+  snow_amount: { label: 'Snow', unit: 'mm/h', decimals: 2 },
   hail: { label: 'Hail/Graupel', unit: 'mm/h', decimals: 2 },
+  hail_amount: { label: 'Hail/Graupel', unit: 'mm/h', decimals: 2 },
   sigwx: { label: 'Sig. Weather ww', unit: '', integer: true },
   clouds_low: { label: 'Cloud cover low', unit: '%', decimals: 1 },
   clouds_mid: { label: 'Cloud cover mid', unit: '%', decimals: 1 },
   clouds_high: { label: 'Cloud cover high', unit: '%', decimals: 1 },
   clouds_total: { label: 'Cloud cover total', unit: '%', decimals: 1 },
   clouds_total_mod: { label: 'Cloud cover total mod', unit: '%', decimals: 1 },
+  t_2m: { label: 'Temperature 2m', unit: '°C', decimals: 1 },
+  t_950hpa: { label: 'Temperature 950 hPa', unit: '°C', decimals: 1 },
+  t_850hpa: { label: 'Temperature 850 hPa', unit: '°C', decimals: 1 },
+  t_700hpa: { label: 'Temperature 700 hPa', unit: '°C', decimals: 1 },
+  t_500hpa: { label: 'Temperature 500 hPa', unit: '°C', decimals: 1 },
+  t_300hpa: { label: 'Temperature 300 hPa', unit: '°C', decimals: 1 },
   ceiling: { label: 'Ceiling', unit: 'm', integer: true },
   cloud_base: { label: 'Cloud base', unit: 'm', integer: true },
   dry_conv_top: { label: 'Dry convection top', unit: 'm', integer: true },
+  mh: { label: 'Boundary layer depth', unit: 'm', decimals: 1 },
+  ashfl_s: { label: 'Surface heat flux', unit: 'W/m²', decimals: 1 },
+  relhum_2m: { label: 'Relative humidity 2m', unit: '%', decimals: 1 },
+  dew_spread_2m: { label: 'Dew point spread 2m', unit: 'K', decimals: 1 },
   conv_thickness: { label: 'Convective thickness', unit: 'm', integer: true },
   lpi: { label: 'LPI', unit: '', decimals: 1 },
   thermals: { label: 'CAPE_ml', unit: 'J/kg', decimals: 1 },
@@ -660,8 +770,24 @@ async function loadPoint(lat, lon, time, model, windLvl = '10m', zoom = null) {
     // Show active overlay value if an overlay is selected
     const overlayKey = getEffectiveOverlayLayer();
     if (overlayKey !== 'none' && data.overlay_values) {
-      const formatted = formatOverlayValue(overlayKey, data.overlay_values[overlayKey]);
-      if (formatted) lines.push(formatted);
+      const aliasKey = ({ rain_amount: 'rain', snow_amount: 'snow', hail_amount: 'hail' })[overlayKey] || overlayKey;
+      let ovVal = data.overlay_values[overlayKey];
+      if (ovVal == null) ovVal = data.overlay_values[aliasKey];
+
+      // Climb-rate robustness: if direct value missing, derive from thermal class.
+      if (overlayKey === 'climb_rate' && (ovVal == null) && data.overlay_values.thermal_class != null) {
+        const tc = Number(data.overlay_values.thermal_class);
+        if (Number.isFinite(tc)) {
+          ovVal = ({0: 0.0, 1: 1.0, 2: 2.0, 3: 3.2})[Math.max(0, Math.min(3, Math.round(tc)))];
+        }
+      }
+      const formatted = formatOverlayValue(overlayKey, ovVal);
+      if (formatted) {
+        lines.push(formatted);
+      } else {
+        const meta = OVERLAY_META[overlayKey] || OVERLAY_META[aliasKey];
+        if (meta) lines.push(`${meta.label}: n/a`);
+      }
     }
 
     // Wind info in tooltip (only when wind layer is enabled)
@@ -879,6 +1005,9 @@ function getEffectiveOverlayLayer() {
   }
   if (currentOverlay === 'clouds') {
     return document.getElementById('clouds-type')?.value || 'clouds_total';
+  }
+  if (currentOverlay === 'temperature') {
+    return document.getElementById('temp-type')?.value || 't_2m';
   }
   return currentOverlay;
 }
@@ -1194,6 +1323,16 @@ const cloudsType = document.getElementById('clouds-type');
 if (cloudsType) {
   cloudsType.addEventListener('change', () => {
     if (currentOverlay === 'clouds') {
+      updateLegend();
+      loadOverlay();
+    }
+  });
+}
+
+const tempType = document.getElementById('temp-type');
+if (tempType) {
+  tempType.addEventListener('change', () => {
+    if (currentOverlay === 'temperature') {
       updateLegend();
       loadOverlay();
     }
@@ -1588,6 +1727,7 @@ setInterval(async () => {
 
       buildTimeline();
       loadSymbols();
+      loadOverlay();
       loadWind();
       loadD2Border();
 
@@ -1604,6 +1744,7 @@ setInterval(async () => {
         currentTimeIndex = timesteps.length - 1;
       }
       buildTimeline();
+      loadOverlay();
       loadD2Border();
     }
   } catch (e) {

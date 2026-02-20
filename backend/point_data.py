@@ -3,44 +3,149 @@
 from __future__ import annotations
 
 import math
+import logging
 import numpy as np
 
-from soaring import calc_wstar, calc_lcl, calc_thermal_height, calc_reachable_distance
+from soaring import (
+    calc_lcl,
+    classify_thermal_strength,
+    calc_climb_rate_from_thermal_class,
+)
+from constants import CELL_SIZES_BY_ZOOM, ICON_EU_STEP_3H_START
+
+logger = logging.getLogger(__name__)
+
+# All NPZ keys consumed by a full point query.
+# Pass this to load_data(keys=POINT_KEYS) to avoid loading unused variables.
+POINT_KEYS = [
+    # Core weather / cloud
+    "ww", "ceiling", "clcl", "clcm", "clch", "clct", "clct_mod",
+    "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi", "hsurf",
+    # Precipitation (pre-computed rate fields, already mm/h equivalent)
+    "tp_rate", "rain_rate", "snow_rate", "hail_rate",
+    # Boundary layer / atmosphere
+    "mh", "ashfl_s", "relhum_2m",
+    "t_2m", "td_2m",
+    "t_950hpa", "t_850hpa", "t_700hpa", "t_500hpa", "t_300hpa",
+    # Wind
+    "u_10m", "v_10m", "vmax_10m",
+    "u_850hpa", "v_850hpa",
+    "u_700hpa", "v_700hpa",
+    "u_500hpa", "v_500hpa",
+    "u_300hpa", "v_300hpa",
+]
+
+# Temperature: values above this threshold are treated as Kelvin → convert to Celsius
+_KELVIN_THRESHOLD = 200.0
+_KELVIN_OFFSET = 273.15
+
+_MOISTURE_LABELS = ("sehr_feucht", "feucht", "moderat", "trocken")
 
 
-CELL_SIZES = {5: 2.0, 6: 1.0, 7: 0.5, 8: 0.25, 9: 0.12, 10: 0.06, 11: 0.03, 12: 0.02}
+# ─── Scalar helpers ────────────────────────────────────────────────────────────
 
+def _safe_get(d: dict, key: str, i: int, j: int) -> float | None:
+    """Extract a single finite scalar from a 2-D field.
 
-def build_overlay_values_from_raw(values: dict, wind_level: str = "10m") -> dict:
-    """Build semantic overlay_values from raw single-point variable values.
-
-    Used by Explorer /api/point; kept here to avoid drift with Skyview semantics.
+    Returns None if the key is absent, the value is NaN/Inf, or indexing fails.
+    This replaces the old pattern:
+        float(np.nanmean(d[key][np.ix_([i], [j])]))
+    which was O(np overhead) on a trivial 1×1 slice.
     """
-    ov = {}
+    if key not in d:
+        return None
+    try:
+        v = float(d[key][i, j])
+        return v if np.isfinite(v) else None
+    except Exception:
+        return None
 
-    prr = values.get("prr_gsp")
-    prs = values.get("prs_gsp")
-    prg = values.get("prg_gsp")
-    if prr is not None and prs is not None and prg is not None:
-        ov["total_precip"] = round((prr + prs + prg) * 3600.0, 2)
-        ov["rain"] = round(prr * 3600.0, 2)
-        ov["snow"] = round(prs * 3600.0, 2)
-        ov["hail"] = round(prg * 3600.0, 2)
 
-    if values.get("clcl") is not None:
-        ov["clouds_low"] = round(values["clcl"], 1)
-    if values.get("clcm") is not None:
-        ov["clouds_mid"] = round(values["clcm"], 1)
-    if values.get("clch") is not None:
-        ov["clouds_high"] = round(values["clch"], 1)
-    if values.get("clct") is not None:
-        ov["clouds_total"] = round(values["clct"], 1)
+def _cell_agg(d: dict, key: str, ix, stat: str = "mean") -> float | None:
+    """Aggregate over a cell defined by a pre-computed np.ix_ index pair.
+
+    Used only where cell-averaging is semantically meaningful (wind).
+    """
+    if key not in d:
+        return None
+    try:
+        cell = d[key][ix]
+        fn = np.nanmax if stat == "max" else (np.nanmin if stat == "min" else np.nanmean)
+        v = float(fn(cell))
+        return v if np.isfinite(v) else None
+    except Exception:
+        return None
+
+
+def _to_celsius(v: float) -> float:
+    """Convert Kelvin → Celsius if value looks like Kelvin, else pass through."""
+    return v - _KELVIN_OFFSET if v > _KELVIN_THRESHOLD else v
+
+
+def _precip_step_hours(model_used: str | None, step: int | None) -> float:
+    if model_used == "icon_eu" and step is not None and int(step) >= ICON_EU_STEP_3H_START:
+        return 3.0
+    return 1.0
+
+
+# ─── Explorer path (scalar dict → overlay values) ──────────────────────────────
+
+def build_overlay_values_from_raw(
+    values: dict,
+    wind_level: str = "10m",
+    model_used: str | None = None,
+    step: int | None = None,
+) -> dict:
+    """Build semantic overlay_values from a raw single-point variable dict (scalars).
+
+    Used by Explorer /api/point; kept here to avoid semantic drift with Skyview.
+    """
+    ov: dict = {}
+    step_h = _precip_step_hours(model_used, step)
+
+    # Precipitation
+    tp = values.get("tot_prec")
+    rg = values.get("rain_gsp")
+    rc = values.get("rain_con")
+    sg = values.get("snow_gsp")
+    sc = values.get("snow_con")
+    gg = values.get("grau_gsp")
+    if tp is not None:
+        ov["total_precip"] = round(float(tp) / step_h, 2)
+    if rg is not None or rc is not None:
+        ov["rain"] = round((float(rg or 0.0) + float(rc or 0.0)) / step_h, 2)
+    if sg is not None or sc is not None:
+        ov["snow"] = round((float(sg or 0.0) + float(sc or 0.0)) / step_h, 2)
+    if gg is not None:
+        ov["hail"] = round(float(gg) / step_h, 2)
+
+    # Cloud cover
+    for out_key, src_key in [
+        ("clouds_low", "clcl"), ("clouds_mid", "clcm"),
+        ("clouds_high", "clch"), ("clouds_total", "clct"),
+    ]:
+        if values.get(src_key) is not None:
+            ov[out_key] = round(values[src_key], 1)
     if values.get("clct_mod") is not None:
         v = values["clct_mod"]
         if v <= 1.5:
             v *= 100.0
         ov["clouds_total_mod"] = round(v, 1)
 
+    # Scalars
+    for k in ("mh", "ashfl_s", "relhum_2m"):
+        if values.get(k) is not None:
+            ov[k] = round(float(values[k]), 1)
+    if values.get("t_2m") is not None and values.get("td_2m") is not None:
+        ov["dew_spread_2m"] = round(float(values["t_2m"]) - float(values["td_2m"]), 1)
+
+    # Temperature levels
+    for tk in ("t_2m", "t_950hpa", "t_850hpa", "t_700hpa", "t_500hpa", "t_300hpa"):
+        tv = values.get(tk)
+        if tv is not None:
+            ov[tk] = round(_to_celsius(float(tv)), 1)
+
+    # Weather
     if values.get("ww") is not None:
         ov["sigwx"] = int(values["ww"])
     if values.get("cape_ml") is not None:
@@ -53,24 +158,28 @@ def build_overlay_values_from_raw(values: dict, wind_level: str = "10m") -> dict
         ov["dry_conv_top"] = round(values["htop_dc"], 0)
     if values.get("lpi") is not None:
         ov["lpi"] = round(values["lpi"], 1)
-
     if values.get("htop_sc") is not None and values.get("hbas_sc") is not None:
         thick = max(0.0, values["htop_sc"] - values["hbas_sc"])
         ov["conv_thickness"] = round(thick, 0)
 
-    if wind_level == "10m":
-        uk, vk = "u_10m", "v_10m"
-    else:
-        uk, vk = f"u_{wind_level}hpa", f"v_{wind_level}hpa"
+    # Wind
+    gust_mode = (wind_level == "gust10m")
+    uk = "u_10m" if (wind_level == "10m" or gust_mode) else f"u_{wind_level}hpa"
+    vk = "v_10m" if (wind_level == "10m" or gust_mode) else f"v_{wind_level}hpa"
     if values.get(uk) is not None and values.get(vk) is not None:
         u = float(values[uk])
         v = float(values[vk])
-        sp = (u * u + v * v) ** 0.5
+        if gust_mode and values.get("vmax_10m") is not None:
+            sp = float(values["vmax_10m"])
+        else:
+            sp = math.sqrt(u * u + v * v)
         ov["wind_speed"] = round(sp * 1.94384, 1)
         ov["wind_dir"] = round((math.degrees(math.atan2(-u, -v)) + 360) % 360, 0)
 
     return ov
 
+
+# ─── Skyview path (NPZ arrays → overlay values) ───────────────────────────────
 
 def build_overlay_values(
     d: dict,
@@ -84,110 +193,181 @@ def build_overlay_values(
     lon: float,
     lat_arr: np.ndarray,
     lon_arr: np.ndarray,
+    model_used: str,
+    step: int,
 ) -> dict:
-    overlay_values = {
-        "total_precip": None, "rain": None, "snow": None, "hail": None,
-        "clouds": None, "thermals": None, "ceiling": None, "cloud_base": None,
-        "sigwx": ww_max,
-    }
+    """Build overlay_values for /api/point from NPZ data arrays.
 
-    try:
-        prr = float(np.nanmean(d["prr_gsp"][np.ix_(li, lo)])) if "prr_gsp" in d else 0.0
-        prs = float(np.nanmean(d["prs_gsp"][np.ix_(li, lo)])) if "prs_gsp" in d else 0.0
-        prg = float(np.nanmean(d["prg_gsp"][np.ix_(li, lo)])) if "prg_gsp" in d else 0.0
-        overlay_values["total_precip"] = round((prr + prs + prg) * 3600, 2)
-        overlay_values["rain"] = round(prr * 3600, 2)
-        overlay_values["snow"] = round(prs * 3600, 2)
-        overlay_values["hail"] = round(prg * 3600, 2)
-    except Exception:
-        pass
+    li / lo are always single-element arrays (nearest-neighbour point query).
+    All non-wind lookups use direct scalar indexing d[var][i0, j0] instead
+    of np.ix_ + nanmean on a 1×1 sub-array.
+    """
+    i0, j0 = int(li[0]), int(lo[0])
 
-    if "clcl" in d:
-        overlay_values["clouds_low"] = round(float(np.nanmean(d["clcl"][np.ix_(li, lo)])), 1)
-    if "clcm" in d:
-        overlay_values["clouds_mid"] = round(float(np.nanmean(d["clcm"][np.ix_(li, lo)])), 1)
-    if "clch" in d:
-        overlay_values["clouds_high"] = round(float(np.nanmean(d["clch"][np.ix_(li, lo)])), 1)
-    if "clct" in d:
-        overlay_values["clouds_total"] = round(float(np.nanmean(d["clct"][np.ix_(li, lo)])), 1)
-    if "clct_mod" in d:
-        clct_mod_val = float(np.nanmean(d["clct_mod"][np.ix_(li, lo)]))
-        if np.isfinite(clct_mod_val) and clct_mod_val <= 1.5:
-            clct_mod_val *= 100.0
-        overlay_values["clouds_total_mod"] = round(clct_mod_val, 1) if np.isfinite(clct_mod_val) else None
-    if "cape_ml" in d:
-        overlay_values["thermals"] = round(float(np.nanmax(d["cape_ml"][np.ix_(li, lo)])), 1)
+    ov: dict = {"sigwx": ww_max}
 
-    ceil_vals = ceil_cell[(ceil_cell > 0) & (ceil_cell < 20000)] if ceil_cell.size else np.array([])
-    overlay_values["ceiling"] = round(float(np.min(ceil_vals)), 0) if len(ceil_vals) > 0 else None
-    if "hbas_sc" in d:
-        hbas_vals = d["hbas_sc"][np.ix_(li, lo)]
-        hbas_valid = hbas_vals[hbas_vals > 0]
-        overlay_values["cloud_base"] = round(float(np.min(hbas_valid)), 0) if len(hbas_valid) > 0 else None
-    if "htop_dc" in d:
-        htop_dc_vals = d["htop_dc"][np.ix_(li, lo)]
-        htop_dc_valid = htop_dc_vals[htop_dc_vals > 0]
-        overlay_values["dry_conv_top"] = round(float(np.max(htop_dc_valid)), 0) if len(htop_dc_valid) > 0 else None
-    if "htop_sc" in d and "hbas_sc" in d:
-        thick = np.maximum(0, d["htop_sc"][np.ix_(li, lo)] - d["hbas_sc"][np.ix_(li, lo)])
-        thick_valid = thick[thick > 0]
-        overlay_values["conv_thickness"] = round(float(np.max(thick_valid)), 0) if len(thick_valid) > 0 else None
-    if "lpi" in d:
-        lpi_vals = d["lpi"][np.ix_(li, lo)]
-        lpi_valid = lpi_vals[np.isfinite(lpi_vals)]
-        overlay_values["lpi"] = round(float(np.nanmax(lpi_valid)), 1) if len(lpi_valid) > 0 else None
+    # ── Precipitation (pre-computed rate fields) ──────────────────────────────
+    # These are already in mm/h; no step-hour division needed here.
+    for out_key, src_key in [
+        ("total_precip", "tp_rate"),
+        ("rain",         "rain_rate"),
+        ("snow",         "snow_rate"),
+        ("hail",         "hail_rate"),
+    ]:
+        v = _safe_get(d, src_key, i0, j0)
+        if v is not None:
+            ov[out_key] = round(max(v, 0.0), 2)
+        else:
+            ov[out_key] = None
 
-    if "ashfl_s" in d and "mh" in d and "t_2m" in d:
-        ashfl_cell = d["ashfl_s"][np.ix_(li, lo)]
-        mh_cell = d["mh"][np.ix_(li, lo)]
-        t2m_cell = d["t_2m"][np.ix_(li, lo)]
-        wstar = calc_wstar(ashfl_cell, None, mh_cell, t2m_cell)
-        overlay_values["wstar"] = round(float(np.nanmean(wstar)), 1)
-        overlay_values["climb_rate"] = round(max(float(np.nanmean(wstar)) - 0.7, 0.0), 1)
-        overlay_values["bl_height"] = round(float(np.nanmean(mh_cell)), 0)
-        if "td_2m" in d and "hsurf" in d:
-            td2m_cell = d["td_2m"][np.ix_(li, lo)]
-            hsurf_cell = d["hsurf"][np.ix_(li, lo)]
-            lcl = calc_lcl(t2m_cell, td2m_cell, hsurf_cell)
-            thermal_agl = calc_thermal_height(mh_cell, lcl, hsurf_cell)
-            reachable = calc_reachable_distance(thermal_agl)
-            overlay_values["lcl"] = round(float(np.nanmean(lcl)), 0)
-            overlay_values["reachable"] = round(float(np.nanmean(reachable)), 1)
+    # ── Cloud cover ───────────────────────────────────────────────────────────
+    for out_key, src_key in [
+        ("clouds_low",  "clcl"),
+        ("clouds_mid",  "clcm"),
+        ("clouds_high", "clch"),
+        ("clouds_total","clct"),
+    ]:
+        v = _safe_get(d, src_key, i0, j0)
+        if v is not None:
+            ov[out_key] = round(v, 1)
 
-    # Wind
-    if wind_level == "10m":
-        u_key, v_key = "u_10m", "v_10m"
-    else:
-        u_key, v_key = f"u_{wind_level}hpa", f"v_{wind_level}hpa"
+    clct_mod = _safe_get(d, "clct_mod", i0, j0)
+    if clct_mod is not None:
+        if clct_mod <= 1.5:
+            clct_mod *= 100.0
+        ov["clouds_total_mod"] = round(clct_mod, 1)
+
+    # ── Thermodynamics ────────────────────────────────────────────────────────
+    cape = _safe_get(d, "cape_ml", i0, j0)
+    if cape is not None:
+        ov["thermals"] = round(cape, 1)
+
+    for key in ("mh", "ashfl_s", "relhum_2m"):
+        v = _safe_get(d, key, i0, j0)
+        if v is not None:
+            ov[key] = round(v, 1)
+
+    # Extract shared temperature/humidity scalars once for reuse below
+    t2m  = _safe_get(d, "t_2m",  i0, j0)
+    td2m = _safe_get(d, "td_2m", i0, j0)
+    hsurf = _safe_get(d, "hsurf", i0, j0)
+    mh    = _safe_get(d, "mh",    i0, j0)
+    ashfl = _safe_get(d, "ashfl_s", i0, j0)
+
+    if t2m is not None and td2m is not None:
+        ov["dew_spread_2m"] = round(t2m - td2m, 1)
+
+    # Temperature levels → Celsius
+    for tk in ("t_2m", "t_950hpa", "t_850hpa", "t_700hpa", "t_500hpa", "t_300hpa"):
+        v = _safe_get(d, tk, i0, j0)
+        if v is not None:
+            ov[tk] = round(_to_celsius(v), 1)
+
+    # ── Cloud heights ─────────────────────────────────────────────────────────
+    ceil_vals = ceil_cell[(ceil_cell > 0) & (ceil_cell < 20_000)] if ceil_cell.size else np.array([])
+    ov["ceiling"] = round(float(np.min(ceil_vals)), 0) if len(ceil_vals) > 0 else None
+
+    hbas = _safe_get(d, "hbas_sc", i0, j0)
+    ov["cloud_base"] = round(hbas, 0) if (hbas is not None and hbas > 0) else None
+
+    htop_dc = _safe_get(d, "htop_dc", i0, j0)
+    ov["dry_conv_top"] = round(htop_dc, 0) if (htop_dc is not None and htop_dc > 0) else None
+
+    htop_sc = _safe_get(d, "htop_sc", i0, j0)
+    if htop_sc is not None and hbas is not None:
+        thick = max(0.0, htop_sc - hbas)
+        ov["conv_thickness"] = round(thick, 0) if thick > 0 else None
+
+    lpi = _safe_get(d, "lpi", i0, j0)
+    if lpi is not None:
+        ov["lpi"] = round(lpi, 1)
+
+    # ── Soaring / thermal parameters ──────────────────────────────────────────
+    # Requires: ashfl, mh, t2m, td2m, hsurf + at least one upper-level temperature
+    if ashfl is not None and mh is not None and t2m is not None:
+        ov["bl_height"] = round(mh, 0)
+
+        if td2m is not None and hsurf is not None:
+            # LCL (Lifting Condensation Level) — cloud base estimate
+            # calc_lcl accepts numpy arrays; scalars work via numpy ufuncs
+            lcl = calc_lcl(
+                np.float64(t2m),
+                np.float64(td2m),
+                np.float64(hsurf),
+            )
+            ov["lcl"] = round(float(lcl), 0)
+
+            # Thermal class — pick lapse-rate reference level by terrain elevation
+            t_850 = _safe_get(d, "t_850hpa", i0, j0)
+            t_700 = _safe_get(d, "t_700hpa", i0, j0)
+            t_500 = _safe_get(d, "t_500hpa", i0, j0)
+            t_300 = _safe_get(d, "t_300hpa", i0, j0)
+
+            tupper: float | None = t_850
+            z_upper_m = 1500.0
+            if hsurf > 1000.0 and t_700 is not None:  #intentionally lower threshold than 1500m to avoid using 700 hPa level in cases where 850 hPa is just slightly above ground (e.g. high terrain or warm low pressure)
+                tupper, z_upper_m = t_700, 3000.0
+            if hsurf > 2500.0 and t_500 is not None: #intentionally lower threshold than 3000m to avoid using 500 hPa level in cases where 700 hPa is just slightly above ground
+                tupper, z_upper_m = t_500, 5500.0
+            if hsurf > 4000.0 and t_300 is not None: #intentionally lower threshold than 5500m to avoid using 300 hPa level in cases where 500 hPa is just slightly above ground
+                tupper, z_upper_m = t_300, 9000.0
+
+            if tupper is not None:
+                delta_alt_km = max((z_upper_m - hsurf) / 1000.0, 0.1)
+                t2m_c  = _to_celsius(t2m)
+                td2m_c = _to_celsius(td2m)
+                tu_c   = _to_celsius(tupper)
+
+                thermal_class, lapse_factor, moisture_code = classify_thermal_strength(
+                    np.float64(t2m_c),
+                    np.float64(td2m_c),
+                    np.float64(tu_c),
+                    np.float64(delta_alt_km),
+                )
+                climb = calc_climb_rate_from_thermal_class(thermal_class)
+
+                ov["climb_rate"]    = round(float(climb), 1)
+                ov["thermal_class"] = int(round(float(thermal_class)))
+                ov["lapse_factor"]  = round(float(lapse_factor), 2)
+                mc = int(round(float(moisture_code)))
+                ov["moisture_class"] = _MOISTURE_LABELS[max(0, min(3, mc))]
+
+    # ── Wind (cell-averaged to match map barb display) ────────────────────────
+    gust_mode = (wind_level == "gust10m")
+    u_key = "u_10m" if (wind_level == "10m" or gust_mode) else f"u_{wind_level}hpa"
+    v_key = "v_10m" if (wind_level == "10m" or gust_mode) else f"v_{wind_level}hpa"
 
     if u_key in d and v_key in d:
+        # Determine aggregation cell: match the symbol/barb grid shown on the map
         if zoom is not None:
-            cell_size = CELL_SIZES.get(int(zoom), 0.25)
+            cell_size = CELL_SIZES_BY_ZOOM.get(int(zoom), 0.25)
             anchor_lat = float(lat_arr.min())
             anchor_lon = float(lon_arr.min())
             lat_lo = anchor_lat + math.floor((lat - anchor_lat) / cell_size) * cell_size
             lon_lo = anchor_lon + math.floor((lon - anchor_lon) / cell_size) * cell_size
-            lat_hi = lat_lo + cell_size
-            lon_hi = lon_lo + cell_size
-
-            wli = np.where((lat_arr >= lat_lo) & (lat_arr < lat_hi))[0]
-            wlo = np.where((lon_arr >= lon_lo) & (lon_arr < lon_hi))[0]
+            wli = np.where((lat_arr >= lat_lo) & (lat_arr < lat_lo + cell_size))[0]
+            wlo = np.where((lon_arr >= lon_lo) & (lon_arr < lon_lo + cell_size))[0]
             if len(wli) == 0 or len(wlo) == 0:
                 wli, wlo = li, lo
         else:
             wli, wlo = li, lo
 
-        u_cell = d[u_key][np.ix_(wli, wlo)]
-        v_cell = d[v_key][np.ix_(wli, wlo)]
-        u_mean = float(np.nanmean(u_cell))
-        v_mean = float(np.nanmean(v_cell))
-        if np.isfinite(u_mean) and np.isfinite(v_mean):
-            overlay_values["wind_speed"] = round(math.sqrt(u_mean**2 + v_mean**2) * 1.94384, 1)
-            overlay_values["wind_dir"] = round((math.degrees(math.atan2(-u_mean, -v_mean)) + 360) % 360, 0)
+        wix = np.ix_(wli, wlo)
+        u_mean = _cell_agg(d, u_key, wix, "mean")
+        v_mean = _cell_agg(d, v_key, wix, "mean")
 
-    # Guard JSON serialization: convert NaN/Inf values to None.
-    for k, v in list(overlay_values.items()):
-        if isinstance(v, float) and not np.isfinite(v):
-            overlay_values[k] = None
+        if u_mean is not None and v_mean is not None:
+            if gust_mode:
+                gust = _cell_agg(d, "vmax_10m", wix, "max")
+                speed_ms = gust if gust is not None else math.sqrt(u_mean**2 + v_mean**2)
+            else:
+                speed_ms = math.sqrt(u_mean**2 + v_mean**2)
+            ov["wind_speed"] = round(speed_ms * 1.94384, 1)
+            ov["wind_dir"]   = round((math.degrees(math.atan2(-u_mean, -v_mean)) + 360) % 360, 0)
 
-    return overlay_values
+    # ── NaN/Inf guard (final pass) ────────────────────────────────────────────
+    for k, v in list(ov.items()):
+        if isinstance(v, float) and not math.isfinite(v):
+            ov[k] = None
+
+    return ov

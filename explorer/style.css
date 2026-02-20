@@ -158,6 +158,18 @@ body {
     line-height: 1.4;
 }
 
+.status-text {
+    min-height: 1.2em;
+}
+
+.status-text.loading {
+    color: #7ed957;
+}
+
+.status-text.error {
+    color: #ff8a80;
+}
+
 /* Range Inputs */
 .range-inputs {
     display: flex;

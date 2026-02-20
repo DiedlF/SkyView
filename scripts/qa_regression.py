@@ -197,6 +197,53 @@ def check_blue_thermal_precedence_over_cb():
         fail(f"Precedence regression: expected blue_thermal over cb, got={got}")
 
 
+def check_symbol_zoom_continuity(base: str, t: str):
+    """Regression guard: non-clear parent symbols should persist into at least one non-clear child when zooming in."""
+    bbox = "46,8,49,13"
+    cell_sizes = {5: 2.0, 6: 1.0, 7: 0.5, 8: 0.25, 9: 0.12, 10: 0.06, 11: 0.03, 12: 0.02}
+
+    def fetch(z: int):
+        r = requests.get(base + "/api/symbols", params={"bbox": bbox, "zoom": z, "time": t, "model": "icon_d2"}, timeout=60)
+        if r.status_code != 200:
+            fail(f"zoom continuity symbols failed at z{z}: {r.status_code}")
+        return r.json().get("symbols", [])
+
+    def continuity(parent, child, z_parent: int):
+        cs = cell_sizes[z_parent]
+        total = 0
+        ok = 0
+        for p in parent:
+            p_type = p.get("type")
+            if p_type in (None, "clear"):
+                continue
+            total += 1
+            plat = float(p["lat"])
+            plon = float(p["lon"])
+            lat_lo, lat_hi = plat - cs / 2.0, plat + cs / 2.0
+            lon_lo, lon_hi = plon - cs / 2.0, plon + cs / 2.0
+            kids = [
+                c for c in child
+                if lat_lo - 1e-6 <= float(c["lat"]) <= lat_hi + 1e-6
+                and lon_lo - 1e-6 <= float(c["lon"]) <= lon_hi + 1e-6
+            ]
+            if any(k.get("type") not in (None, "clear") for k in kids):
+                ok += 1
+        return total, ok
+
+    s8 = fetch(8)
+    s9 = fetch(9)
+    s10 = fetch(10)
+
+    for z, parent, child in [(8, s8, s9), (9, s9, s10)]:
+        total, ok = continuity(parent, child, z)
+        if total == 0:
+            continue
+        ratio = ok / total
+        # Allow tiny edge effects but guard against stride-induced widespread disappearances.
+        if ratio < 0.995:
+            fail(f"symbol zoom continuity too low at z{z}->z{z+1}: {ok}/{total} ({ratio:.2%})")
+
+
 def check_resolve_eu_time_strict_input_handling():
     """Regression guard for explicit latest/malformed handling in strict EU resolver."""
     backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend"))
@@ -229,6 +276,7 @@ def main():
     check_border_pan_stability(base, t23)
     check_d2_eu_handover(base, steps)
     check_wind_point_parity(base, t23)
+    check_symbol_zoom_continuity(base, t23)
     check_convective_agl_suppression_logic()
     check_blue_thermal_precedence_over_cb()
     check_resolve_eu_time_strict_input_handling()

@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="ICON Explorer">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b4f91"/>
+      <stop offset="100%" stop-color="#1fb6ff"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffe38a"/>
+      <stop offset="100%" stop-color="#ffb347"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="256" height="256" rx="52" fill="url(#bg)"/>
+
+  <!-- Globe grid -->
+  <circle cx="128" cy="138" r="72" fill="none" stroke="#dff4ff" stroke-width="10" opacity="0.95"/>
+  <ellipse cx="128" cy="138" rx="52" ry="72" fill="none" stroke="#dff4ff" stroke-width="6" opacity="0.85"/>
+  <ellipse cx="128" cy="138" rx="22" ry="72" fill="none" stroke="#dff4ff" stroke-width="6" opacity="0.8"/>
+  <path d="M56 138h144M66 108h124M66 168h124" fill="none" stroke="#dff4ff" stroke-width="6" opacity="0.85"/>
+
+  <!-- Sun -->
+  <circle cx="186" cy="80" r="28" fill="url(#sun)"/>
+  <g stroke="#ffd36b" stroke-width="6" stroke-linecap="round">
+    <path d="M186 38v10"/>
+    <path d="M186 112v10"/>
+    <path d="M144 80h10"/>
+    <path d="M218 80h10"/>
+    <path d="M159 53l7 7"/>
+    <path d="M213 107l7 7"/>
+    <path d="M159 107l7-7"/>
+    <path d="M213 53l7-7"/>
+  </g>
+
+  <!-- Minimal cloud overlay -->
+  <g transform="translate(94 170)">
+    <circle cx="24" cy="8" r="12" fill="#ffffff" opacity="0.92"/>
+    <circle cx="40" cy="8" r="16" fill="#ffffff" opacity="0.95"/>
+    <circle cx="58" cy="10" r="11" fill="#ffffff" opacity="0.92"/>
+    <rect x="16" y="8" width="52" height="14" rx="7" fill="#ffffff" opacity="0.95"/>
+  </g>
+</svg>

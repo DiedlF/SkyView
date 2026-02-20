@@ -22,17 +22,24 @@ const STATE = {
     mergedRunTime: null,
     mergedLabel: null,
     currentRun: null,
+    selectedModel: '',
+    selectedRun: '',
     overlayReady: false,
-    pendingOverlayUpdate: false
+    pendingOverlayUpdate: false,
+    modelCapabilities: {},
+    currentModel: null,
+    runs: []
 };
 
 // Initialize app on DOM load
 document.addEventListener('DOMContentLoaded', () => {
     initMap();
     initControls();
+    loadCapabilities();
     loadVariables();
     loadTimesteps();
     startTimelineAutoRefresh();
+    startProviderHealthPolling();
 
     // Overlay-ready gate: prevent first render until layout/map metrics are stable.
     window.addEventListener('load', () => {
@@ -105,6 +112,28 @@ function initMap() {
 // ===== CONTROLS INITIALIZATION =====
 
 function initControls() {
+    // Data source selectors
+    const modelSelect = document.getElementById('model-select');
+    if (modelSelect) {
+        modelSelect.addEventListener('change', async (e) => {
+            STATE.selectedModel = e.target.value || '';
+            STATE.selectedRun = '';
+            populateRunSelect();
+            await loadVariables();
+            await loadTimesteps();
+            applyModelMapBounds();
+        });
+    }
+
+    const runSelect = document.getElementById('run-select');
+    if (runSelect) {
+        runSelect.addEventListener('change', async (e) => {
+            STATE.selectedRun = e.target.value || '';
+            await loadVariables();
+            await loadTimesteps();
+        });
+    }
+
     // Variable selector
     const variableSelect = document.getElementById('variable-select');
     variableSelect.addEventListener('change', (e) => {
@@ -183,9 +212,61 @@ function initControls() {
 
 // ===== DATA LOADING =====
 
+function setStatus(message = '', level = '') {
+    const el = document.getElementById('status-text');
+    if (!el) return;
+    el.textContent = message;
+    el.classList.remove('loading', 'error');
+    if (level) el.classList.add(level);
+}
+
+function getSelectedModelId() {
+    const currentIndex = STATE.timesteps.indexOf(STATE.selectedTime);
+    const stepInfo = currentIndex >= 0 ? STATE._mergedSteps?.[currentIndex] : null;
+    return stepInfo?.model || null;
+}
+
+function applyModelMapBounds() {
+    if (!STATE.map) return;
+    const model = STATE.selectedModel || STATE.currentModel || getSelectedModelId();
+    const caps = model ? STATE.modelCapabilities[model] : null;
+    const b = caps?.bbox;
+    if (b && Number.isFinite(b.latMin) && Number.isFinite(b.lonMin) && Number.isFinite(b.latMax) && Number.isFinite(b.lonMax)) {
+        const pad = 1.0;
+        const south = Math.max(-85, b.latMin - pad);
+        const west = Math.max(-180, b.lonMin - pad);
+        const north = Math.min(85, b.latMax + pad);
+        const east = Math.min(180, b.lonMax + pad);
+        STATE.map.setMaxBounds([[south, west], [north, east]]);
+    } else {
+        STATE.map.setMaxBounds([[-85, -180], [85, 180]]);
+    }
+}
+
+function applyVariableAvailabilityForModel() {
+    // Rebuild visible variable list whenever model/capabilities change.
+    populateVariableSelect();
+}
+
+async function loadCapabilities() {
+    try {
+        const response = await fetch('/api/capabilities');
+        if (!response.ok) return;
+        const data = await response.json();
+        STATE.modelCapabilities = data.models || {};
+        applyVariableAvailabilityForModel();
+        applyModelMapBounds();
+    } catch (_err) {
+        // Keep graceful fallback when capability endpoint is temporarily unavailable.
+    }
+}
+
 async function loadVariables() {
     try {
-        const response = await fetch('/api/variables');
+        const qs = new URLSearchParams();
+        if (STATE.selectedModel) qs.set('model', STATE.selectedModel);
+        if (STATE.selectedRun) qs.set('run', STATE.selectedRun);
+        const response = await fetch(`/api/variables${qs.toString() ? `?${qs.toString()}` : ''}`);
         const data = await response.json();
         STATE.variables = data.variables || data;
         populateVariableSelect();
@@ -197,22 +278,43 @@ async function loadVariables() {
 
 async function loadTimesteps() {
     try {
-        const response = await fetch('/api/timesteps');
+        // 1) Always refresh full run list (keep model selector stable)
+        const runsResp = await fetch('/api/timesteps');
+        const runsData = await runsResp.json();
+        STATE.runs = runsData.runs || [];
+        populateModelSelect();
+        populateRunSelect();
+
+        // 2) Fetch timeline with current model/run selection
+        const qs = new URLSearchParams();
+        if (STATE.selectedModel) qs.set('model', STATE.selectedModel);
+        if (STATE.selectedRun) qs.set('run', STATE.selectedRun);
+
+        const response = await fetch(`/api/timesteps${qs.toString() ? `?${qs.toString()}` : ''}`);
         const data = await response.json();
-        // Build timesteps from merged timeline
+
         const merged = data.merged;
         if (merged && merged.steps) {
             STATE.timesteps = merged.steps.map(s => s.validTime);
-            STATE._mergedSteps = merged.steps;  // keep model/run info per step
+            STATE._mergedSteps = merged.steps;
             STATE.mergedRunTime = merged.runTime || null;
             STATE.mergedLabel = "ICON-D2 + EU";
             STATE.currentRun = merged.run || null;
         } else {
-            STATE.timesteps = data.timesteps || [];
-            STATE._mergedSteps = null;
-            STATE.mergedRunTime = null;
-            STATE.mergedLabel = null;
-            STATE.currentRun = (data.runs && data.runs[0] && data.runs[0].run) ? data.runs[0].run : null;
+            const src = getTimelineSource(data);
+            if (src && src.steps) {
+                STATE.timesteps = src.steps.map(s => s.validTime);
+                STATE._mergedSteps = src.steps;
+                STATE.mergedRunTime = src.runTime || null;
+                STATE.mergedLabel = src.label || null;
+                STATE.currentRun = src.run || null;
+            } else {
+                STATE.timesteps = [];
+                STATE._mergedSteps = null;
+                STATE.mergedRunTime = null;
+                STATE.mergedLabel = null;
+                STATE.currentRun = null;
+            }
         }
         populateTimeButtons();
         updateModelInfo();
@@ -256,11 +358,67 @@ function getTimelineSource(data) {
     return null;
 }
 
+function populateModelSelect() {
+    const sel = document.getElementById('model-select');
+    if (!sel) return;
+
+    // Keep full model list stable (do not collapse to currently filtered runs).
+    const capModels = Object.keys(STATE.modelCapabilities || {});
+    const runModels = [...new Set((STATE.runs || []).map(r => r.model).filter(Boolean))];
+    const models = [...new Set([...capModels, ...runModels])].sort();
+    const prev = STATE.selectedModel || '';
+
+    sel.innerHTML = '';
+    models.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = m.toUpperCase().replace('_', '-');
+        sel.appendChild(opt);
+    });
+
+    // Blended/merged disabled for now: always keep an explicit model selected.
+    if (models.includes(prev)) {
+        sel.value = prev;
+    } else if (models.includes('icon_d2')) {
+        sel.value = 'icon_d2';
+    } else {
+        sel.value = models[0] || '';
+    }
+    STATE.selectedModel = sel.value;
+}
+
+function populateRunSelect() {
+    const sel = document.getElementById('run-select');
+    if (!sel) return;
+
+    const runs = (STATE.runs || []).filter(r => !STATE.selectedModel || r.model === STATE.selectedModel);
+    const prev = STATE.selectedRun || '';
+
+    sel.innerHTML = '';
+    const latest = document.createElement('option');
+    latest.value = '';
+    latest.textContent = 'Latest';
+    sel.appendChild(latest);
+
+    runs.forEach(r => {
+        const opt = document.createElement('option');
+        opt.value = r.run;
+        opt.textContent = `${r.run} (${(r.model || '').toUpperCase().replace('_','-')})`;
+        sel.appendChild(opt);
+    });
+
+    sel.value = runs.some(r => r.run === prev) ? prev : '';
+    STATE.selectedRun = sel.value;
+}
+
 function startTimelineAutoRefresh() {
     // Keep explorer timeline fresh like Skyview frontend.
     setInterval(async () => {
         try {
-            const response = await fetch('/api/timesteps');
+            const qs = new URLSearchParams();
+            if (STATE.selectedModel) qs.set('model', STATE.selectedModel);
+            if (STATE.selectedRun) qs.set('run', STATE.selectedRun);
+            const response = await fetch(`/api/timesteps${qs.toString() ? `?${qs.toString()}` : ''}`);
             if (!response.ok) return;
             const data = await response.json();
             const source = getTimelineSource(data);
@@ -339,15 +497,44 @@ function startTimelineAutoRefresh() {
     }, 60000);
 }
 
+function startProviderHealthPolling() {
+    const run = async () => {
+        try {
+            const res = await fetch('/api/provider_health');
+            if (!res.ok) return;
+            const data = await res.json();
+            if (data.status === 'critical') {
+                setStatus(`Provider critical: ${(data.reasons || []).join(', ') || 'check backend'}`, 'error');
+            } else if (data.status === 'warning') {
+                setStatus(`Provider warning: ${(data.reasons || []).join(', ')}`, 'error');
+            }
+        } catch (_e) {
+            // Ignore transient provider health polling errors.
+        }
+    };
+
+    run();
+    setInterval(run, 45000);
+}
+
 // ===== UI POPULATION =====
 
 function populateVariableSelect() {
     const select = document.getElementById('variable-select');
+    if (!select) return;
     select.innerHTML = '';
+
+    const model = STATE.selectedModel || STATE.currentModel || getSelectedModelId();
+    const caps = model ? STATE.modelCapabilities[model] : null;
+    const allowed = caps?.variables ? new Set(caps.variables) : null;
+
+    const visibleVariables = allowed
+        ? STATE.variables.filter(v => allowed.has(v.name))
+        : STATE.variables.slice();
 
     // Group variables by category
     const grouped = {};
-    STATE.variables.forEach(v => {
+    visibleVariables.forEach(v => {
         if (!grouped[v.group]) grouped[v.group] = [];
         grouped[v.group].push(v);
     });
@@ -365,12 +552,21 @@ function populateVariableSelect() {
         select.appendChild(optgroup);
     });
 
-    // Select first variable
-    if (STATE.variables.length > 0) {
-        STATE.selectedVariable = STATE.variables[0];
+    // Keep current variable if still available, otherwise fallback to first visible variable.
+    const keep = STATE.selectedVariable && visibleVariables.find(v => v.name === STATE.selectedVariable.name);
+    if (keep) {
+        STATE.selectedVariable = keep;
+        select.value = keep.name;
+    } else if (visibleVariables.length > 0) {
+        STATE.selectedVariable = visibleVariables[0];
         select.value = STATE.selectedVariable.name;
-        updateVariableInfo();
+        setStatus(`Variables updated for ${model?.toUpperCase().replace('_','-') || 'model'}`, 'loading');
+    } else {
+        STATE.selectedVariable = null;
+        setStatus(`No variables available for ${model?.toUpperCase().replace('_','-') || 'model'}`, 'error');
     }
+
+    updateVariableInfo();
 }
 
 function populateTimeButtons() {
@@ -578,10 +774,15 @@ function updateModelInfo() {
     const currentIndex = STATE.timesteps.indexOf(STATE.selectedTime);
     const currentStep = currentIndex >= 0 ? STATE._mergedSteps?.[currentIndex] : null;
 
-    const model = currentStep?.model
-        ? currentStep.model.toUpperCase().replace('_', '-')
+    const modelId = currentStep?.model || null;
+    STATE.currentModel = modelId;
+
+    const model = modelId
+        ? modelId.toUpperCase().replace('_', '-')
         : (STATE.mergedLabel || '--');
     modelEl.textContent = model;
+    applyVariableAvailabilityForModel();
+    applyModelMapBounds();
 
     if (STATE.mergedRunTime) {
         runEl.textContent = formatDateShortUTC(new Date(STATE.mergedRunTime));
@@ -600,6 +801,8 @@ function updateModelInfo() {
 
 async function updateOverlay() {
     if (!STATE.selectedVariable || !STATE.selectedTime || !STATE.map) return;
+
+    setStatus('Loading layer…', 'loading');
 
     if (!STATE.overlayReady) {
         STATE.pendingOverlayUpdate = true;
@@ -631,6 +834,8 @@ async function updateOverlay() {
             time: STATE.selectedTime,
             palette: STATE.selectedPalette,
         });
+        if (STATE.selectedModel) rangeParams.append('model', STATE.selectedModel);
+        if (STATE.selectedRun) rangeParams.append('run', STATE.selectedRun);
 
         if (!STATE.autoRange && STATE.rangeMin !== null && STATE.rangeMax !== null) {
             rangeParams.append('vmin', STATE.rangeMin);
@@ -670,6 +875,8 @@ async function updateOverlay() {
             palette: STATE.selectedPalette,
             clientClass,
         });
+        if (STATE.selectedModel) tileParams.append('model', STATE.selectedModel);
+        if (STATE.selectedRun) tileParams.append('run', STATE.selectedRun);
         if (Number.isFinite(effectiveMin)) tileParams.append('vmin', String(effectiveMin));
         if (Number.isFinite(effectiveMax)) tileParams.append('vmax', String(effectiveMax));
 
@@ -690,9 +897,11 @@ async function updateOverlay() {
             crossOrigin: true,
             zIndex: 250,
         }).addTo(STATE.map);
+        setStatus('');
     } catch (error) {
         if (error.name !== 'AbortError') {
             console.error('Failed to update overlay:', error);
+            setStatus('Overlay update failed', 'error');
         }
     }
 }
@@ -750,6 +959,8 @@ async function handleMapClick(e) {
             lon: e.latlng.lng,
             time: STATE.selectedTime
         });
+        if (STATE.selectedModel) params.append('model', STATE.selectedModel);
+        if (STATE.selectedRun) params.append('run', STATE.selectedRun);
 
         const response = await fetch(`/api/point?${params}`);
         const data = await response.json();
@@ -819,7 +1030,7 @@ function showPointPopup(latlng, values) {
 
 function showError(message) {
     console.error(message);
-    // Could add a toast notification here
+    setStatus(message, 'error');
 }
 
 // ===== MAP EVENT HANDLERS =====

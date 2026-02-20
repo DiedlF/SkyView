@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Skyview Admin</title>
+  <style>
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:#0f172a;color:#e2e8f0}
+    .wrap{max-width:1280px;margin:0 auto;padding:20px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px}
+    .card{background:#111827;border:1px solid #243041;border-radius:12px;padding:14px}
+    h1{margin:0 0 8px}.muted{color:#94a3b8;font-size:13px}
+    table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:6px 4px;border-bottom:1px solid #243041;text-align:left;vertical-align:top}
+    pre{background:#0b1220;border:1px solid #243041;border-radius:8px;padding:10px;max-height:300px;overflow:auto;font-size:12px}
+    button,input,select{background:#0b1220;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:6px 8px}
+    button{cursor:pointer;background:#2563eb;border-color:#2563eb;color:#fff}
+    .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+    .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;border:1px solid #334155}
+    .new{background:#1e293b}.triaged{background:#3b2f13}.resolved{background:#113422}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Skyview Admin / Status</h1>
+  <div class="muted">Operational dashboard with ingest timings, storage, feedback workflow, logs and usage.</div>
+  <p><button id="refresh">Refresh</button></p>
+
+  <div class="grid">
+    <section class="card"><h2>Status widgets</h2><div id="statusWidgets">Loading…</div></section>
+    <section class="card"><h2>Storage / ingest</h2><div id="storage">Loading…</div></section>
+    <section class="card"><h2>Markers + usage</h2><div id="usage">Loading…</div></section>
+
+    <section class="card" style="grid-column:1/-1">
+      <h2>Feedback inbox</h2>
+      <div class="toolbar">
+        <select id="fbStatus"><option value="">all statuses</option><option>new</option><option>triaged</option><option>resolved</option></select>
+        <input id="fbSearch" placeholder="search feedback" style="min-width:260px">
+        <button id="fbApply">Apply</button>
+      </div>
+      <div id="feedback">Loading…</div>
+    </section>
+
+    <section class="card" style="grid-column:1/-1">
+      <h2>Logs</h2>
+      <div class="toolbar">
+        <select id="logLevel"><option value="all">all</option><option value="error">error</option><option value="warn">warn</option><option value="info">info</option><option value="debug">debug</option></select>
+        <button id="logApply">Apply</button>
+      </div>
+      <div id="logs">Loading…</div>
+    </section>
+  </div>
+</div>
+<script>
+const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const fmt=n=>!Number.isFinite(n)?'-':(()=>{const u=['B','KB','MB','GB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return n.toFixed(i?1:0)+' '+u[i]})();
+async function j(url,opt){const r=await fetch(url,opt);if(!r.ok)throw new Error(url+': '+r.status);return r.json();}
+const state={fbStatus:'',fbSearch:'',logLevel:'all'};
+
+function kvTable(rows){return '<table>'+rows.map(([k,v])=>`<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')+'</table>'}
+
+async function loadStatus(){
+  const s=await j('/api/status');
+  const d2=s?.ingestHealth?.models?.icon_d2||{}, eu=s?.ingestHealth?.models?.icon_eu||{};
+  const fep = s?.fallback?.endpoints || {};
+  const rows=[
+    ['Server time', s.serverTime],
+    ['Freshness (since full ingest)', s?.ingest?.freshnessMinutes],
+    ['Latest full ingest at', s?.ingest?.latestFullIngestedAt],
+    ['Overlay tile p95 total(ms)', s?.perf?.overlayTilePhases?.recentWindow?.p95?.totalMs],
+    ['Overlay tile p50 total(ms)', s?.perf?.overlayTilePhases?.recentWindow?.p50?.totalMs],
+    ['Tile cache hitRate', s?.cache?.tile?.hitRate],
+    ['Symbols cache items', s?.cache?.symbols?.items],
+    ['Fallback snapshot updated', s?.fallback?.updatedAt],
+    ['Symbols decision (current)', fep?.symbols?.decision],
+    ['Point decision (current)', fep?.point?.decision],
+    ['Wind decision (current)', fep?.wind?.decision],
+    ['Overlay decision (current)', fep?.overlay?.decision],
+  ];
+  document.getElementById('statusWidgets').innerHTML = kvTable(rows);
+}
+
+async function loadStorage(){
+  const a=await j('/api/admin/storage');
+  const d2=a.models?.icon_d2||{}, eu=a.models?.icon_eu||{};
+  const tmp=a.tmp||{};
+  const ingest=a.ingest||{};
+  const rows=[
+    ['Total data size', fmt(a.totalBytes)],
+    ['D2 size', fmt(d2.totalBytes)],
+    ['EU size', fmt(eu.totalBytes)],
+    ['D2 latest run', d2.latestRun],
+    ['D2 available on DWD', d2.latestRunFullyAvailableOnDwdAt],
+    ['D2 model calc duration (min)', d2.modelCalculationMinutes],
+    ['D2 ingest finished', d2.latestRunFullyIngestedAt],
+    ['D2 ingest duration (min)', d2.ingestDurationMinutes],
+    ['EU latest run', eu.latestRun],
+    ['EU available on DWD', eu.latestRunFullyAvailableOnDwdAt],
+    ['EU model calc duration (min)', eu.modelCalculationMinutes],
+    ['EU ingest finished', eu.latestRunFullyIngestedAt],
+    ['EU ingest duration (min)', eu.ingestDurationMinutes],
+    ['D2 full-ingest freshness(min)', d2.freshnessMinutesSinceFullIngest],
+    ['EU full-ingest freshness(min)', eu.freshnessMinutesSinceFullIngest],
+    ['Ingest running', ingest.isRunning],
+    ['Ingest lock', ingest.lock?.exists ? `yes (${ingest.lock?.ageSeconds}s)` : 'no'],
+    ['tmp entries', tmp.count||0],
+  ];
+  let html=kvTable(rows);
+  if((tmp.entries||[]).length){
+    html += '<h3>tmp</h3><table><tr><th>Name</th><th>Dir</th><th>Size</th></tr>' + tmp.entries.map(e=>`<tr><td>${esc(e.name)}</td><td>${e.isDir}</td><td>${fmt(e.bytes)}</td></tr>`).join('') + '</table>';
+  }
+  document.getElementById('storage').innerHTML=html;
+}
+
+async function loadUsage(){
+  const a=await j('/api/admin/storage');
+  const m=a.markers||{}, u=a.usage||{};
+  const rows=[
+    ['Stored markers', m.totalMarkers],
+    ['Distinct clients', m.distinctClientIds],
+    ['Markers active 24h', m.activeLast24h],
+    ['Markers active 7d', m.activeLast7d],
+    ['Visits (30d)', u.totalVisits],
+    ['Estimated unique (30d)', u.estimatedUniqueVisitors],
+    ['Usage updatedAt', u.updatedAt],
+  ];
+  document.getElementById('usage').innerHTML=kvTable(rows);
+}
+
+async function setStatus(id,status){
+  await j(`/api/feedback/${id}`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({status})});
+  await loadFeedback();
+}
+
+async function loadFeedback(){
+  const p=new URLSearchParams({limit:'200'}); if(state.fbStatus)p.set('status',state.fbStatus); if(state.fbSearch)p.set('q',state.fbSearch);
+  const r=await j('/api/feedback?'+p.toString());
+  const fb=r.feedback||[];
+  document.getElementById('feedback').innerHTML = fb.length
+    ? '<table><tr><th>Time</th><th>Type</th><th>Status</th><th>Message</th><th>Actions</th></tr>' + fb.map(f=>`<tr><td>${esc(f.timestamp)}</td><td>${esc(f.type)}</td><td><span class="tag ${esc(f.status||'new')}">${esc(f.status||'new')}</span></td><td>${esc(f.message)}</td><td><button onclick="setStatus(${Number(f.id)},'new')">new</button> <button onclick="setStatus(${Number(f.id)},'triaged')">triaged</button> <button onclick="setStatus(${Number(f.id)},'resolved')">resolved</button></td></tr>`).join('') + '</table>'
+    : '<div class="muted">No feedback.</div>';
+}
+
+async function loadLogs(){
+  const r=await j('/api/admin/logs?limit=200&level='+encodeURIComponent(state.logLevel));
+  const arts=r.artifacts||{};
+  const ai=(arts.ingest||[]).map(x=>`${esc(x.name)} (${fmt(x.sizeBytes)})`).join(', ')||'none';
+  const ar=(arts.regression||[]).map(x=>esc(x.name)).join(', ')||'none';
+  let html='<div class="muted">Ingest artifacts: '+ai+'<br>Regression artifacts: '+ar+'</div>';
+  html += (r.logs||[]).map(l=>`<h3>${esc(l.file)} (${fmt(l.sizeBytes)})</h3><pre>${esc((l.tail||[]).join('\n'))}</pre>`).join('');
+  document.getElementById('logs').innerHTML=html;
+}
+
+async function loadAll(){await Promise.all([loadStatus(),loadStorage(),loadUsage(),loadFeedback(),loadLogs()]);}
+
+document.getElementById('refresh').onclick=()=>loadAll().catch(e=>alert(e.message));
+document.getElementById('fbApply').onclick=()=>{state.fbStatus=document.getElementById('fbStatus').value;state.fbSearch=document.getElementById('fbSearch').value.trim();loadFeedback().catch(e=>alert(e.message));};
+document.getElementById('logApply').onclick=()=>{state.logLevel=document.getElementById('logLevel').value;loadLogs().catch(e=>alert(e.message));};
+window.setStatus=(id,s)=>setStatus(id,s).catch(e=>alert(e.message));
+loadAll().catch(e=>{document.body.insertAdjacentHTML('beforeend','<pre>'+esc(e.message)+'</pre>');});
+</script>
+</body>
+</html>

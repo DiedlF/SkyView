@@ -4,6 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ICON-Explorer</title>
+    <link rel="icon" type="image/svg+xml" href="icon.svg">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png">
+    <link rel="shortcut icon" href="favicon.ico">
+    <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+    <meta name="theme-color" content="#0b4f91">
     
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" 
@@ -11,7 +17,7 @@
           crossorigin=""/>
     
     <!-- Custom CSS -->
-    <link rel="stylesheet" href="style.css?v=6">
+    <link rel="stylesheet" href="style.css?v=7">
 </head>
 <body>
     <!-- Sidebar Toggle (mobile) -->
@@ -24,6 +30,22 @@
             <p class="subtitle">ICON Weather Data</p>
         </div>
 
+        <!-- Data Source Controls -->
+        <div class="control-group">
+            <label for="model-select">Model</label>
+            <select id="model-select">
+                <option value="icon_d2">ICON-D2</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label for="run-select">Run</label>
+            <select id="run-select">
+                <option value="">Latest</option>
+            </select>
+            <div class="info-text">Leave on “Latest” to auto-follow fresh runs.</div>
+        </div>
+
         <!-- Variable Selector -->
         <div class="control-group">
             <label for="variable-select">Variable</label>
@@ -31,6 +53,7 @@
                 <option value="">Loading...</option>
             </select>
             <div id="variable-info" class="info-text"></div>
+            <div id="status-text" class="info-text status-text"></div>
         </div>
 
         <!-- Palette Selector -->
@@ -120,6 +143,6 @@
             crossorigin=""></script>
     
     <!-- App JS -->
-    <script src="app.js?v=12"></script>
+    <script src="app.js?v=19"></script>
 </body>
 </html>
