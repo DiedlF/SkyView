@@ -1963,9 +1963,12 @@ async def api_overlay_tile(
     lat = d["lat"]
     lon = d["lon"]
 
-    # EU load only if the tile extends outside D2 bounds.
+    # EU load only if the tile extends outside D2 bounds OR into the D2 boundary relaxation zone.
     _eu_raw_tile = None
     eu_fb = None
+    # Compute D2 grid resolution (needed for gate and inside-mask expansion below).
+    d2_lat_res = abs(float(lat[1] - lat[0])) if len(lat) > 1 else 0.02
+    d2_lon_res = abs(float(lon[1] - lon[0])) if len(lon) > 1 else 0.02
     if model_used == "icon_d2":
         d2_lat_min, d2_lat_max = float(np.min(lat)), float(np.max(lat))
         d2_lon_min, d2_lon_max = float(np.min(lon)), float(np.max(lon))
@@ -1974,10 +1977,18 @@ async def api_overlay_tile(
         lon1, lat1 = _merc_to_lonlat(maxx, maxy)
         t_lon_min, t_lon_max = min(lon0, lon1), max(lon0, lon1)
         t_lat_min, t_lat_max = min(lat0, lat1), max(lat0, lat1)
-        overlaps_outside_d2 = (
-            t_lat_min < d2_lat_min or t_lat_max > d2_lat_max or t_lon_min < d2_lon_min or t_lon_max > d2_lon_max
+        # Expand gate 5 cells inward: ICON-D2 has a ~3-cell NaN relaxation zone at all borders.
+        # Without this, tiles inside the rectangular D2 bbox but over the NaN zone never load EU,
+        # leaving transparent gaps near the D2 boundary that EU should fill.
+        _eu_border_margin_lat = d2_lat_res * 5
+        _eu_border_margin_lon = d2_lon_res * 5
+        needs_eu_fill = (
+            t_lat_min < d2_lat_min + _eu_border_margin_lat
+            or t_lat_max > d2_lat_max - _eu_border_margin_lat
+            or t_lon_min < d2_lon_min + _eu_border_margin_lon
+            or t_lon_max > d2_lon_max - _eu_border_margin_lon
         )
-        if overlaps_outside_d2:
+        if needs_eu_fill:
             _eu_raw_tile = _try_load_eu_fallback(time, cfg)
             eu_fb = _eu_raw_tile if (_eu_raw_tile is not None and not _eu_raw_tile.get("missing")) else None
     t_load_ms += (perf_counter() - t_load0) * 1000.0
@@ -2086,7 +2097,12 @@ async def api_overlay_tile(
     mx, my = np.meshgrid(xs, ys)
     qlon, qlat = _merc_to_lonlat(mx, my)
 
-    inside = ((qlat >= data_lat_min) & (qlat <= data_lat_max) & (qlon >= data_lon_min) & (qlon <= data_lon_max))
+    # Expand inside mask by half a grid cell so D2 fills right to the outer edge of its last cells.
+    # Without this, there is a half-cell transparent strip at each D2 boundary edge.
+    inside = (
+        (qlat >= data_lat_min - d2_lat_res / 2) & (qlat <= data_lat_max + d2_lat_res / 2) &
+        (qlon >= data_lon_min - d2_lon_res / 2) & (qlon <= data_lon_max + d2_lon_res / 2)
+    )
     li = _regular_grid_indices(lat, qlat)
     lo = _regular_grid_indices(lon, qlon)
     sampled = src[li, lo]

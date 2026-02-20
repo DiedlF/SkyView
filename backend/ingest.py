@@ -603,14 +603,12 @@ def build_d2_boundary_cache(run: str):
     lat_res = float(abs(lat[1] - lat[0])) if len(lat) > 1 else 0.02
     lon_res = float(abs(lon[1] - lon[0])) if len(lon) > 1 else 0.02
 
-    # Boundary mask: prefer fields that better represent true data coverage.
-    # `ww` can be finite over broad rectangular extents in some runs; `mh` is often stricter.
-    if 'mh' in src.files:
-        valid = np.isfinite(src['mh'])
-    elif 'ww' in src.files:
-        valid = np.isfinite(src['ww'])
-    else:
-        valid = np.ones((len(lat), len(lon)), dtype=bool)
+    # Boundary mask: use all-ones so the border is drawn at the actual rectangular grid extent.
+    # Using isfinite(ww) or isfinite(mh) pulled the border 3+ cells inward due to the NaN
+    # relaxation zone at ICON-D2 boundaries — making the border appear inside D2 territory.
+    # The NaN relaxation-zone cells will render transparently (EU fills them); the border
+    # correctly marks the outer edge of the D2 grid, not where data first becomes valid.
+    valid = np.ones((len(lat), len(lon)), dtype=bool)
 
     segments = []
     n_i, n_j = valid.shape
