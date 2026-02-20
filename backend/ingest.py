@@ -204,6 +204,10 @@ def load_grib(filepath, bounds=None):
     data = var.values.squeeze()
     lat = ds.coords["latitude"].values
     lon = ds.coords["longitude"].values
+    if data.ndim > 2:
+        logger.warning(f"GRIB ndim {data.ndim} — taking last slice")
+        data = data[-1]  # drop time/ensemble dim
+    data = data.reshape(len(lat), len(lon))
 
     if bounds:
         lat_min, lat_max, lon_min, lon_max = bounds
@@ -229,12 +233,27 @@ def get_bounds_for_model(model, config):
         return None
 
 
-def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profile_name="full"):
-    """Download all variables for one step, optionally crop, save as .npz."""
+def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profile_name="full",
+                prev_acc=None, prev_step=None):
+    """Download all variables for one step, optionally crop, save as .npz.
+
+    Precip rates (tp_rate, rain_rate, snow_rate, hail_rate) are computed inline
+    and written into the same .npz, avoiding a separate post-processing pass.
+
+    Args:
+        prev_acc: dict of raw precip accumulation arrays from the previous step
+                  (keys: tot_prec, rain_gsp, rain_con, snow_gsp, snow_con, grau_gsp).
+        prev_step: step number that prev_acc corresponds to.
+
+    Returns:
+        (success: bool, curr_acc: dict | None)
+        curr_acc holds the current step's raw precip accumulations for the next iteration.
+        curr_acc is None when the step was skipped (already existed) or had no precip data.
+    """
     out_path = os.path.join(out_dir, f"{step:03d}.npz")
     if os.path.exists(out_path):
         logger.debug(f"Step {step:03d}: already exists, skipping")
-        return True
+        return True, None
 
     if config is None:
         config = load_config()
@@ -269,7 +288,7 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
                 continue
             else:
                 logger.warning(f"Step {step:03d}: {var} download failed, skipping step")
-                return False
+                return False, None
 
         subprocess.run(["bunzip2", "-f", bz2_path], capture_output=True)
         if not os.path.exists(grib_path):
@@ -277,7 +296,7 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
                 logger.debug(f"Step {step:03d}: optional {var} decompress failed, skipping variable")
                 continue
             logger.error(f"Step {step:03d}: {var} decompress failed")
-            return False
+            return False, None
 
         try:
             data, lat, lon = load_grib(grib_path, bounds)
@@ -290,13 +309,13 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
                 logger.debug(f"Step {step:03d}: optional {var} parse failed ({e}), skipping variable")
                 continue
             logger.error(f"Step {step:03d}: {var} parse failed: {e}")
-            return False
+            return False, None
         finally:
             if os.path.exists(grib_path):
                 os.unlink(grib_path)
 
     if lat_1d is None:
-        return False
+        return False, None
 
     # Static variables (hsurf etc.) — cached per run
     for svar in static_vars:
@@ -348,10 +367,49 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
                 if os.path.exists(grib_path):
                     os.unlink(grib_path)
 
+    # ── Inline precip rate computation ────────────────────────────────────────
+    # De-accumulate precipitation and compute mm/h rates in the same pass,
+    # so we never need a separate post-processing read+rewrite of the .npz.
+    curr_acc = None
+    if 'tot_prec' in arrays or any(k in arrays for k in ('rain_gsp', 'rain_con', 'snow_gsp', 'snow_con', 'grau_gsp')):
+        shape = arrays.get('tot_prec', next(iter(arrays.values()))).shape
+        zeros = np.zeros(shape, dtype=np.float32)
+
+        tp = arrays.get('tot_prec', zeros)
+        rg = arrays.get('rain_gsp', zeros)
+        rc = arrays.get('rain_con', zeros)
+        sg = arrays.get('snow_gsp', zeros)
+        sc = arrays.get('snow_con', zeros)
+        gg = arrays.get('grau_gsp', zeros)
+
+        prev_step_expected, dt_h = _precip_prev_step_and_dt(model, step)
+        use_prev = (prev_acc is not None and prev_step == prev_step_expected)
+
+        if use_prev:
+            tp_rate   = (tp - prev_acc['tot_prec']) / dt_h
+            rain_rate = ((rg + rc) - (prev_acc['rain_gsp'] + prev_acc['rain_con'])) / dt_h
+            snow_rate = ((sg + sc) - (prev_acc['snow_gsp'] + prev_acc['snow_con'])) / dt_h
+            hail_rate = (gg - prev_acc['grau_gsp']) / dt_h
+        else:
+            tp_rate   = tp / dt_h
+            rain_rate = (rg + rc) / dt_h
+            snow_rate = (sg + sc) / dt_h
+            hail_rate = gg / dt_h
+
+        arrays['tp_rate']   = np.maximum(tp_rate,   0.0).astype(np.float32)
+        arrays['rain_rate'] = np.maximum(rain_rate, 0.0).astype(np.float32)
+        arrays['snow_rate'] = np.maximum(snow_rate, 0.0).astype(np.float32)
+        arrays['hail_rate'] = np.maximum(hail_rate, 0.0).astype(np.float32)
+
+        curr_acc = {
+            'tot_prec': tp, 'rain_gsp': rg, 'rain_con': rc,
+            'snow_gsp': sg, 'snow_con': sc, 'grau_gsp': gg,
+        }
+
     os.makedirs(out_dir, exist_ok=True)
     np.savez_compressed(out_path, lat=lat_1d, lon=lon_1d, **arrays)
     logger.info(f"Step {step:03d}: saved ({len(arrays)} vars, shape {arrays.get('ww', next(iter(arrays.values()))).shape})")
-    return True
+    return True, curr_acc
 
 
 def check_new_data_available(run, model="icon-d2", config=None, profile_name="full"):
@@ -420,6 +478,28 @@ def check_variable_urls(run, model, config, profile_name="full"):
     return ok, fail, skipped
 
 
+def _load_precip_acc_from_step(run_dir: str, step: int) -> dict | None:
+    """Load raw precip accumulation arrays from an existing step .npz file.
+
+    Used to seed prev_acc when --fill-missing processes non-contiguous steps or
+    when ingest resumes after a partial run.
+    Returns None if the file doesn't exist or can't be read.
+    """
+    path = os.path.join(run_dir, f"{step:03d}.npz")
+    if not os.path.exists(path):
+        return None
+    try:
+        z = np.load(path)
+        if 'lat' not in z.files or 'lon' not in z.files:
+            return None
+        shape = (len(z['lat']), len(z['lon']))
+        zeros = np.zeros(shape, dtype=np.float32)
+        return {k: z[k] if k in z.files else zeros.copy()
+                for k in ('tot_prec', 'rain_gsp', 'rain_con', 'snow_gsp', 'snow_con', 'grau_gsp')}
+    except Exception:
+        return None
+
+
 def _precip_prev_step_and_dt(model: str, step: int) -> tuple[int | None, float]:
     if model == "icon-eu" and step >= ICON_EU_STEP_3H_START:
         prev = step - 3
@@ -430,14 +510,14 @@ def _precip_prev_step_and_dt(model: str, step: int) -> tuple[int | None, float]:
 
 
 def precompute_precip_rates_for_run(model: str, run: str):
-    """Precompute de-accumulated precip rate fields per step and store in NPZ.
+    """Backfill de-accumulated precip rate fields for an already-ingested run.
 
-    Added fields:
-      - tp_rate
-      - rain_rate
-      - snow_rate
-      - hail_rate
-    Units are mm/h-equivalent.
+    This is a repair/migration utility for runs that were ingested before the
+    inline rate computation was added to ingest_step(). New ingests compute
+    rates on the fly and do not need to call this function.
+
+    Rewrites each .npz with added fields:
+      - tp_rate, rain_rate, snow_rate, hail_rate  (mm/h-equivalent)
     """
     run_dir = os.path.join(DATA_DIR, model, run)
     if not os.path.isdir(run_dir):
@@ -756,20 +836,36 @@ def main():
         logger.info(f"--fill-missing: {len(steps)} step(s) to ingest: {steps}")
 
     ok = 0
+    prev_acc: dict | None = None
+    prev_step_done: int | None = None
+
     for step in steps:
+        # Ensure prev_acc is consistent with what this step expects.
+        # If we have the right one in memory, use it; otherwise fall back to disk.
+        # This handles both normal sequential runs and --fill-missing with gaps.
+        expected_prev, _ = _precip_prev_step_and_dt(model, step)
+        if prev_step_done != expected_prev:
+            if expected_prev is not None:
+                disk_acc = _load_precip_acc_from_step(out_dir, expected_prev)
+                prev_acc = disk_acc
+                prev_step_done = expected_prev if disk_acc is not None else None
+            else:
+                prev_acc = None
+                prev_step_done = None
+
         if args.force:
             npz = os.path.join(out_dir, f"{step:03d}.npz")
             if os.path.exists(npz):
                 os.unlink(npz)
-        if ingest_step(run, step, tmp_dir, out_dir, model, config, profile_name=profile_name):
-            ok += 1
 
-    # Precompute de-accumulated precipitation rates for fast API rendering
-    if ok > 0:
-        try:
-            precompute_precip_rates_for_run(model, run)
-        except Exception as e:
-            logger.warning(f"Precompute precip rates failed: {e}")
+        success, curr_acc = ingest_step(run, step, tmp_dir, out_dir, model, config,
+                                        profile_name=profile_name,
+                                        prev_acc=prev_acc, prev_step=prev_step_done)
+        if success:
+            ok += 1
+            if curr_acc is not None:
+                prev_acc = curr_acc
+                prev_step_done = step
 
     # Build cached D2 boundary geometry once per run (for fast frontend border rendering)
     if model == "icon-d2" and ok > 0:
