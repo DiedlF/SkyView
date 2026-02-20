@@ -1,6 +1,6 @@
 # Skyview TODO
 
-**Last updated:** 2026-02-20 (session 2)
+**Last updated:** 2026-02-20 15:26 UTC
 **State:** ✅ Core stable. P1 (arch/cache) complete. P2 (cache correctness) complete. P3 (quality gates) in progress. Admin endpoint hardened.
 
 ---
@@ -22,6 +22,7 @@
 - [x] **Marker auth module** — extracted to `backend/marker_auth.py` (make_token/verify_token/startup_check). app.py thin wrappers; startup warning on weak/missing secret. Tests: `tests/test_marker_auth.py` (17 cases). (Arch #8)
 - [~] **Per-cell loop vectorization** — `aggregate_symbol_cell` is already fully vectorized *within* each cell (NumPy on full cell arrays). Across-cell vectorization blocked by per-cell EU/D2 source switching. Fast-path exists (zoom ≤ 9 stride sampling). Further deferred. (Arch #6)
 - [ ] **EU fallback helpers consolidation** — overlay/tile both have inline EU load+gate logic. Extract shared `_load_eu_for_tile(time, cfg, tile_bounds)` helper.
+- [ ] **Precip precalculation robustness** — check edge cases/robustness. Keep separate precip layers (convective/gridscale) in mind.
 - [ ] **Computed cache tune** — eviction policy for active timestep/layer churn (Phase 2 overlay perf).
 - [ ] **Tile pre-render warmup** — optional ring of viewport tiles on context switch (Phase 3).
 - [ ] **Quantized storage** — optional quantize heavy overlay fields (precip rates); persist scale/offset (Phase 4, medium effort 2–3d).
@@ -54,6 +55,7 @@
 
 ### E) Soaring Model
 
+- [ ] **Climbrate estimation** — add more temperature layers (bigger ingest); use `htop_dc` for z_upper.
 - [ ] Gliding potential flying distance:
   - [ ] Per-hour potential distance metric
   - [ ] Daily cumulative potential distance metric
