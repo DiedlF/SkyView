@@ -670,6 +670,8 @@ def main():
                         help="'short', 'all', or comma-separated list")
     parser.add_argument("--force", action="store_true",
                         help="Re-download even if .npz exists")
+    parser.add_argument("--fill-missing", action="store_true",
+                        help="Ingest only steps not yet on disk for this run. Defaults to --steps all if --steps not set explicitly.")
     parser.add_argument("--check-only", action="store_true",
                         help="Fast check: exit 0 if new data available, 1 otherwise. With --verbose, also checks variable URLs.")
     parser.add_argument("--verbose", action="store_true",
@@ -709,7 +711,10 @@ def main():
             logger.debug(f"WAIT: {model} {run} not available yet")
             sys.exit(1)
 
-    if args.steps == "short":
+    # --fill-missing implies "all" steps as the target set unless --steps was given explicitly
+    if args.steps == "short" and args.fill_missing:
+        steps = cfg["steps"]
+    elif args.steps == "short":
         steps = cfg["short_steps"]
     elif args.steps == "all":
         steps = cfg["steps"]
@@ -737,6 +742,18 @@ def main():
     out_dir = os.path.join(DATA_DIR, model, run)
     tmp_dir = os.path.join(DATA_DIR, "tmp", f"{model}_{run}")
     os.makedirs(tmp_dir, exist_ok=True)
+
+    if args.fill_missing:
+        existing = {
+            int(os.path.splitext(f)[0])
+            for f in (os.listdir(out_dir) if os.path.isdir(out_dir) else [])
+            if f.endswith(".npz") and os.path.splitext(f)[0].isdigit()
+        }
+        steps = sorted(s for s in steps if s not in existing)
+        if not steps:
+            logger.info(f"No missing steps for {model} run {run} — already complete")
+            sys.exit(0)
+        logger.info(f"--fill-missing: {len(steps)} step(s) to ingest: {steps}")
 
     ok = 0
     for step in steps:

@@ -58,9 +58,15 @@ def build_status_payload(
     }
 
     # Ingest health panel (latest run + expected/available/missing steps per model)
-    expected_steps = {"icon_d2": 48, "icon_eu": 92}
+    # Step lists must match MODEL_CONFIG in ingest.py
+    expected_step_lists = {
+        "icon_d2": list(range(1, 49)),
+        "icon_eu": list(range(1, 79)) + list(range(81, 121, 3)),
+    }
     by_model = {}
     for m in ("icon_d2", "icon_eu"):
+        all_expected = expected_step_lists[m]
+        expected = len(all_expected)
         latest_m = next((r for r in runs if r.get("model") == m), None)
         if latest_m is None:
             by_model[m] = {
@@ -68,21 +74,23 @@ def build_status_payload(
                 "latestRun": None,
                 "latestRunTime": None,
                 "availableSteps": 0,
-                "expectedSteps": expected_steps[m],
-                "missingSteps": expected_steps[m],
+                "expectedSteps": expected,
+                "missingSteps": expected,
+                "missingStepNumbers": all_expected,
                 "coverage": 0.0,
             }
             continue
-        available = len(latest_m.get("steps", []))
-        expected = expected_steps[m]
-        missing = max(0, expected - available)
+        available_set = {s["step"] for s in latest_m.get("steps", [])}
+        available = len(available_set)
+        missing_nums = sorted(s for s in all_expected if s not in available_set)
         by_model[m] = {
             "hasRun": True,
             "latestRun": latest_m.get("run"),
             "latestRunTime": latest_m.get("runTime"),
             "availableSteps": available,
             "expectedSteps": expected,
-            "missingSteps": missing,
+            "missingSteps": len(missing_nums),
+            "missingStepNumbers": missing_nums,
             "coverage": round((available / expected), 3) if expected else None,
         }
 
