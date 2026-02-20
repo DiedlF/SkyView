@@ -1,7 +1,9 @@
 # Skyview TODO (Consolidated)
 
-**Last updated:** 2026-02-18  
-**State:** ✅ Core map/symbol/overlay workflow stable. ✅ D2/EU fallback + marker workflow + localization/help + LPI overlay delivered.
+**Last updated:** 2024-02-20 (consolidated reviews/PR plan)  
+**Git status:** All changes staged (routers/services extracted, new docs/backend modules, data files). Ready for PR5+ commits.  
+**P1 Progress:** PR1-3 ✅ (services/GridContext/AppState), PR4 partial (some async), PR5 pending (data_cache singleflight).  
+**State:** ✅ Core stable. ✅ Architecture skeleton (routers). Reviews integrated (security/races/perf addressed mostly).
 
 ---
 
@@ -21,15 +23,29 @@
 ### 1) Security hardening
 - ✅ Current Prio-1 security items completed (location_search rate limiting + Nominatim caching)
 
-### 2) Backend architecture / maintainability
-- [ ] Continue splitting `backend/app.py` into routers/modules (`symbols`, `overlay`, `markers`, `wind`, `point`)
-- [x] Centralize meteorological thresholds / magic numbers in `constants.py` (+ rationale comments)
-- [x] De-duplicate shared `cell_sizes` definitions into one source of truth
-- [ ] Consolidate repeated D2/EU fallback logic via shared helper(s)
-- [x] Add missing type hints on selected backend helpers
-- [x] Refactor precip pipeline internals with shared constants/mappings (overlay + point + ingest semantics); deeper module split still open
-- [x] Add context-level cache tuning for precomputed precip fields (tile burst warmup behavior)
-- [ ] (Later) Optional runtime fallback for missing precomputed precip fields in legacy runs
+### 2) Backend architecture / maintainability (P1-P3 ✅, PR5 next)
+
+**PR Plan (integrated from ARCHITECTURE_REVIEW + CODE_REVIEW + phases):**
+- [x] **PR1:** Service extraction skeleton (model_select.py, data_loader.py, status_ops.py, grid_aggregation.py) — app.py reduced.
+- [x] **PR2:** Shared GridContext + blend engine (grid_aggregation.py: build_grid_context/choose_cell_groups).
+- [x] **PR3:** AppState consolidation (globals → app_state DI: fallback_stats, eu_cache, rates, etc.).
+- [ ] **PR4:** Async/blocking completion (location_search requests → httpx/to_thread; DWD HEAD async).
+- [x] **PR5:** data_cache singleflight + key-merge hardening (services/data_loader.py). Test: concurrent partial/full misses share NPZ/merge atomically.
+- [ ] **PR6:** data_cache tuning (env var max_items >8).
+- [ ] **PR7:** Tile delivery opt (cache-control/ETag telemetry).
+
+**Other open (from reviews):**
+- [x] Centralize constants.py (thresholds done).
+- [x] cell_sizes shared.
+- [ ] Consolidate D2/EU helpers further (overlay fallback gating).
+- [x] Type hints added.
+- [x] Precip refactor (overlay/point).
+- [x] Computed precip cache tuning.
+- [ ] Runtime fallback legacy precip.
+- [ ] Marker file race locks (markers_lock exists, but verify concurrent).
+- [ ] CORS production hardening (env var origins).
+- [ ] Feedback/marker pytest.
+- [ ] Multi-worker safe metrics (process-local ok, doc).
 
 ### 3) Data/model harmonization (ICON-EU ↔ ICON-D2)
 - [ ] Align ICON-EU variable semantics/mapping to ICON-D2 for:
