@@ -85,6 +85,7 @@ from feedback_ops import make_feedback_entry, append_feedback, read_feedback_lis
 from model_caps import get_models_payload
 from response_headers import build_overlay_headers, build_tile_headers
 from usage_stats import record_visit, get_usage_stats, get_marker_stats
+import marker_auth as _marker_auth
 from services.model_select import resolve_eu_time_strict as svc_resolve_eu_time_strict, load_eu_data_strict as svc_load_eu_data_strict
 from services.data_loader import load_step_data
 from services.app_state import AppState
@@ -125,6 +126,10 @@ async def lifespan(app: FastAPI):
     logger.info("Skyview API server starting")
     logger.info(f"Data directory: {DATA_DIR}")
     logger.info(f"Frontend directory: {FRONTEND_DIR}")
+
+    _auth_warn = _marker_auth.startup_check()
+    if _auth_warn:
+        logger.warning(f"Marker auth: {_auth_warn}")
 
     runs = get_available_runs()
     logger.info(f"Found {len(runs)} available model runs")
@@ -1057,8 +1062,8 @@ USAGE_STATS_FILE = os.path.join(DATA_DIR, "usage_stats.json")
 USAGE_HASH_SALT = os.environ.get("SKYVIEW_USAGE_SALT", "skyview-usage-default-salt")
 OPENAIP_SEED_FILE = os.path.join(SCRIPT_DIR, "openaip_seed.json")
 MARKER_AUTH_SECRET = os.environ.get("SKYVIEW_MARKER_AUTH_SECRET", "")
-MARKER_AUTH_CONFIGURED = bool(MARKER_AUTH_SECRET and len(MARKER_AUTH_SECRET) >= 16 and MARKER_AUTH_SECRET != "dev-marker-secret-change-me")
-MARKER_TOKEN_TTL_SECONDS = 12 * 3600
+MARKER_AUTH_CONFIGURED = _marker_auth.is_configured()
+MARKER_TOKEN_TTL_SECONDS = _marker_auth.TOKEN_TTL_SECONDS
 markers_lock = threading.Lock()
 DEFAULT_MARKER = {
     "name": "Geitau",
@@ -1100,41 +1105,12 @@ def _load_openaip_seed() -> List[Dict[str, Any]]:
         return []
 
 
-def _sign_marker_token(payload_json: str) -> str:
-    sig = hmac.new(MARKER_AUTH_SECRET.encode("utf-8"), payload_json.encode("utf-8"), hashlib.sha256).digest()
-    return base64.urlsafe_b64encode(sig).decode("utf-8").rstrip("=")
-
-
 def _make_marker_token(client_id: str) -> Dict[str, Any]:
-    exp = int(time.time()) + MARKER_TOKEN_TTL_SECONDS
-    payload = {"cid": client_id, "exp": exp}
-    payload_json = json.dumps(payload, separators=(",", ":"), sort_keys=True)
-    payload_b64 = base64.urlsafe_b64encode(payload_json.encode("utf-8")).decode("utf-8").rstrip("=")
-    sig_b64 = _sign_marker_token(payload_json)
-    return {
-        "token": f"{payload_b64}.{sig_b64}",
-        "expiresAt": datetime.fromtimestamp(exp, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
-    }
+    return _marker_auth.make_token(client_id)
 
 
 def _verify_marker_token(client_id: str, token: str) -> bool:
-    try:
-        if not token or "." not in token:
-            return False
-        payload_b64, sig_b64 = token.split(".", 1)
-        padding = "=" * (-len(payload_b64) % 4)
-        payload_json = base64.urlsafe_b64decode((payload_b64 + padding).encode("utf-8")).decode("utf-8")
-        expected_sig = _sign_marker_token(payload_json)
-        if not hmac.compare_digest(expected_sig, sig_b64):
-            return False
-        payload = json.loads(payload_json)
-        if payload.get("cid") != client_id:
-            return False
-        if int(payload.get("exp", 0)) < int(time.time()):
-            return False
-        return True
-    except Exception:
-        return False
+    return _marker_auth.verify_token(client_id, token)
 
 async def api_feedback(request: Request):
     """Store user feedback with context."""

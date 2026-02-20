@@ -24,7 +24,7 @@ def load_step_data(
     keys: Optional[List[str]],
     logger,
 ) -> Dict[str, Any]:
-    \"\"\"Load .npz for model/run/step with selective-key support, LRU + singleflight.\"\"\"
+    """Load .npz for model/run/step with selective-key support, LRU + singleflight."""
     cache_key = f"{model}/{run}/{step:03d}"
 
     if cache_key in cache:

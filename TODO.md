@@ -19,8 +19,8 @@
 
 ### A) Backend / Maintainability
 
-- [ ] **Marker auth module** — still in app.py (~80 lines HMAC/base64). Move to `backend/marker_auth.py` + add isolated tests. (Arch review #8)
-- [ ] **Per-cell loop vectorization** — symbols/wind aggregate still nested Python loops (~900 cells at zoom 9). Vectorize stratiform cloud path across cells with NumPy. (Arch review #6)
+- [x] **Marker auth module** — extracted to `backend/marker_auth.py` (make_token/verify_token/startup_check). app.py thin wrappers; startup warning on weak/missing secret. Tests: `tests/test_marker_auth.py` (17 cases). (Arch #8)
+- [~] **Per-cell loop vectorization** — `aggregate_symbol_cell` is already fully vectorized *within* each cell (NumPy on full cell arrays). Across-cell vectorization blocked by per-cell EU/D2 source switching. Fast-path exists (zoom ≤ 9 stride sampling). Further deferred. (Arch #6)
 - [ ] **EU fallback helpers consolidation** — overlay/tile both have inline EU load+gate logic. Extract shared `_load_eu_for_tile(time, cfg, tile_bounds)` helper.
 - [ ] **Computed cache tune** — eviction policy for active timestep/layer churn (Phase 2 overlay perf).
 - [ ] **Tile pre-render warmup** — optional ring of viewport tiles on context switch (Phase 3).
@@ -32,7 +32,7 @@
 
 - [ ] **GitHub push** — repo not yet pushed to remote.
 - [ ] **CI pipeline** (PR9) — lint/type/pytest + qa_smoke/qa_regression/qa_contract/qa_perf workflows.
-- [ ] **Pytest migration** (PR8) — wrap `qa_smoke.py`, `qa_contract.py`, `qa_regression.py`, `qa_perf.py` as pytest suites (scripts/tests/). (Arch review #11)
+- [x] **Pytest migration** (PR8) — `tests/test_smoke.py`, `test_regression.py`, `test_contract.py`, `test_perf.py`. Unit tests (no server) run always; integration/perf marked + skipped in fast CI. `pytest.ini` configured. 20 unit tests pass. (Arch #11)
 - [ ] **Marker secret startup policy** — warn/error at startup when `SKYVIEW_MARKER_AUTH_SECRET` missing/weak; add rotation notes to ops docs. (PR10)
 - [ ] **CORS production** — doc that `SKYVIEW_CORS_ORIGINS` must be set to real hostname before public deploy; default already safe (localhost allowlist). (PR11)
 
