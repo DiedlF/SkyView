@@ -1,7 +1,7 @@
 # Skyview TODO
 
-**Last updated:** 2026-02-20  
-**State:** ✅ Core stable. P1 (arch/cache) complete. P2 (cache correctness) complete. P3 (quality gates) in progress.
+**Last updated:** 2026-02-20 (session 2)
+**State:** ✅ Core stable. P1 (arch/cache) complete. P2 (cache correctness) complete. P3 (quality gates) in progress. Admin endpoint hardened.
 
 ---
 
@@ -30,6 +30,7 @@
 
 ### B) Ops / Release Hygiene (P3)
 
+- [ ] **`test_symbol_zoom_continuity` threshold** — 3 cells at z8→z9 give 98.68% vs 99.5% threshold. Investigate whether these are legitimately ambiguous border cells or a real rendering inconsistency.
 - [ ] **GitHub push** — repo not yet pushed to remote.
 - [ ] **CI pipeline** (PR9) — lint/type/pytest + qa_smoke/qa_regression/qa_contract/qa_perf workflows.
 - [x] **Pytest migration** (PR8) — `tests/test_smoke.py`, `test_regression.py`, `test_contract.py`, `test_perf.py`. Unit tests (no server) run always; integration/perf marked + skipped in fast CI. `pytest.ini` configured. 20 unit tests pass. (Arch #11)
@@ -119,6 +120,10 @@
 - ✅ Admin dashboard MVP (`/admin`): ingest health, fallback/cache/perf, feedback inbox, logs
 - ✅ Status endpoint richer: widgets/tables, level filters, artifact drilldown
 - ✅ Fallback stats persisted to `data/fallback_stats.json`
+- ✅ `/api/status` fallback counters fixed — were overwritten by snapshot fields (`.update()` fix)
+- ✅ `/api/status` ingestHealth now includes `missingStepNumbers[]` — exact missing steps, not just count
+- ✅ `ingest.py --fill-missing` — ingests only absent steps for a run; defaults to full step range
+- ✅ EU overlay gap fixed — hsurf NaN slice check replaces rectangular bbox margin (commit `04509e8`)
 
 ---
 
