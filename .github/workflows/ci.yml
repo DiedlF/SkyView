@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pipx install ruff black mypy
+      - run: ruff check .
+      - run: black --check .
+      - run: mypy backend/
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: unit
+            pytest-args: tests/ -m "not integration and not perf" --cov=backend/ --cov-report=xml --cov-report=term-missing
+          - name: integration
+            pytest-args: tests/ -m integration
+          - name: perf
+            pytest-args: tests/ -m perf
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: pdm-project/setup-pdm@v4
+        with:
+          python-version: '3.12'
+          cache: true
+      - run: pdm install -G test
+      - run: ${{ matrix.pytest-args }}
+        env:
+          PYTHONPATH: backend/
+      - uses: codecov/codecov-action@v4
+        if: matrix.name == 'unit'
+
+  qa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r backend/requirements.txt
+      - run: python3 backend/app.py & sleep 5; PID=$!; python3 scripts/qa_smoke.py && python3 scripts/qa_regression.py && python3 scripts/qa_contract.py && kill $PID
+        env:
+          PYTHONPATH: backend/
