@@ -603,12 +603,17 @@ def build_d2_boundary_cache(run: str):
     lat_res = float(abs(lat[1] - lat[0])) if len(lat) > 1 else 0.02
     lon_res = float(abs(lon[1] - lon[0])) if len(lon) > 1 else 0.02
 
-    # Boundary mask: use all-ones so the border is drawn at the actual rectangular grid extent.
-    # Using isfinite(ww) or isfinite(mh) pulled the border 3+ cells inward due to the NaN
-    # relaxation zone at ICON-D2 boundaries — making the border appear inside D2 territory.
-    # The NaN relaxation-zone cells will render transparently (EU fills them); the border
-    # correctly marks the outer edge of the D2 grid, not where data first becomes valid.
-    valid = np.ones((len(lat), len(lon)), dtype=bool)
+    # Boundary mask: use hsurf (terrain elevation) to identify valid D2 domain cells.
+    # hsurf is always defined wherever the D2 grid has a valid point (only NaN outside domain).
+    # Avoid mh (mixing height = NaN at night/stable conditions) and ww (NaN with no weather
+    # event) — both have meteorological NaN that pulls the border inward beyond domain edges.
+    # Fall back to ww, then all-valid if hsurf is unavailable.
+    if 'hsurf' in src.files:
+        valid = np.isfinite(src['hsurf'])
+    elif 'ww' in src.files:
+        valid = np.isfinite(src['ww'])
+    else:
+        valid = np.ones((len(lat), len(lon)), dtype=bool)
 
     segments = []
     n_i, n_j = valid.shape
