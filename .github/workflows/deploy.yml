@@ -24,7 +24,13 @@ jobs:
             set -e
             cd /opt/skyview || git clone https://github.com/DiedlF/SkyView.git /opt/skyview && cd /opt/skyview
             git pull origin master
-            pip3 install -U -r backend/requirements.txt || pip3 install -r backend/requirements.txt
+            apt update -qq
+            apt install -y python3-venv python3-pip
+            rm -rf venv
+            python3 -m venv venv
+            . venv/bin/activate
+            pip install --upgrade pip
+            pip install -r backend/requirements.txt
             pkill -f 'python3 backend/app.py' || true
-            nohup python3 backend/app.py --host 0.0.0.0 > /var/log/skyview.log 2>&1 &
-            echo 'Deploy complete: $(date)'
+            nohup venv/bin/python backend/app.py --host 0.0.0.0 > /var/log/skyview.log 2>&1 &
+            echo 'Deploy complete: http://46.225.176.92:8501 ($(date))'
