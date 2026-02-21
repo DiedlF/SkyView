@@ -4,6 +4,9 @@
 
 data/icon-d2/
 data/icon-eu/
+data/fallback_stats.json
+data/usage_stats.json
+
 
 # Secrets — never commit these
 *.env

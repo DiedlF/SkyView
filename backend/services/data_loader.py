@@ -5,10 +5,8 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-
-
 import threading
-from typing import Dict, Any
+
 
 _data_inflight: Dict[str, threading.Event] = {}
 _data_inflight_lock = threading.Lock()

@@ -808,7 +808,7 @@ def main():
     if bounds:
         logger.info(f"  Region: crop to {bounds}")
     else:
-        logger.info(f"  Region: full grid (no crop)")
+        logger.info("  Region: full grid (no crop)")
 
     # Check if run data is available
     first_step = steps[0]
