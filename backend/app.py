@@ -43,9 +43,6 @@ import time
 import atexit
 import uuid
 import json
-import base64
-import hmac
-import hashlib
 import glob
 import subprocess
 import requests

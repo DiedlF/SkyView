@@ -1,0 +1,18 @@
+line-length = 120
+target-version = "py312"
+
+[lint]
+# E = pycodestyle errors, F = pyflakes, W = pycodestyle warnings
+select = ["E", "F", "W"]
+ignore = [
+    "E501",  # line too long — many intentionally long lines in this codebase
+    "E402",  # module-level import not at top of file (env loader must run first)
+    "E741",  # ambiguous variable name (l, O, I)
+    "W291",  # trailing whitespace
+    "W293",  # whitespace before ':'
+    "F841",  # local variable assigned but never used (occasionally useful for side effects)
+]
+
+[lint.per-file-ignores]
+# QA scripts are intentionally loose
+"scripts/*" = ["E", "W"]

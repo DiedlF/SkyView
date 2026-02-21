@@ -24,13 +24,20 @@ jobs:
             set -e
             cd /opt/skyview || git clone https://github.com/DiedlF/SkyView.git /opt/skyview && cd /opt/skyview
             git pull origin master
-            apt update -qq
-            apt install -y python3-venv python3-pip
+
+            # Kill old server FIRST (before removing venv) so it can clean up gracefully.
+            # Match on 'backend/app.py' to handle both 'python3 ...' and 'venv/bin/python ...' starts.
+            pkill -f 'backend/app.py' || true
+            # Remove PID file so the single-instance guard doesn't block the new server.
+            rm -f backend/logs/skyview.pid
+            sleep 1
+
+            # Rebuild venv with fresh dependencies.
             rm -rf venv
             python3 -m venv venv
-            . venv/bin/activate
-            pip install --upgrade pip
-            pip install -r backend/requirements.txt
-            pkill -f 'python3 backend/app.py' || true
-            nohup venv/bin/python backend/app.py --host 0.0.0.0 > /var/log/skyview.log 2>&1 &
-            echo 'Deploy complete: http://46.225.176.92:8501 ($(date))'
+            venv/bin/pip install --upgrade pip
+            venv/bin/pip install -r backend/requirements.txt
+
+            # Start new server.
+            nohup venv/bin/python backend/app.py > /var/log/skyview.log 2>&1 &
+            echo "Deploy complete: http://$(hostname -I | awk '{print $1}'):8501 ($(date))"
