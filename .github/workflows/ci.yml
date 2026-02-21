@@ -59,7 +59,20 @@ jobs:
         run: |
           python3 backend/app.py &
           APP_PID=$!
-          sleep 5
+          # Wait up to 30s for the server to become ready (cold-start import of scipy/numpy/xarray can be slow)
+          echo "Waiting for server to be ready..."
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8501/api/health > /dev/null 2>&1; then
+              echo "Server ready after ${i}s"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "Server did not become ready within 30s"
+              kill $APP_PID 2>/dev/null || true
+              exit 1
+            fi
+            sleep 1
+          done
           python3 scripts/qa_smoke.py && python3 scripts/qa_regression.py && python3 scripts/qa_contract.py
           QA_EXIT=$?
           kill $APP_PID 2>/dev/null || true

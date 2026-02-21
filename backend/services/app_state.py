@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from collections import OrderedDict, deque
+from collections import OrderedDict
 from threading import Lock
-from typing import Any, Deque, Dict, Optional, Tuple
+from typing import Any, Deque, Dict, Optional  # noqa: F401 (Optional used in string annotations)
 
 
 @dataclass

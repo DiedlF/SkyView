@@ -49,8 +49,8 @@ import requests
 from email.utils import parsedate_to_datetime
 from time import perf_counter
 import numpy as np
-from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, Optional, List, Deque
+from datetime import datetime, timezone
+from typing import Dict, Any, Optional, List
 from collections import OrderedDict, deque
 from contextlib import asynccontextmanager
 

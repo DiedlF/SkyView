@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-import math
 import os
 import sys
 import numpy as np
