@@ -48,4 +48,4 @@ jobs:
             # from hanging waiting for the backgrounded process to close its file descriptors).
             nohup venv/bin/python backend/app.py < /dev/null > /var/log/skyview.log 2>&1 &
             disown $!
-            echo "Deploy complete: http://$(hostname -I | awk '{print $1}'):8501 ($(date))"
+            # echo "Deploy complete: http://$(hostname -I | awk '{print $1}'):8501 ($(date))"

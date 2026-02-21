@@ -6,6 +6,7 @@ data/icon-d2/
 data/icon-eu/
 data/fallback_stats.json
 data/usage_stats.json
+data/markers.json
 
 
 # Secrets — never commit these
