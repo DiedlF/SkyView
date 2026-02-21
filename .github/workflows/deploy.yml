@@ -23,11 +23,12 @@ jobs:
           script: |
             set -e
             if [ ! -d /opt/skyview/.git ]; then
-              git clone https://github.com/DiedlF/SkyView.git /opt/skyview
+              git clone --quiet https://github.com/DiedlF/SkyView.git /opt/skyview
             fi
             cd /opt/skyview
-            git fetch origin
-            git reset --hard origin/master
+            git fetch --quiet origin master
+            git checkout -q master
+            git reset -q --hard FETCH_HEAD
 
             # Kill old server FIRST (before removing venv) so it can clean up gracefully.
             # Match on 'backend/app.py' to handle both 'python3 ...' and 'venv/bin/python ...' starts.
