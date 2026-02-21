@@ -24,33 +24,25 @@ jobs:
           command_timeout: 5m
           script: |
             set -e
-            if [ ! -d /opt/skyview/.git ]; then
-              git clone --quiet https://github.com/DiedlF/SkyView.git /opt/skyview
-            fi
             cd /opt/skyview
             git fetch --quiet origin master
             git checkout -q master
             git reset -q --hard FETCH_HEAD
 
-            # Kill old server FIRST (before touching venv).
-            pkill -f 'backend/app.py' || true
-            rm -f backend/logs/skyview.pid
-            sleep 1
+            # GRIB deps (array size fix)
+            sudo apt update -qq
+            sudo apt install -y libeccodes-dev python3-eccodes || true
 
-            # System deps for GRIB parsing (cfgrib needs eccodes C lib)
-            apt update -qq
-            apt install -y libeccodes-dev python3-eccodes || true
-
-            # Venv: create only if missing, upgrade pip + deps (faster than full clean reinstall)
-            if [ ! -d venv ]; then
+            # Update dependencies efficiently
+            if [ ! -d "venv" ]; then
               python3 -m venv venv
+              venv/bin/pip install --upgrade pip
             fi
-            venv/bin/pip install --upgrade pip
             venv/bin/pip install -r backend/requirements.txt --upgrade
-            # Fix GRIB array size issue: force cfgrib upgrade/reinstall for consistent parsing
+            # Pin cfgrib for consistent array sizes
             venv/bin/pip install cfgrib==0.9.14.1 --force-reinstall --no-deps
 
-            # Start new server (fully detached from SSH session)
-            nohup venv/bin/python backend/app.py < /dev/null > /var/log/skyview.log 2>&1 &
-            disown $!
-            echo "Deploy complete: http://$(hostname -I | awk '{print \$1}'):8501 ($(date))"
+            # Restart systemd service (handles kill/restart)
+            sudo systemctl restart skyview
+
+            echo "Deploy complete ($(date))"
