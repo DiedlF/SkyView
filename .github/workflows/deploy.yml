@@ -20,6 +20,8 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          timeout: 5m
+          command_timeout: 5m
           script: |
             set -e
             if [ ! -d /opt/skyview/.git ]; then
@@ -30,22 +32,25 @@ jobs:
             git checkout -q master
             git reset -q --hard FETCH_HEAD
 
-            # Kill old server FIRST (before removing venv) so it can clean up gracefully.
-            # Match on 'backend/app.py' to handle both 'python3 ...' and 'venv/bin/python ...' starts.
+            # Kill old server FIRST (before touching venv).
             pkill -f 'backend/app.py' || true
-            # Remove PID file so the single-instance guard doesn't block the new server.
             rm -f backend/logs/skyview.pid
             sleep 1
 
-            # Rebuild venv with fresh dependencies.
-            rm -rf venv
-            python3 -m venv venv
-            venv/bin/pip install --upgrade pip
-            venv/bin/pip install -r backend/requirements.txt
+            # System deps for GRIB parsing (cfgrib needs eccodes C lib)
+            apt update -qq
+            apt install -y libeccodes-dev python3-eccodes || true
 
-            # Start new server — redirect stdin from /dev/null and disown so the
-            # process is fully detached from the SSH session (prevents appleboy/ssh-action
-            # from hanging waiting for the backgrounded process to close its file descriptors).
+            # Venv: create only if missing, upgrade pip + deps (faster than full clean reinstall)
+            if [ ! -d venv ]; then
+              python3 -m venv venv
+            fi
+            venv/bin/pip install --upgrade pip
+            venv/bin/pip install -r backend/requirements.txt --upgrade
+            # Fix GRIB array size issue: force cfgrib upgrade/reinstall for consistent parsing
+            venv/bin/pip install cfgrib==0.9.14.1 --force-reinstall --no-deps
+
+            # Start new server (fully detached from SSH session)
             nohup venv/bin/python backend/app.py < /dev/null > /var/log/skyview.log 2>&1 &
             disown $!
-            # echo "Deploy complete: http://$(hostname -I | awk '{print $1}'):8501 ($(date))"
+            echo "Deploy complete: http://$(hostname -I | awk '{print \$1}'):8501 ($(date))"
