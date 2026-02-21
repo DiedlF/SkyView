@@ -7,6 +7,8 @@ select = ["E", "F", "W"]
 ignore = [
     "E501",  # line too long — many intentionally long lines in this codebase
     "E402",  # module-level import not at top of file (env loader must run first)
+    "E701",  # multiple statements on one line (colon) — used throughout codebase
+    "E702",  # multiple statements on one line (semicolon) — used throughout codebase
     "E741",  # ambiguous variable name (l, O, I)
     "W291",  # trailing whitespace
     "W293",  # whitespace before ':'
