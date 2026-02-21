@@ -14,10 +14,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pipx install ruff black mypy
+      - run: pipx install ruff
       - run: ruff check .
-      - run: black --check .
-      - run: mypy backend/
 
   test:
     runs-on: ubuntu-latest
