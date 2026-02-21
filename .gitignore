@@ -4,3 +4,10 @@
 
 data/icon-d2/
 data/icon-eu/
+
+# Secrets — never commit these
+*.env
+.env*
+*secret*.env
+deploy_key
+deploy_key.pub

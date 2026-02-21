@@ -35,13 +35,28 @@ def is_configured(secret: Optional[str] = None) -> bool:
 
 def startup_check(secret: Optional[str] = None) -> Optional[str]:
     """Return a warning string if secret is missing/weak, else None."""
+    result = startup_check_with_level(secret)
+    return result[1] if result else None
+
+
+def startup_check_with_level(secret: Optional[str] = None) -> Optional[tuple[str, str]]:
+    """Return (severity, message) if secret is missing/weak, else None.
+
+    severity is ``"error"`` for a completely missing secret (marker auth fully
+    inoperable) and ``"warning"`` for a weak/known-bad secret.
+    """
     s = secret if secret is not None else SECRET
     if not s:
-        return "SKYVIEW_MARKER_AUTH_SECRET is not set — marker editing disabled."
+        return (
+            "error",
+            "SKYVIEW_MARKER_AUTH_SECRET is not set — marker editing is DISABLED. "
+            "Set a strong random secret (>= 32 chars) in .marker_auth_secret.env or the environment.",
+        )
     if s in _WEAK_SECRETS or len(s) < 16:
         return (
-            f"SKYVIEW_MARKER_AUTH_SECRET is too weak (len={len(s)}) — "
-            "marker editing disabled. Set a strong secret (>= 16 chars)."
+            "warning",
+            f"SKYVIEW_MARKER_AUTH_SECRET is too weak (len={len(s)}) — marker editing is DISABLED. "
+            "Replace with a strong random secret (>= 32 chars, e.g. openssl rand -hex 32).",
         )
     return None
 

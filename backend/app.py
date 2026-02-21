@@ -128,9 +128,15 @@ async def lifespan(app: FastAPI):
     logger.info(f"Data directory: {DATA_DIR}")
     logger.info(f"Frontend directory: {FRONTEND_DIR}")
 
-    _auth_warn = _marker_auth.startup_check()
-    if _auth_warn:
-        logger.warning(f"Marker auth: {_auth_warn}")
+    _auth_check = _marker_auth.startup_check_with_level()
+    if _auth_check:
+        _auth_severity, _auth_msg = _auth_check
+        _banner = "\n" + "=" * 72 + f"\n  SKYVIEW SECURITY: {_auth_msg}\n" + "=" * 72
+        print(_banner, file=sys.stderr, flush=True)
+        if _auth_severity == "error":
+            logger.error("Marker auth: %s", _auth_msg)
+        else:
+            logger.warning("Marker auth: %s", _auth_msg)
 
     runs = get_available_runs()
     logger.info(f"Found {len(runs)} available model runs")
