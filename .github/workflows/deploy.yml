@@ -29,22 +29,33 @@ jobs:
             git checkout -q master
             git reset -q --hard FETCH_HEAD
 
-            # GRIB deps
-            sudo apt update -qq
-            sudo apt install -y libeccodes-dev python3-eccodes || true
+            # NOTE: libeccodes-dev apt package is NOT required.
+            # cfgrib>=0.9.14.1 + eccodes>=1.6.0 (both in requirements.txt) bundle
+            # the eccodes C library inside the Python wheel — no system lib needed.
 
-            # Venv (create once, then upgrade)
+            # Venv: create once, then let pip upgrade handle version changes
             if [ ! -d venv ]; then
               python3 -m venv venv
-              venv/bin/pip install --upgrade pip
+              venv/bin/pip install --quiet --upgrade pip
             fi
-            venv/bin/pip install -r backend/requirements.txt --upgrade
-            venv/bin/pip install cfgrib==0.9.14.1 --force-reinstall --no-deps
+            venv/bin/pip install --quiet -r backend/requirements.txt --upgrade
 
-            # Install systemd service from repo (no heredoc/base64 required)
+            # Systemd service: install from repo, reload and restart
             sudo cp deploy/skyview.service /etc/systemd/system/skyview.service
             sudo systemctl daemon-reload
             sudo systemctl enable skyview
             sudo systemctl restart skyview
+
+            # Ingest cron: register once, skip if already present
+            if ! crontab -l 2>/dev/null | grep -q 'skyview.*ingest'; then
+              (
+                crontab -l 2>/dev/null
+                echo "*/30 * * * * cd /opt/skyview && venv/bin/python backend/ingest.py latest --model icon-d2 >> /var/log/skyview-ingest.log 2>&1"
+                echo "0 * * * * cd /opt/skyview && venv/bin/python backend/ingest.py latest --model icon-eu >> /var/log/skyview-ingest.log 2>&1"
+              ) | crontab -
+              echo "Cron jobs registered"
+            else
+              echo "Cron already registered, skipping"
+            fi
 
             echo "Deploy complete ($(date))"

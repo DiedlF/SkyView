@@ -44,6 +44,8 @@
       <h2>Logs</h2>
       <div class="toolbar">
         <select id="logLevel"><option value="all">all</option><option value="error">error</option><option value="warn">warn</option><option value="info">info</option><option value="debug">debug</option></select>
+        <input id="logFilter" placeholder="filter lines…" style="min-width:260px">
+        <select id="logFile"><option value="all">all files</option></select>
         <button id="logApply">Apply</button>
       </div>
       <div id="logs">Loading…</div>
@@ -54,7 +56,8 @@
 const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const fmt=n=>!Number.isFinite(n)?'-':(()=>{const u=['B','KB','MB','GB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return n.toFixed(i?1:0)+' '+u[i]})();
 async function j(url,opt){const r=await fetch(url,opt);if(!r.ok)throw new Error(url+': '+r.status);return r.json();}
-const state={fbStatus:'',fbSearch:'',logLevel:'all'};
+const state={fbStatus:'',fbSearch:'',logLevel:'all',logFilter:'',logFile:'all'};
+let _logsCache=[];
 
 function kvTable(rows){return '<table>'+rows.map(([k,v])=>`<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')+'</table>'}
 
@@ -140,21 +143,59 @@ async function loadFeedback(){
     : '<div class="muted">No feedback.</div>';
 }
 
+function renderLogs(){
+  const needle=(state.logFilter||'').toLowerCase();
+  const fileFilter=state.logFile;
+  const logs=fileFilter==='all'?_logsCache:_logsCache.filter(l=>l.file===fileFilter);
+  if(!logs.length){document.getElementById('logs').innerHTML='<div class="muted">No logs.</div>';return;}
+  let html='';
+  for(const l of logs){
+    // Reverse: most-recent lines first
+    let lines=[...(l.tail||[])].reverse();
+    const total=lines.length;
+    if(needle) lines=lines.filter(ln=>ln.toLowerCase().includes(needle));
+    const shown=lines.length;
+    const pre=esc(lines.join('\n'));
+    const counter=needle?`${shown} of ${total} lines`:`${total} lines`;
+    html+=`<h3>${esc(l.file)} <span class="muted" style="font-size:12px;font-weight:normal">${fmt(l.sizeBytes)} · ${counter}</span></h3><pre>${pre}</pre>`;
+  }
+  document.getElementById('logs').innerHTML=html;
+}
+
 async function loadLogs(){
-  const r=await j('/api/admin/logs?limit=200&level='+encodeURIComponent(state.logLevel));
+  const r=await j('/api/admin/logs?limit=500&level='+encodeURIComponent(state.logLevel));
   const arts=r.artifacts||{};
   const ai=(arts.ingest||[]).map(x=>`${esc(x.name)} (${fmt(x.sizeBytes)})`).join(', ')||'none';
-  const ar=(arts.regression||[]).map(x=>esc(x.name)).join(', ')||'none';
-  let html='<div class="muted">Ingest artifacts: '+ai+'<br>Regression artifacts: '+ar+'</div>';
-  html += (r.logs||[]).map(l=>`<h3>${esc(l.file)} (${fmt(l.sizeBytes)})</h3><pre>${esc((l.tail||[]).join('\n'))}</pre>`).join('');
-  document.getElementById('logs').innerHTML=html;
+  _logsCache=r.logs||[];
+
+  // Populate file selector
+  const sel=document.getElementById('logFile');
+  const prev=sel.value;
+  sel.innerHTML='<option value="all">all files</option>'+_logsCache.map(l=>`<option value="${esc(l.file)}">${esc(l.file)}</option>`).join('');
+  if(_logsCache.some(l=>l.file===prev)) sel.value=prev;
+
+  document.getElementById('logs').insertAdjacentHTML('afterbegin',`<div class="muted" style="margin-bottom:6px">Ingest artifacts: ${ai}</div>`);
+  renderLogs();
 }
 
 async function loadAll(){await Promise.all([loadStatus(),loadStorage(),loadUsage(),loadFeedback(),loadLogs()]);}
 
 document.getElementById('refresh').onclick=()=>loadAll().catch(e=>alert(e.message));
 document.getElementById('fbApply').onclick=()=>{state.fbStatus=document.getElementById('fbStatus').value;state.fbSearch=document.getElementById('fbSearch').value.trim();loadFeedback().catch(e=>alert(e.message));};
-document.getElementById('logApply').onclick=()=>{state.logLevel=document.getElementById('logLevel').value;loadLogs().catch(e=>alert(e.message));};
+document.getElementById('logApply').onclick=()=>{
+  state.logLevel=document.getElementById('logLevel').value;
+  state.logFilter=document.getElementById('logFilter').value.trim();
+  state.logFile=document.getElementById('logFile').value;
+  loadLogs().catch(e=>alert(e.message));
+};
+document.getElementById('logFilter').addEventListener('input',()=>{
+  state.logFilter=document.getElementById('logFilter').value.trim();
+  if(_logsCache.length) renderLogs();
+});
+document.getElementById('logFile').addEventListener('change',()=>{
+  state.logFile=document.getElementById('logFile').value;
+  if(_logsCache.length) renderLogs();
+});
 window.setStatus=(id,s)=>setStatus(id,s).catch(e=>alert(e.message));
 loadAll().catch(e=>{document.body.insertAdjacentHTML('beforeend','<pre>'+esc(e.message)+'</pre>');});
 </script>

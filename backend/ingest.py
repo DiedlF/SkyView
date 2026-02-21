@@ -198,16 +198,57 @@ def download(url, dest):
 
 
 def load_grib(filepath, bounds=None):
-    """Load GRIB2, optionally crop to bounds, return (data_2d, lat_1d, lon_1d)."""
-    ds = cfgrib.open_datasets(filepath)[0]
+    """Load GRIB2, optionally crop to bounds, return (data_2d, lat_1d, lon_1d).
+
+    cfgrib ≥ 0.9.14 compatibility notes vs 0.9.10.x:
+    - open_datasets() may return multiple datasets; we search for the first with
+      latitude/longitude coords rather than blindly taking [0].
+    - step may be an explicit dimension (not squeezed) for accumulated fields
+      (tot_prec, rain_*, snow_*, grau_gsp, h_snow, freshsnw, prr/prs/prg_gsp)
+      and time-range statistics (vmax_10m, tmax/tmin_2m, lpi_max, dbz_*, etc.).
+      We reduce any residual leading dims via data[0] rather than data[-1].
+    - alternativeRowScanning is now handled correctly; lat/lon stay 1-D for
+      regular-lat-lon grids but ordering may differ — we sort ascending if needed.
+    - Non-hourly steps (ICON-EU 81-120h, 3h intervals) parse correctly since 0.9.12.
+    """
+    datasets = cfgrib.open_datasets(filepath)
+    if not datasets:
+        raise ValueError(f"No datasets in {filepath}")
+
+    # Find first dataset that has spatial coordinates and at least one data variable.
+    ds = None
+    for candidate in datasets:
+        if "latitude" in candidate.coords and "longitude" in candidate.coords and candidate.data_vars:
+            ds = candidate
+            break
+    if ds is None:
+        raise ValueError(f"No spatial dataset found in {filepath}")
+
     var = list(ds.data_vars.values())[0]
-    data = var.values.squeeze()
     lat = ds.coords["latitude"].values
     lon = ds.coords["longitude"].values
-    if data.ndim > 2:
-        logger.warning(f"GRIB ndim {data.ndim} — taking last slice")
-        data = data[-1]  # drop time/ensemble dim
-    data = data.reshape(len(lat), len(lon))
+
+    # Guard: cfgrib may return 2-D lat/lon for curvilinear grids; extract 1-D axes.
+    if lat.ndim > 1:
+        lat = lat[:, 0]
+    if lon.ndim > 1:
+        lon = lon[0, :]
+
+    data = var.values
+
+    # Reduce to exactly 2-D (lat × lon).
+    # squeeze() removes all size-1 dims; the while loop handles any residual dims
+    # that survive squeeze (e.g. step dim for accumulated/max fields, or
+    # isobaricInhPa when cfgrib doesn't drop it for single-level pressure files).
+    data = np.squeeze(data)
+    while data.ndim > 2:
+        data = data[0]
+
+    if data.shape != (len(lat), len(lon)):
+        raise ValueError(
+            f"Shape mismatch after reduction: data={data.shape}, "
+            f"lat={len(lat)}, lon={len(lon)} in {filepath}"
+        )
 
     if bounds:
         lat_min, lat_max, lon_min, lon_max = bounds
