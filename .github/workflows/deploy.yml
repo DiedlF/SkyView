@@ -24,44 +24,25 @@ jobs:
           command_timeout: 5m
           script: |
             set -e
-            cd /opt/skyview || git clone --quiet https://github.com/DiedlF/SkyView.git /opt/skyview && cd /opt/skyview
+            cd /opt/skyview || (git clone --quiet https://github.com/DiedlF/SkyView.git /opt/skyview && cd /opt/skyview)
             git fetch --quiet origin master
             git checkout -q master
             git reset -q --hard FETCH_HEAD
 
-            # GRIB deps (array size fix)
+            # GRIB deps
             sudo apt update -qq
             sudo apt install -y libeccodes-dev python3-eccodes || true
 
-            # Update dependencies efficiently
-            if [ ! -d "venv" ]; then
+            # Venv upgrade (fast)
+            if [ ! -d venv ]; then
               python3 -m venv venv
               venv/bin/pip install --upgrade pip
             fi
             venv/bin/pip install -r backend/requirements.txt --upgrade
             venv/bin/pip install cfgrib==0.9.14.1 --force-reinstall --no-deps
 
-            # Create systemd service
-            cat > /tmp/skyview.service << 'SERVICE_EOF'
-[Unit]
-Description=Skyview Backend
-After=network.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/opt/skyview
-Environment=PYTHONPATH=/opt/skyview/backend
-ExecStart=/opt/skyview/venv/bin/python /opt/skyview/backend/app.py
-Restart=always
-RestartSec=5
-StandardOutput=append:/var/log/skyview.log
-StandardError=append:/var/log/skyview.log
-
-[Install]
-WantedBy=multi-user.target
-SERVICE_EOF
-            sudo cp /tmp/skyview.service /etc/systemd/system/skyview.service
+            # Systemd service (base64 decode to avoid YAML heredoc issues)
+            echo "W1VuaX...dGVkQnk9bXVsdGktdXNlci50YXJnZXQK" | base64 -d | sudo tee /etc/systemd/system/skyview.service > /dev/null
             sudo systemctl daemon-reload
             sudo systemctl enable skyview
             sudo systemctl restart skyview
