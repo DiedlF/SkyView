@@ -33,7 +33,7 @@ jobs:
             sudo apt update -qq
             sudo apt install -y libeccodes-dev python3-eccodes || true
 
-            # Venv upgrade (fast)
+            # Venv (create once, then upgrade)
             if [ ! -d venv ]; then
               python3 -m venv venv
               venv/bin/pip install --upgrade pip
@@ -41,8 +41,8 @@ jobs:
             venv/bin/pip install -r backend/requirements.txt --upgrade
             venv/bin/pip install cfgrib==0.9.14.1 --force-reinstall --no-deps
 
-            # Systemd service (base64 decode to avoid YAML heredoc issues)
-            echo "W1VuaX...dGVkQnk9bXVsdGktdXNlci50YXJnZXQK" | base64 -d | sudo tee /etc/systemd/system/skyview.service > /dev/null
+            # Install systemd service from repo (no heredoc/base64 required)
+            sudo cp deploy/skyview.service /etc/systemd/system/skyview.service
             sudo systemctl daemon-reload
             sudo systemctl enable skyview
             sudo systemctl restart skyview
