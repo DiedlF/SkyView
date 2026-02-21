@@ -24,7 +24,7 @@ jobs:
           command_timeout: 5m
           script: |
             set -e
-            cd /opt/skyview
+            cd /opt/skyview || git clone --quiet https://github.com/DiedlF/SkyView.git /opt/skyview && cd /opt/skyview
             git fetch --quiet origin master
             git checkout -q master
             git reset -q --hard FETCH_HEAD
@@ -39,11 +39,10 @@ jobs:
               venv/bin/pip install --upgrade pip
             fi
             venv/bin/pip install -r backend/requirements.txt --upgrade
-            # Pin cfgrib for consistent array sizes
             venv/bin/pip install cfgrib==0.9.14.1 --force-reinstall --no-deps
 
-            # Create/reload systemd service
-            sudo tee /etc/systemd/system/skyview.service > /dev/null << 'EOF'
+            # Create systemd service
+            cat > /tmp/skyview.service << 'SERVICE_EOF'
 [Unit]
 Description=Skyview Backend
 After=network.target
@@ -61,7 +60,8 @@ StandardError=append:/var/log/skyview.log
 
 [Install]
 WantedBy=multi-user.target
-EOF
+SERVICE_EOF
+            sudo cp /tmp/skyview.service /etc/systemd/system/skyview.service
             sudo systemctl daemon-reload
             sudo systemctl enable skyview
             sudo systemctl restart skyview
