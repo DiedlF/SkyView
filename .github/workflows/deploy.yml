@@ -38,6 +38,9 @@ jobs:
             venv/bin/pip install --upgrade pip
             venv/bin/pip install -r backend/requirements.txt
 
-            # Start new server.
-            nohup venv/bin/python backend/app.py > /var/log/skyview.log 2>&1 &
+            # Start new server — redirect stdin from /dev/null and disown so the
+            # process is fully detached from the SSH session (prevents appleboy/ssh-action
+            # from hanging waiting for the backgrounded process to close its file descriptors).
+            nohup venv/bin/python backend/app.py < /dev/null > /var/log/skyview.log 2>&1 &
+            disown $!
             echo "Deploy complete: http://$(hostname -I | awk '{print $1}'):8501 ($(date))"
