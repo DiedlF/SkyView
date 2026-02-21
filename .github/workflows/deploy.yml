@@ -42,7 +42,28 @@ jobs:
             # Pin cfgrib for consistent array sizes
             venv/bin/pip install cfgrib==0.9.14.1 --force-reinstall --no-deps
 
-            # Restart systemd service (handles kill/restart)
+            # Create/reload systemd service
+            sudo tee /etc/systemd/system/skyview.service > /dev/null << 'EOF'
+[Unit]
+Description=Skyview Backend
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/skyview
+Environment=PYTHONPATH=/opt/skyview/backend
+ExecStart=/opt/skyview/venv/bin/python /opt/skyview/backend/app.py
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/skyview.log
+StandardError=append:/var/log/skyview.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+            sudo systemctl daemon-reload
+            sudo systemctl enable skyview
             sudo systemctl restart skyview
 
             echo "Deploy complete ($(date))"
