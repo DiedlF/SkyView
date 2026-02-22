@@ -76,7 +76,7 @@ from point_data import build_overlay_values, POINT_KEYS
 from classify import classify_point as classify_point_core
 from time_contract import get_available_runs as tc_get_available_runs, get_merged_timeline as tc_get_merged_timeline, resolve_time as tc_resolve_time
 from grid_utils import bbox_indices as _bbox_indices, slice_array as _slice_array
-from grid_aggregation import build_grid_context, choose_cell_groups
+from grid_aggregation import build_grid_context, choose_cell_groups, scatter_cell_stats
 from status_ops import build_status_payload, build_perf_payload
 from feedback_ops import make_feedback_entry, append_feedback, read_feedback_list, update_feedback_status
 from model_caps import get_models_payload
@@ -96,6 +96,7 @@ from routers.admin import build_admin_router
 from constants import (
     CELL_SIZES_BY_ZOOM,
     CAPE_CONV_THRESHOLD,
+    CEILING_VALID_MAX_METERS,
     ICON_EU_STEP_3H_START,
     EU_STRICT_MAX_DELTA_HOURS_DEFAULT,
     DATA_CACHE_MAX_ITEMS
@@ -617,6 +618,21 @@ async def api_symbols(
     lat_cell_count = ctx.lat_cell_count
     lon_cell_count = ctx.lon_cell_count
 
+    # ── Pre-compute per-cell stats (vectorized scatter, O(N_grid)) ────────────
+    # Gives cell_max_ww / cell_any_cape / cell_any_ceil for every cell at once.
+    # The cell loop then resolves "clear" cells with O(1) array lookups instead
+    # of per-cell np.ix_ extractions, which dominate latency at low zoom.
+    _pre_d2 = scatter_cell_stats(
+        c_lat, c_lon, ctx, ww, c_cape, ceil_arr,
+        CAPE_CONV_THRESHOLD, CEILING_VALID_MAX_METERS,
+    )
+    _pre_eu: tuple | None = None
+    if d_eu is not None and c_lat_eu is not None and ww_eu is not None:
+        _pre_eu = scatter_cell_stats(
+            c_lat_eu, c_lon_eu, ctx, ww_eu, c_cape_eu, ceil_arr_eu,
+            CAPE_CONV_THRESHOLD, CEILING_VALID_MAX_METERS,
+        )
+
     symbols = []
     used_eu_any = False
     used_d2_any = False
@@ -675,8 +691,9 @@ async def api_symbols(
             clo = np.asarray(clo_list, dtype=int) if clo_list else np.empty((0,), dtype=int)
 
             # If D2-selected cell has no finite weather signal, fall back to EU where available.
+            # Use pre-computed cell_max_ww (NaN ⟺ no finite ww in this D2 cell) to avoid np.ix_.
             if (not use_eu) and (ctx.eu is not None) and len(cli) > 0 and len(clo) > 0:
-                d2_has_signal = np.any(np.isfinite(src_ww[np.ix_(cli, clo)]))
+                d2_has_signal = not np.isnan(_pre_d2[0][i, j])
                 if not d2_has_signal:
                     use_eu = True
                     used_eu_any = True
@@ -703,39 +720,24 @@ async def api_symbols(
                 # Skip instead of nearest-neighbor extrapolation to avoid artificial value copying.
                 continue
 
-            # Extract cell data
-            cell_ww = src_ww[np.ix_(cli, clo)]
-            max_ww = int(np.nanmax(cell_ww)) if not np.all(np.isnan(cell_ww)) else 0
+            # ── Fast clear path (O(1) pre-computed lookup) ───────────────────
+            # Use pre-computed cell stats to skip np.ix_ for cells that are
+            # definitely "clear": no significant ww, no convective cape, no cloud ceiling.
+            # This covers the vast majority of cells at low zoom in fair weather.
+            _pre = _pre_eu if (use_eu and _pre_eu is not None) else _pre_d2
+            _pre_max_ww  = float(_pre[0][i, j])
+            _pre_any_cape = bool(_pre[1][i, j])
+            _pre_any_ceil = bool(_pre[2][i, j])
 
-            # Fast-path for likely clear/non-convective low-zoom cells to reduce first-hit latency.
-            if zoom <= 9 and max_ww <= 3:
-                cell_cape = src_cape[np.ix_(cli, clo)]
-                conv_signal = np.any(np.isfinite(cell_cape) & (cell_cape > CAPE_CONV_THRESHOLD))
-                cell_ceil = src_ceil[np.ix_(cli, clo)]
-                ceil_valid = cell_ceil[np.isfinite(cell_ceil) & (cell_ceil > 0) & (cell_ceil < 20000)]
-                if (not conv_signal) and len(ceil_valid) == 0:
-                    sym, cb_hm = "clear", None
-                    best_ii, best_jj = int(cli[len(cli) // 2]), int(clo[len(clo) // 2])
-                else:
-                    sym, cb_hm, best_ii, best_jj = aggregate_symbol_cell(
-                        cli=cli,
-                        clo=clo,
-                        cell_ww=cell_ww,
-                        ceil_arr=src_ceil,
-                        c_clcl=src_clcl,
-                        c_clcm=src_clcm,
-                        c_clch=src_clch,
-                        c_cape=src_cape,
-                        c_htop_dc=src_htop_dc,
-                        c_hbas_sc=src_hbas_sc,
-                        c_htop_sc=src_htop_sc,
-                        c_lpi=src_lpi,
-                        c_hsurf=src_hsurf,
-                        classify_point_fn=classify_point,
-                        zoom=zoom,
-                    )
+            if (not np.isnan(_pre_max_ww)) and _pre_max_ww <= 3 and not _pre_any_cape and not _pre_any_ceil:
+                # Confirmed clear — no numpy needed beyond single array element reads.
+                sym, cb_hm = "clear", None
+                best_ii = int(cli_list[len(cli_list) // 2])
+                best_jj = int(clo_list[len(clo_list) // 2])
             else:
-                # Determine aggregated symbol in helper module
+                # Non-clear cell: extract data and run full aggregation.
+                cell_ww = src_ww[np.ix_(cli, clo)]
+                max_ww = int(np.nanmax(cell_ww)) if not np.all(np.isnan(cell_ww)) else 0
                 sym, cb_hm, best_ii, best_jj = aggregate_symbol_cell(
                     cli=cli,
                     clo=clo,
@@ -2429,12 +2431,29 @@ async def api_admin_storage():
 async def api_admin_logs(
     limit: int = Query(300, ge=50, le=2000),
     level: str = Query("all", description="all|error|warn|info|debug"),
+    source: str = Query("all", description="all|backend|ingest|stdout"),
 ):
-    """Recent backend logs for admin/status view with basic level filtering."""
+    """Recent backend and ingest logs for admin/status view.
+
+    Each log entry includes a ``source`` field: "backend" (skyview.log),
+    "ingest" (ingest.log), or "stdout" (.out files).  The optional ``source``
+    query param filters to one group.
+    """
+
+    def _source_for_file(basename: str) -> str:
+        b = basename.lower()
+        if b.startswith("ingest"):
+            return "ingest"
+        if b.endswith(".out"):
+            return "stdout"
+        return "backend"
 
     def _collect_logs_payload():
         logs_dir = os.path.join(SCRIPT_DIR, "logs")
-        files = sorted(glob.glob(os.path.join(logs_dir, "*.log")) + glob.glob(os.path.join(logs_dir, "*.out")))
+        all_files = sorted(
+            glob.glob(os.path.join(logs_dir, "*.log"))
+            + glob.glob(os.path.join(logs_dir, "*.out"))
+        )
 
         lvl = (level or "all").strip().lower()
         needles = {
@@ -2444,25 +2463,41 @@ async def api_admin_logs(
             "debug": ["debug"],
         }.get(lvl)
 
+        src_filter = (source or "all").strip().lower()
+
         payload: list[dict[str, Any]] = []
-        for fp in files[-10:]:
+        for fp in all_files[-10:]:
+            basename = os.path.basename(fp)
+            file_source = _source_for_file(basename)
+
+            if src_filter != "all" and file_source != src_filter:
+                continue
+
             lines = _tail_lines(fp, limit=limit)
             if needles:
                 lines = [ln for ln in lines if any(n in ln.lower() for n in needles)]
+
             payload.append({
-                "file": os.path.basename(fp),
+                "file": basename,
                 "path": fp,
+                "source": file_source,
                 "sizeBytes": os.path.getsize(fp) if os.path.exists(fp) else 0,
                 "tail": lines,
             })
 
+        # Sort: backend first, then ingest, then stdout
+        _order = {"backend": 0, "ingest": 1, "stdout": 2}
+        payload.sort(key=lambda e: (_order.get(e["source"], 9), e["file"]))
+
         ingest_artifacts = [
             {"name": os.path.basename(p), "path": os.path.abspath(p), "sizeBytes": os.path.getsize(p)}
-            for p in sorted(glob.glob(os.path.join(logs_dir, "*ingest*"))) if os.path.isfile(p)
+            for p in sorted(glob.glob(os.path.join(logs_dir, "*ingest*")))
+            if os.path.isfile(p)
         ]
         regression_artifacts = [
             {"name": os.path.basename(p), "path": os.path.abspath(p), "sizeBytes": os.path.getsize(p)}
-            for p in sorted(glob.glob(os.path.join(SCRIPT_DIR, "..", "scripts", "qa_*.py"))) if os.path.isfile(p)
+            for p in sorted(glob.glob(os.path.join(SCRIPT_DIR, "..", "scripts", "qa_*.py")))
+            if os.path.isfile(p)
         ]
 
         return {

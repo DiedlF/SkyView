@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 
@@ -130,3 +130,93 @@ def choose_cell_groups(ctx: GridContext, i: int, j: int, prefer_eu: bool):
     if prefer_eu and ctx.eu is not None:
         return True, ctx.eu.lat_groups[i], ctx.eu.lon_groups[j]
     return False, ctx.primary.lat_groups[i], ctx.primary.lon_groups[j]
+
+
+def scatter_cell_stats(
+    c_lat: np.ndarray,
+    c_lon: np.ndarray,
+    ctx: "GridContext",
+    ww: np.ndarray,
+    cape: np.ndarray,
+    ceil_arr: np.ndarray,
+    cape_conv_threshold: float,
+    ceil_valid_max: float,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Vectorized O(N_grid) per-cell aggregate stats — no Python cell loop.
+
+    Computes three stats arrays shaped (lat_cell_count, lon_cell_count):
+      cell_max_ww   — float32, NaN where cell has no finite ww data
+      cell_any_cape — bool, True where any grid point has cape > cape_conv_threshold
+      cell_any_ceil — bool, True where any grid point has a valid ceiling
+
+    Used as a pre-pass before the symbol cell loop so that "clear" cells can be
+    resolved with O(1) array lookups instead of per-cell np.ix_ extractions.
+    Eliminates the two most expensive per-cell np.ix_ calls for the common case.
+
+    Memory overhead (D2 full domain ~730×1200 = 876K pts):
+      flat_cell broadcast: ~7 MB (int64), freed immediately after scatter
+      result arrays: 3 × (n_cells × dtype) — tiny (< 1 KB for zoom 5)
+    """
+    shape = (ctx.lat_cell_count, ctx.lon_cell_count)
+    nan_ww = np.full(shape, np.nan, dtype=np.float32)
+    no_cape = np.zeros(shape, dtype=bool)
+    no_ceil = np.zeros(shape, dtype=bool)
+
+    if ctx.lat_cell_count == 0 or ctx.lon_cell_count == 0:
+        return nan_ww, no_cape, no_ceil
+    if c_lat.size == 0 or c_lon.size == 0:
+        return nan_ww, no_cape, no_ceil
+    if ww.shape != (c_lat.size, c_lon.size):
+        return nan_ww, no_cape, no_ceil
+
+    # Derive cell size from stored edges (same cell_size used to build ctx)
+    if len(ctx.lat_edges) < 2 or len(ctx.lon_edges) < 2:
+        return nan_ww, no_cape, no_ceil
+    lat_cell_size = float(ctx.lat_edges[1] - ctx.lat_edges[0])
+    lon_cell_size = float(ctx.lon_edges[1] - ctx.lon_edges[0])
+
+    # Bin each coordinate into its cell index  (n_lat,) and (n_lon,)
+    lat_bins = np.floor((c_lat.astype(np.float64) - ctx.lat_start) / lat_cell_size).astype(np.intp)
+    lon_bins = np.floor((c_lon.astype(np.float64) - ctx.lon_start) / lon_cell_size).astype(np.intp)
+
+    # Domain validity masks for each axis
+    lat_ok = (lat_bins >= 0) & (lat_bins < ctx.lat_cell_count)  # (n_lat,)
+    lon_ok = (lon_bins >= 0) & (lon_bins < ctx.lon_cell_count)  # (n_lon,)
+
+    # Broadcast to full 2D grid: domain_ok[r, c] = True if both axes in range
+    domain_ok = lat_ok[:, None] & lon_ok[None, :]               # (n_lat, n_lon)
+
+    # Flat cell index: cell_flat[r, c] = lat_bin[r] * ncols + lon_bin[c]
+    flat_cell = (lat_bins[:, None] * ctx.lon_cell_count + lon_bins[None, :]).ravel()  # (n_lat*n_lon,)
+    domain_v  = domain_ok.ravel()
+    n_cells   = ctx.lat_cell_count * ctx.lon_cell_count
+
+    # ── max ww per cell (scatter-max) ─────────────────────────────────────────
+    # Initialize with -inf so np.maximum.at works correctly (NaN would propagate
+    # and leave everything as NaN). Convert remaining -inf (empty cells) to NaN afterward.
+    cell_max_ww_flat = np.full(n_cells, -np.inf, dtype=np.float32)
+    ww_v = ww.ravel()
+    fin_ww = domain_v & np.isfinite(ww_v)
+    if fin_ww.any():
+        np.maximum.at(cell_max_ww_flat, flat_cell[fin_ww], ww_v[fin_ww])
+    cell_max_ww_flat[cell_max_ww_flat == -np.inf] = np.nan  # empty cells → NaN
+
+    # ── any cape > threshold per cell (scatter-set) ───────────────────────────
+    cell_any_cape_flat = np.zeros(n_cells, dtype=bool)
+    cape_v = cape.ravel()
+    cape_hit = domain_v & np.isfinite(cape_v) & (cape_v > cape_conv_threshold)
+    if cape_hit.any():
+        cell_any_cape_flat[flat_cell[cape_hit]] = True
+
+    # ── any valid ceiling per cell (scatter-set) ──────────────────────────────
+    cell_any_ceil_flat = np.zeros(n_cells, dtype=bool)
+    ceil_v = ceil_arr.ravel()
+    ceil_hit = domain_v & np.isfinite(ceil_v) & (ceil_v > 0) & (ceil_v < ceil_valid_max)
+    if ceil_hit.any():
+        cell_any_ceil_flat[flat_cell[ceil_hit]] = True
+
+    return (
+        cell_max_ww_flat.reshape(shape),
+        cell_any_cape_flat.reshape(shape),
+        cell_any_ceil_flat.reshape(shape),
+    )
