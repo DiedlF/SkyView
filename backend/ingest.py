@@ -57,10 +57,14 @@ def _symbol_code_map() -> dict[str, int]:
     }
 
 
-def _precompute_symbol_native_fields(arrays: dict) -> None:
+def _precompute_symbol_native_fields(arrays: dict, step: int | None = None, model: str | None = None, run: str | None = None) -> tuple[bool, str]:
     required = {"ww", "ceiling", "clcl", "clcm", "clch", "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "hsurf"}
-    if not required.issubset(arrays.keys()):
-        return
+    missing = sorted(required - set(arrays.keys()))
+    ctx = f"{model or '?'} {run or '?'} step {step:03d}" if step is not None else f"{model or '?'} {run or '?'}"
+    if missing:
+        msg = f"symbol precompute skipped for {ctx}: missing required vars {missing}"
+        logger.warning(msg)
+        return False, msg
 
     ww = arrays["ww"]
     ceiling = arrays["ceiling"]
@@ -115,6 +119,9 @@ def _precompute_symbol_native_fields(arrays: dict) -> None:
     arrays["sym_code"] = sym_code
     arrays["cb_hm"] = cb_hm
     arrays["ww_rank"] = ww_rank
+    msg = f"symbol precompute ok for {ctx}: wrote sym_code/cb_hm/ww_rank"
+    logger.info(msg)
+    return True, msg
 
 
 def load_config():
@@ -659,7 +666,7 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
             'snow_gsp': sg, 'snow_con': sc, 'grau_gsp': gg,
         }
 
-    _precompute_symbol_native_fields(arrays)
+    _precompute_symbol_native_fields(arrays, step=step, model=model, run=run)
 
     os.makedirs(out_dir, exist_ok=True)
     np.savez_compressed(out_path, lat=lat_1d, lon=lon_1d, **arrays)

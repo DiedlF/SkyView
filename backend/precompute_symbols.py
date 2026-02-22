@@ -13,6 +13,10 @@ def _model_api_name(model: str) -> str:
     return model.replace("-", "_")
 
 
+def _model_dir_name(model: str) -> str:
+    return model
+
+
 def _iter_steps(run_dir: str):
     for f in sorted(os.listdir(run_dir)):
         if f.endswith(".npz") and f[:-4].isdigit():
@@ -21,7 +25,7 @@ def _iter_steps(run_dir: str):
 
 async def _run(model: str, run: str, zooms: list[int]):
     api_model = _model_api_name(model)
-    run_dir = os.path.join(app.DATA_DIR, api_model, run)
+    run_dir = os.path.join(app.DATA_DIR, _model_dir_name(model), run)
     if not os.path.isdir(run_dir):
         print(f"Run dir not found: {run_dir}")
         return 1

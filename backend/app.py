@@ -140,8 +140,12 @@ for _rk, _code in enumerate(SYMBOL_PRIORITY):
 
 
 
+def _model_dir_name(model_used: str) -> str:
+    return "icon-d2" if model_used == "icon_d2" else ("icon-eu" if model_used == "icon_eu" else model_used)
+
+
 def _symbols_precomputed_path(model_used: str, run: str, step: int, zoom: int) -> str:
-    return os.path.join(DATA_DIR, model_used, run, f"_symbols_z{zoom}_{int(step):03d}.json")
+    return os.path.join(DATA_DIR, _model_dir_name(model_used), run, f"_symbols_z{zoom}_{int(step):03d}.json")
 
 
 def _filter_symbols_to_bbox(payload: dict, lat_min: float, lon_min: float, lat_max: float, lon_max: float) -> dict:
@@ -190,9 +194,9 @@ def _filter_symbols_to_bbox(payload: dict, lat_min: float, lon_min: float, lat_m
 
 def _seed_symbols_cache_from_disk(max_runs_per_model: int = 1) -> int:
     loaded = 0
-    model_dirs = ["icon_d2", "icon_eu"]
-    for model in model_dirs:
-        run_root = os.path.join(DATA_DIR, model)
+    model_dirs = [("icon_d2", "icon-d2"), ("icon_eu", "icon-eu")]
+    for model_key, model_dir in model_dirs:
+        run_root = os.path.join(DATA_DIR, model_dir)
         if not os.path.isdir(run_root):
             continue
         runs = sorted([d for d in os.listdir(run_root) if len(d) == 10 and d.isdigit()], reverse=True)[:max_runs_per_model]
@@ -204,7 +208,7 @@ def _seed_symbols_cache_from_disk(max_runs_per_model: int = 1) -> int:
                         step = int(os.path.basename(p).split("_")[-1].split(".")[0])
                         with open(p, "r", encoding="utf-8") as f:
                             payload = json.load(f)
-                        key = f"{model}|{run}|{step}|z{zoom}|global"
+                        key = f"{model_key}|{run}|{step}|z{zoom}|global"
                         symbols_cache_set(key, payload)
                         loaded += 1
                     except Exception:
