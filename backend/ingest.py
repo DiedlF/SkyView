@@ -14,9 +14,7 @@ import json
 import shutil
 import subprocess
 import bz2
-import io
 import tempfile
-import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Tuple
 import numpy as np
@@ -27,6 +25,7 @@ from datetime import datetime, timedelta, timezone
 import time
 from logging_config import setup_logging
 from constants import ICON_EU_STEP_3H_START
+from classify import classify_cloud_type, get_cloud_base
 
 logger = setup_logging(__name__, level="INFO", log_name="ingest")
 
@@ -39,6 +38,83 @@ CONFIG_PATH = os.path.join(SCRIPT_DIR, "ingest_config.yaml")
 # DWD OpenData is the real bottleneck; 6 workers saturates it without overloading
 # either side. Reduce (e.g. SKYVIEW_INGEST_WORKERS=3) if you see HTTP 429s.
 INGEST_WORKERS = int(os.environ.get("SKYVIEW_INGEST_WORKERS", "6"))
+
+
+def _symbol_code_map() -> dict[str, int]:
+    return {
+        "clear": 0,
+        "st": 1, "ac": 2, "ci": 3,
+        "blue_thermal": 4, "cu_hum": 5, "cu_con": 6, "cb": 7,
+        "fog": 20, "rime_fog": 21,
+        "drizzle_light": 22, "drizzle_moderate": 23, "drizzle_dense": 24,
+        "freezing_drizzle": 25, "freezing_drizzle_heavy": 26,
+        "rain_slight": 27, "rain_moderate": 28, "rain_heavy": 29,
+        "freezing_rain": 30,
+        "snow_slight": 31, "snow_moderate": 32, "snow_heavy": 33, "snow_grains": 34,
+        "rain_shower": 35, "rain_shower_moderate": 36,
+        "snow_shower": 37, "snow_shower_heavy": 38,
+        "thunderstorm": 39, "thunderstorm_hail": 40,
+    }
+
+
+def _precompute_symbol_native_fields(arrays: dict) -> None:
+    required = {"ww", "ceiling", "clcl", "clcm", "clch", "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "hsurf"}
+    if not required.issubset(arrays.keys()):
+        return
+
+    ww = arrays["ww"]
+    ceiling = arrays["ceiling"]
+    clcl = arrays["clcl"]
+    clcm = arrays["clcm"]
+    clch = arrays["clch"]
+    cape = arrays["cape_ml"]
+    htop_dc = arrays["htop_dc"]
+    hbas_sc = arrays["hbas_sc"]
+    htop_sc = arrays["htop_sc"]
+    lpi = arrays.get("lpi_max", np.zeros_like(ww))
+    hsurf = arrays["hsurf"]
+
+    cloud_type = classify_cloud_type(ww, clcl, clcm, clch, cape, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf)
+    cb_hm = get_cloud_base(ceiling, hbas_sc).astype(np.int16)
+
+    sym_code = np.zeros(ww.shape, dtype=np.int16)
+    m = _symbol_code_map()
+    for k, v in m.items():
+        if k == "clear":
+            continue
+        sym_code[cloud_type == k] = v
+
+    # overwrite with significant weather symbol classes where ww indicates wx event
+    ww_i = np.where(np.isfinite(ww), ww, -999).astype(np.int16)
+    wx = (ww_i > 10)
+    sym_code[wx & (ww_i == 96)] = m["thunderstorm_hail"]
+    sym_code[wx & (ww_i >= 95) & (ww_i <= 99) & (ww_i != 96)] = m["thunderstorm"]
+    sym_code[wx & (ww_i == 86)] = m["snow_shower_heavy"]
+    sym_code[wx & (ww_i == 85)] = m["snow_shower"]
+    sym_code[wx & ((ww_i == 81) | (ww_i == 82))] = m["rain_shower_moderate"]
+    sym_code[wx & (ww_i == 80)] = m["rain_shower"]
+    sym_code[wx & (ww_i == 75)] = m["snow_heavy"]
+    sym_code[wx & (ww_i == 73)] = m["snow_moderate"]
+    sym_code[wx & (ww_i == 71)] = m["snow_slight"]
+    sym_code[wx & (ww_i == 77)] = m["snow_grains"]
+    sym_code[wx & (ww_i == 65)] = m["rain_heavy"]
+    sym_code[wx & (ww_i == 63)] = m["rain_moderate"]
+    sym_code[wx & (ww_i == 61)] = m["rain_slight"]
+    sym_code[wx & ((ww_i == 66) | (ww_i == 67))] = m["freezing_rain"]
+    sym_code[wx & (ww_i == 55)] = m["drizzle_dense"]
+    sym_code[wx & (ww_i == 53)] = m["drizzle_moderate"]
+    sym_code[wx & (ww_i == 51)] = m["drizzle_light"]
+    sym_code[wx & (ww_i == 57)] = m["freezing_drizzle_heavy"]
+    sym_code[wx & (ww_i == 56)] = m["freezing_drizzle"]
+    sym_code[wx & (ww_i == 45)] = m["fog"]
+    sym_code[wx & (ww_i == 48)] = m["rime_fog"]
+
+    # ranking shortcut for fast per-cell weather pick
+    ww_rank = np.where(np.isfinite(ww) & (ww > 10), ww.astype(np.int16), np.int16(-1))
+
+    arrays["sym_code"] = sym_code
+    arrays["cb_hm"] = cb_hm
+    arrays["ww_rank"] = ww_rank
 
 
 def load_config():
@@ -569,6 +645,8 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
             'tot_prec': tp, 'rain_gsp': rg, 'rain_con': rc,
             'snow_gsp': sg, 'snow_con': sc, 'grau_gsp': gg,
         }
+
+    _precompute_symbol_native_fields(arrays)
 
     os.makedirs(out_dir, exist_ok=True)
     np.savez_compressed(out_path, lat=lat_1d, lon=lon_1d, **arrays)

@@ -125,6 +125,14 @@ low_zoom_symbols_cache_metrics = {
     "diskHits": 0,
     "diskMisses": 0,
 }
+SYMBOL_CODE_TO_TYPE = {
+    0:"clear",1:"st",2:"ac",3:"ci",4:"blue_thermal",5:"cu_hum",6:"cu_con",7:"cb",
+    20:"fog",21:"rime_fog",22:"drizzle_light",23:"drizzle_moderate",24:"drizzle_dense",
+    25:"freezing_drizzle",26:"freezing_drizzle_heavy",27:"rain_slight",28:"rain_moderate",29:"rain_heavy",
+    30:"freezing_rain",31:"snow_slight",32:"snow_moderate",33:"snow_heavy",34:"snow_grains",
+    35:"rain_shower",36:"rain_shower_moderate",37:"snow_shower",38:"snow_shower_heavy",39:"thunderstorm",40:"thunderstorm_hail",
+}
+SYMBOL_PRIORITY = [40,39,38,37,36,35,34,33,32,31,30,29,28,27,26,25,24,23,22,21,20,7,6,5,4,1,2,3,0]
 
 
 def _symbols_precomputed_path(model_used: str, run: str, step: int, zoom: int) -> str:
@@ -635,6 +643,7 @@ async def api_symbols(
     c_lat_eu = c_lon_eu = None
     ww_eu = ceil_arr_eu = c_clcl_eu = c_clcm_eu = c_clch_eu = None
     c_cape_eu = c_htop_dc_eu = c_hbas_sc_eu = c_htop_sc_eu = c_lpi_eu = c_hsurf_eu = None
+    c_sym_code_eu = c_cb_hm_eu = None
 
     # Bbox-slice BEFORE heavy computation.
     # Use one-cell padding around viewport to stabilize aggregation at screen borders during pan.
@@ -646,6 +655,7 @@ async def api_symbols(
         ww = np.zeros((0, 0), dtype=float)
         ceil_arr = np.zeros((0, 0), dtype=float)
         c_clcl = c_clcm = c_clch = c_cape = c_htop_dc = c_hbas_sc = c_htop_sc = c_lpi = c_hsurf = np.zeros((0, 0), dtype=float)
+        c_sym_code = c_cb_hm = None
     else:
         # Work with cropped arrays
         c_lat = lat[li] if li is not None else lat
@@ -661,6 +671,8 @@ async def api_symbols(
         c_htop_sc = _slice_array(d["htop_sc"], li, lo) if "htop_sc" in d else np.zeros_like(ww)
         c_lpi = _slice_array(d["lpi_max"], li, lo) if "lpi_max" in d else (_slice_array(d["lpi"], li, lo) if "lpi" in d else np.zeros_like(ww))
         c_hsurf = _slice_array(d["hsurf"], li, lo) if "hsurf" in d else np.zeros_like(ww)
+        c_sym_code = _slice_array(d["sym_code"], li, lo) if "sym_code" in d else None
+        c_cb_hm = _slice_array(d["cb_hm"], li, lo) if "cb_hm" in d else None
 
     # Prepare EU fallback arrays over same padded bbox when D2 is primary model
     eu_data_missing = False
@@ -700,6 +712,8 @@ async def api_symbols(
                         c_htop_sc_eu = _slice_array(d_eu["htop_sc"], li_eu, lo_eu) if "htop_sc" in d_eu else np.zeros_like(ww_eu)
                         c_lpi_eu = _slice_array(d_eu["lpi_max"], li_eu, lo_eu) if "lpi_max" in d_eu else (_slice_array(d_eu["lpi"], li_eu, lo_eu) if "lpi" in d_eu else np.zeros_like(ww_eu))
                         c_hsurf_eu = _slice_array(d_eu["hsurf"], li_eu, lo_eu) if "hsurf" in d_eu else np.zeros_like(ww_eu)
+                        c_sym_code_eu = _slice_array(d_eu["sym_code"], li_eu, lo_eu) if "sym_code" in d_eu else None
+                        c_cb_hm_eu = _slice_array(d_eu["cb_hm"], li_eu, lo_eu) if "cb_hm" in d_eu else None
             except Exception:
                 d_eu = None
 
@@ -781,6 +795,8 @@ async def api_symbols(
                 src_htop_sc = c_htop_sc_eu
                 src_lpi = c_lpi_eu
                 src_hsurf = c_hsurf_eu
+                src_sym_code = c_sym_code_eu
+                src_cb_hm = c_cb_hm_eu
             else:
                 src_lat = c_lat
                 src_lon = c_lon
@@ -795,6 +811,8 @@ async def api_symbols(
                 src_htop_sc = c_htop_sc
                 src_lpi = c_lpi
                 src_hsurf = c_hsurf
+                src_sym_code = c_sym_code
+                src_cb_hm = c_cb_hm
 
             cli = np.asarray(cli_list, dtype=int) if cli_list else np.empty((0,), dtype=int)
             clo = np.asarray(clo_list, dtype=int) if clo_list else np.empty((0,), dtype=int)
@@ -819,6 +837,8 @@ async def api_symbols(
                     src_htop_sc = c_htop_sc_eu
                     src_lpi = c_lpi_eu
                     src_hsurf = c_hsurf_eu
+                    src_sym_code = c_sym_code_eu
+                    src_cb_hm = c_cb_hm_eu
                     cli_list = ctx.eu.lat_groups[i]
                     clo_list = ctx.eu.lon_groups[j]
                     cli = np.asarray(cli_list, dtype=int) if cli_list else np.empty((0,), dtype=int)
@@ -829,41 +849,58 @@ async def api_symbols(
                 # Skip instead of nearest-neighbor extrapolation to avoid artificial value copying.
                 continue
 
-            # ── Fast clear path (O(1) pre-computed lookup) ───────────────────
-            # Use pre-computed cell stats to skip np.ix_ for cells that are
-            # definitely "clear": no significant ww, no convective cape, no cloud ceiling.
-            # This covers the vast majority of cells at low zoom in fair weather.
-            _pre = _pre_eu if (use_eu and _pre_eu is not None) else _pre_d2
-            _pre_max_ww  = float(_pre[0][i, j])
-            _pre_any_cape = bool(_pre[1][i, j])
-            _pre_any_ceil = bool(_pre[2][i, j])
-
-            if (not np.isnan(_pre_max_ww)) and _pre_max_ww <= 3 and not _pre_any_cape and not _pre_any_ceil:
-                # Confirmed clear — no numpy needed beyond single array element reads.
-                sym, cb_hm = "clear", None
-                best_ii = int(cli_list[len(cli_list) // 2])
-                best_jj = int(clo_list[len(clo_list) // 2])
-            else:
-                # Non-clear cell: extract data and run full aggregation.
+            # Fast path using ingest-precomputed native symbol fields.
+            if src_sym_code is not None and src_cb_hm is not None:
+                cell_codes = src_sym_code[np.ix_(cli, clo)]
+                cell_cb = src_cb_hm[np.ix_(cli, clo)]
                 cell_ww = src_ww[np.ix_(cli, clo)]
                 max_ww = int(np.nanmax(cell_ww)) if not np.all(np.isnan(cell_ww)) else 0
-                sym, cb_hm, best_ii, best_jj = aggregate_symbol_cell(
-                    cli=cli,
-                    clo=clo,
-                    cell_ww=cell_ww,
-                    ceil_arr=src_ceil,
-                    c_clcl=src_clcl,
-                    c_clcm=src_clcm,
-                    c_clch=src_clch,
-                    c_cape=src_cape,
-                    c_htop_dc=src_htop_dc,
-                    c_hbas_sc=src_hbas_sc,
-                    c_htop_sc=src_htop_sc,
-                    c_lpi=src_lpi,
-                    c_hsurf=src_hsurf,
-                    classify_point_fn=classify_point,
-                    zoom=zoom,
-                )
+                best_ii = int(cli_list[len(cli_list) // 2])
+                best_jj = int(clo_list[len(clo_list) // 2])
+                sym = "clear"
+                cb_hm = None
+                for code in SYMBOL_PRIORITY:
+                    pos = np.argwhere(cell_codes == code)
+                    if pos.size:
+                        ii_f, jj_f = int(pos[0][0]), int(pos[0][1])
+                        best_ii = int(cli[ii_f])
+                        best_jj = int(clo[jj_f])
+                        sym = SYMBOL_CODE_TO_TYPE.get(int(code), "clear")
+                        vcb = int(cell_cb[ii_f, jj_f])
+                        cb_hm = vcb if vcb >= 0 else None
+                        break
+            else:
+                # ── Legacy fallback path ───────────────────────────────────────────
+                _pre = _pre_eu if (use_eu and _pre_eu is not None) else _pre_d2
+                _pre_max_ww  = float(_pre[0][i, j])
+                _pre_any_cape = bool(_pre[1][i, j])
+                _pre_any_ceil = bool(_pre[2][i, j])
+
+                if (not np.isnan(_pre_max_ww)) and _pre_max_ww <= 3 and not _pre_any_cape and not _pre_any_ceil:
+                    sym, cb_hm = "clear", None
+                    best_ii = int(cli_list[len(cli_list) // 2])
+                    best_jj = int(clo_list[len(clo_list) // 2])
+                    max_ww = int(_pre_max_ww) if np.isfinite(_pre_max_ww) else 0
+                else:
+                    cell_ww = src_ww[np.ix_(cli, clo)]
+                    max_ww = int(np.nanmax(cell_ww)) if not np.all(np.isnan(cell_ww)) else 0
+                    sym, cb_hm, best_ii, best_jj = aggregate_symbol_cell(
+                        cli=cli,
+                        clo=clo,
+                        cell_ww=cell_ww,
+                        ceil_arr=src_ceil,
+                        c_clcl=src_clcl,
+                        c_clcm=src_clcm,
+                        c_clch=src_clch,
+                        c_cape=src_cape,
+                        c_htop_dc=src_htop_dc,
+                        c_hbas_sc=src_hbas_sc,
+                        c_htop_sc=src_htop_sc,
+                        c_lpi=src_lpi,
+                        c_hsurf=src_hsurf,
+                        classify_point_fn=classify_point,
+                        zoom=zoom,
+                    )
             label = None
 
             # Label formatting
