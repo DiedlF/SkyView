@@ -148,6 +148,36 @@ def _filter_symbols_to_bbox(payload: dict, lat_min: float, lon_min: float, lat_m
     out = dict(payload)
     out["symbols"] = filtered
     out["count"] = len(filtered)
+
+    # Recompute blend/model flags from filtered viewport symbols (not global precompute).
+    eu_cells = sum(1 for s in filtered if s.get("sourceModel") == "icon_eu")
+    d2_cells = sum(1 for s in filtered if s.get("sourceModel") == "icon_d2")
+    total = eu_cells + d2_cells
+    eu_share = (eu_cells / total) if total else 0.0
+    significant_blend = eu_cells >= 3 and eu_share >= 0.03
+
+    primary_model = "icon_eu" if str(payload.get("model", "")).lower().startswith("icon_eu") else "icon_d2"
+    if eu_cells > 0 and d2_cells == 0:
+        out["model"] = "icon_eu"
+        fb = "eu_only_in_viewport"
+    elif eu_cells > 0 and d2_cells > 0 and significant_blend:
+        out["model"] = "ICON-D2 + EU"
+        fb = "blended_d2_eu"
+    elif eu_cells > 0 and d2_cells > 0:
+        out["model"] = primary_model
+        fb = "primary_model_with_eu_assist"
+    else:
+        out["model"] = primary_model
+        fb = "primary_model_only"
+
+    diag = dict(out.get("diagnostics") or {})
+    diag["fallbackDecision"] = fb
+    diag["sourceModel"] = out["model"]
+    diag["euCells"] = eu_cells
+    diag["d2Cells"] = d2_cells
+    diag["euShare"] = round(eu_share, 4)
+    out["diagnostics"] = diag
+
     return out
 
 
@@ -759,6 +789,8 @@ async def api_symbols(
     symbols = []
     used_eu_any = False
     used_d2_any = False
+    used_eu_cells = 0
+    used_d2_cells = 0
     for i in range(lat_cell_count):
         for j in range(lon_cell_count):
             lat_lo, lat_hi = lat_edges[i], lat_edges[i + 1]
@@ -920,8 +952,10 @@ async def api_symbols(
             source_model = "icon_eu" if (use_eu or model_used == "icon_eu") else "icon_d2"
             if source_model == "icon_eu":
                 used_eu_any = True
+                used_eu_cells += 1
             else:
                 used_d2_any = True
+                used_d2_cells += 1
 
             symbols.append({
                 "lat": round(plot_lat, 4),
@@ -932,7 +966,8 @@ async def api_symbols(
                 "ww": max_ww,
                 "cloudBase": cb_hm,
                 "label": label,
-                "clickable": True
+                "clickable": True,
+                "sourceModel": source_model,
             })
 
     if used_eu_any and used_d2_any:
@@ -940,6 +975,10 @@ async def api_symbols(
 
     effective_run = run
     effective_valid_time = d["validTime"]
+    total_cells = used_eu_cells + used_d2_cells
+    eu_share = (used_eu_cells / total_cells) if total_cells else 0.0
+    significant_blend = used_eu_cells >= 3 and eu_share >= 0.03
+
     if used_eu_any and not used_d2_any:
         # Viewport fully covered by EU source.
         resolved_model = "icon_eu"
@@ -947,9 +986,13 @@ async def api_symbols(
             effective_run = d_eu.get("_run", run)
             effective_valid_time = d_eu.get("validTime", d["validTime"])
         fallback_decision = "eu_only_in_viewport"
-    elif used_eu_any and used_d2_any:
-        resolved_model = "blended"
+    elif used_eu_any and used_d2_any and significant_blend:
+        resolved_model = "ICON-D2 + EU"
         fallback_decision = "blended_d2_eu"
+    elif used_eu_any and used_d2_any:
+        # Tiny border/NaN assist from EU should not brand the whole viewport as blended.
+        resolved_model = model_used
+        fallback_decision = "primary_model_with_eu_assist"
     else:
         resolved_model = model_used
         fallback_decision = "primary_model_only"
@@ -976,6 +1019,9 @@ async def api_symbols(
             "sourceModel": resolved_model,
             "strictWindowHours": EU_STRICT_MAX_DELTA_HOURS,
             "euDataMissing": eu_data_missing,
+            "euCells": used_eu_cells,
+            "d2Cells": used_d2_cells,
+            "euShare": round(eu_share, 4),
         },
     }
     symbols_cache_set(symbols_cache_key, result)
@@ -2456,6 +2502,15 @@ def _ingest_model_timings() -> dict[str, dict[str, Any]]:
 
         dwd_available_iso = _fetch_dwd_run_fully_available_at(model_key, latest_run)
 
+        latest_run_first_ingested_iso = None
+        ingest_running_minutes = None
+        if latest_run:
+            latest_run_npz = sorted(glob.glob(os.path.join(base, latest_run, "*.npz")))
+            if latest_run_npz:
+                first_dt = datetime.fromtimestamp(min(os.path.getmtime(p) for p in latest_run_npz), tz=timezone.utc)
+                latest_run_first_ingested_iso = first_dt.isoformat().replace("+00:00", "Z")
+                ingest_running_minutes = round((now - first_dt).total_seconds() / 60.0, 1)
+
         calc_minutes = None
         if latest_run_start_iso and dwd_available_iso:
             try:
@@ -2481,6 +2536,8 @@ def _ingest_model_timings() -> dict[str, dict[str, Any]]:
             "latestRunAvailableAt": latest.get("runTime") if latest else None,
             "latestRunFullyAvailableOnDwdAt": dwd_available_iso,
             "modelCalculationMinutes": calc_minutes,
+            "latestRunFirstIngestedAt": latest_run_first_ingested_iso,
+            "ingestRunningMinutes": ingest_running_minutes,
             "latestRunFullyIngestedRun": full_run,
             "latestRunFullyIngestedAt": full_iso,
             "latestRunFullyIngestedSteps": full_steps,
@@ -2542,6 +2599,8 @@ async def api_admin_storage():
             "latestRunAvailableAt": mt.get("latestRunAvailableAt"),
             "latestRunFullyAvailableOnDwdAt": mt.get("latestRunFullyAvailableOnDwdAt"),
             "modelCalculationMinutes": mt.get("modelCalculationMinutes"),
+            "latestRunFirstIngestedAt": mt.get("latestRunFirstIngestedAt"),
+            "ingestRunningMinutes": mt.get("ingestRunningMinutes"),
             "latestRunFullyIngestedAt": mt.get("latestRunFullyIngestedAt"),
             "latestRunFullyIngestedSteps": mt.get("latestRunFullyIngestedSteps") or latest_full_ingested_step_count,
             "ingestDurationMinutes": mt.get("ingestDurationMinutes"),

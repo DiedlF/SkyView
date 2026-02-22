@@ -232,6 +232,19 @@ def get_latest_run(model="icon-d2"):
     return ref.strftime("%Y%m%d") + f"{hour:02d}"
 
 
+def expected_next_run_time(model: str, from_utc: datetime | None = None) -> datetime:
+    """Next expected model run timestamp in UTC (clock schedule, not DWD publish completion)."""
+    now = from_utc or datetime.now(timezone.utc)
+    cfg = MODEL_CONFIG[model]
+    interval = int(cfg["run_interval"])
+    next_hour = ((now.hour // interval) + 1) * interval
+    day = now.date()
+    if next_hour >= 24:
+        next_hour -= 24
+        day = (now + timedelta(days=1)).date()
+    return datetime(day.year, day.month, day.day, next_hour, 0, 0, tzinfo=timezone.utc)
+
+
 def build_url(run, step, var, model="icon-d2", pressure_level=None, config=None, profile_name="full"):
     """Build DWD download URL for regular-lat-lon data."""
     cfg = MODEL_CONFIG[model]
@@ -1023,14 +1036,19 @@ def main():
                 logger.info(f"  SKIPPED/D2-only ({len(skipped)}): {', '.join(skipped)}")
             logger.info(f"  Total: {len(ok)} ok, {len(fail)} fail, {len(skipped)} skipped")
 
+        nxt = expected_next_run_time(model)
+        nxt_iso = nxt.isoformat().replace("+00:00", "Z")
         if available and not has_local:
             logger.info(f"NEW: {model} {run} available, not yet downloaded")
+            logger.info(f"Next expected {model} run time (UTC): {nxt_iso}")
             sys.exit(0)
         elif available and has_local:
-            logger.debug(f"OK: {model} {run} already downloaded")
+            logger.info(f"NOOP: ingest check ran, no new data for {model}. Current run {run} already downloaded.")
+            logger.info(f"Next expected {model} run time (UTC): {nxt_iso}")
             sys.exit(1)
         else:
-            logger.debug(f"WAIT: {model} {run} not available yet")
+            logger.info(f"NOOP: ingest check ran, no new data for {model}. DWD run {run} not yet available.")
+            logger.info(f"Next expected {model} run time (UTC): {nxt_iso}")
             sys.exit(1)
 
     # --fill-missing implies "all" steps as the target set unless --steps was given explicitly
