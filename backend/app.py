@@ -133,6 +133,11 @@ SYMBOL_CODE_TO_TYPE = {
     35:"rain_shower",36:"rain_shower_moderate",37:"snow_shower",38:"snow_shower_heavy",39:"thunderstorm",40:"thunderstorm_hail",
 }
 SYMBOL_PRIORITY = [40,39,38,37,36,35,34,33,32,31,30,29,28,27,26,25,24,23,22,21,20,7,6,5,4,1,2,3,0]
+SYMBOL_CODE_RANK_LUT = np.full(256, -1, dtype=np.int16)
+for _rk, _code in enumerate(SYMBOL_PRIORITY):
+    if 0 <= _code < SYMBOL_CODE_RANK_LUT.shape[0]:
+        SYMBOL_CODE_RANK_LUT[_code] = _rk
+
 
 
 def _symbols_precomputed_path(model_used: str, run: str, step: int, zoom: int) -> str:
@@ -907,16 +912,25 @@ async def api_symbols(
                 best_jj = int(clo_list[len(clo_list) // 2])
                 sym = "clear"
                 cb_hm = None
-                for code in SYMBOL_PRIORITY:
-                    pos = np.argwhere(cell_codes == code)
-                    if pos.size:
-                        ii_f, jj_f = int(pos[0][0]), int(pos[0][1])
-                        best_ii = int(cli[ii_f])
-                        best_jj = int(clo[jj_f])
-                        sym = SYMBOL_CODE_TO_TYPE.get(int(code), "clear")
-                        vcb = int(cell_cb[ii_f, jj_f])
-                        cb_hm = vcb if vcb >= 0 else None
-                        break
+
+                flat_codes = cell_codes.ravel().astype(np.int16, copy=False)
+                valid = (flat_codes >= 0) & (flat_codes < SYMBOL_CODE_RANK_LUT.shape[0])
+                if np.any(valid):
+                    valid_idx = np.flatnonzero(valid)
+                    ranks = SYMBOL_CODE_RANK_LUT[flat_codes[valid_idx]]
+                    keep = ranks >= 0
+                    if np.any(keep):
+                        best_k = int(np.argmin(ranks[keep]))
+                        flat_idx = int(valid_idx[np.flatnonzero(keep)[best_k]])
+                    else:
+                        flat_idx = int(valid_idx[0])
+                    ii_f, jj_f = np.unravel_index(flat_idx, cell_codes.shape)
+                    code = int(cell_codes[ii_f, jj_f])
+                    best_ii = int(cli[ii_f])
+                    best_jj = int(clo[jj_f])
+                    sym = SYMBOL_CODE_TO_TYPE.get(code, "clear")
+                    vcb = int(cell_cb[ii_f, jj_f])
+                    cb_hm = vcb if vcb >= 0 else None
             else:
                 # ── Legacy fallback path ───────────────────────────────────────────
                 _pre = _pre_eu if (use_eu and _pre_eu is not None) else _pre_d2
