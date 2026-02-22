@@ -389,6 +389,9 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
     optional_vars: set = set()
     if model == "icon-eu":
         eu_optional = set(config.get("eu_optional_variables", []))
+        # DWD sometimes publishes lpi_con_max incompletely for specific runs/steps.
+        # Keep timestep ingesting and backfill zeros when missing.
+        eu_optional.add("lpi_max")
         optional_vars = d2_only | eu_optional
 
     # ── Build download task lists ─────────────────────────────────────────────
@@ -501,6 +504,12 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
 
     if lat_1d is None:
         return False, None
+
+    # EU lpi_max (mapped to lpi_con_max) may be missing for some runs/steps on DWD.
+    # Ensure downstream APIs still get a deterministic field.
+    if model == "icon-eu" and ("lpi_max" in variables) and ("lpi_max" not in arrays):
+        arrays["lpi_max"] = np.zeros((len(lat_1d), len(lon_1d)), dtype=np.float32)
+        logger.warning(f"Step {step:03d}: lpi_max missing on EU source — filled with zeros")
 
     # ── Static variables (hsurf etc.) — cached per run ───────────────────────
     for svar in static_vars:
