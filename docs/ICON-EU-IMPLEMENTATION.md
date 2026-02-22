@@ -15,7 +15,7 @@
 |-----------------|-------------------|-------|
 | `hbas_sc` | `hbas_con` | Convective base height |
 | `htop_sc` | `htop_con` | Convective top height |
-| `lpi` | `lpi_con_max` | Lightning potential index |
+| `lpi` (stored key) | D2: `lpi_max` / EU: `lpi_con_max` | Lightning potential index — D2 uses 1h rolling max, EU uses convective-scheme max |
 | `prr_gsp` | `rain_gsp` | Rain rate |
 | `prs_gsp` | `snow_gsp` | Snow rate |
 | `prg_gsp` | `rain_con` | Graupel proxy (convective rain) |

@@ -117,7 +117,6 @@ groups:
       - dbz_cmax
       - dbz_ctmax
       - dbz_850
-      - lpi_max
       - sdi_2
       - vorw_ctmax
       - w_ctmax
@@ -127,6 +126,8 @@ groups:
       - echotop
       - tcond_max
       - tcond10_mx
+      # lpi_max removed: D2 now downloads it via d2_variable_map (lpi → lpi_max),
+      # stored as 'lpi' in NPZ — no separate download needed.
 
   soaring:
     enabled: true
@@ -156,17 +157,24 @@ d2_only_variables:
   - echotop
   - tcond_max
   - tcond10_mx
-  - lpi_max
+  # lpi_max removed: handled via d2_variable_map (lpi → lpi_max)
 
-# ICON-EU variable name overrides (where EU uses different names)
+# ICON-D2 variable name overrides (NPZ key → DWD filename variable).
+# Use when D2 publishes a better variant under a different name:
+#   lpi → lpi_max: use the 1-hour rolling maximum instead of the instantaneous value.
+#                  EU equivalent is lpi_con_max (handled via eu_variable_map below).
+d2_variable_map:
+  lpi: lpi_max
+
+# ICON-EU variable name overrides (NPZ key → DWD filename variable)
 eu_variable_map:
   hbas_sc: hbas_con
   htop_sc: htop_con
   lpi: lpi_con_max
 
 # Variables not available in ICON-EU (will be filled with zeros)
+# Note: 'lpi' is NOT listed here — EU provides lpi_con_max via eu_variable_map above.
 eu_optional_variables:
-  - lpi
   - prr_gsp
   - prs_gsp
   - prg_gsp

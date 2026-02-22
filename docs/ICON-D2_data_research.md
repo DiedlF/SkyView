@@ -68,12 +68,13 @@
    - Another convection height metric
 
 ### ✅ Storm Severity Indices
-9. **`lpi`** – Lightning Potential Index (hourly)
-   - Thunderstorm severity indicator
-   - Good for identifying dangerous convection
+9. **`lpi`** – Lightning Potential Index (instantaneous)
+   - **Not used by Skyview** — superseded by `lpi_max`
 
-10. **`lpi_max`** – Maximum LPI
-    - Highest potential lightning within forecast period
+10. **`lpi_max`** – Maximum LPI (1-hour rolling maximum) ✅ **Used by Skyview**
+    - Stored as `lpi` in NPZ (via `d2_variable_map` in `ingest_config.yaml`)
+    - Better CB/thunderstorm indicator than instantaneous `lpi` (non-zero values are more common)
+    - Semantically closest to EU `lpi_con_max` (both are time-window maxima)
 
 11. **`uh_max`**, **`uh_max_low`**, **`uh_max_med`** – Updraft Helicity
     - Rotation strength indicator

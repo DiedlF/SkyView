@@ -43,7 +43,7 @@
 - [ ] Finalize variable mapping/normalization rules for EU↔D2:
   - [ ] Precipitation fields (semantics differ)
   - [ ] `hbas_sc`/`htop_sc` (proxy, non-1:1 confirmed)
-  - [ ] `lpi` (proxy, non-1:1 confirmed)
+  - [x] `lpi` — D2 switched to `lpi_max` (1h max) via `d2_variable_map`; EU uses `lpi_con_max`; both are time-window maxima. Re-validation recommended.
 - [ ] Codify parity impacts on symbols/overlays in docs
 
 ### D) UX / Frontend

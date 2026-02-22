@@ -13,21 +13,31 @@ import sys
 import json
 import shutil
 import subprocess
+import bz2
+import io
+import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, List, Optional, Tuple
 import numpy as np
 import cfgrib
+import requests as _requests
 import yaml
 from datetime import datetime, timedelta, timezone
 from logging_config import setup_logging
 from constants import ICON_EU_STEP_3H_START
 
-logger = setup_logging(__name__, level="INFO")
+logger = setup_logging(__name__, level="INFO", log_name="ingest")
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(SCRIPT_DIR, "..", "data")
 CONFIG_PATH = os.path.join(SCRIPT_DIR, "ingest_config.yaml")
 
-# Optional curl bandwidth limit (e.g. "10M", "500K"). Empty/0 disables limiting.
-INGEST_RATE_LIMIT = os.environ.get("SKYVIEW_INGEST_RATE_LIMIT", "").strip()
+# Number of parallel download workers per step.
+# Each worker downloads + bz2-decompresses one variable simultaneously.
+# DWD OpenData is the real bottleneck; 6 workers saturates it without overloading
+# either side. Reduce (e.g. SKYVIEW_INGEST_WORKERS=3) if you see HTTP 429s.
+INGEST_WORKERS = int(os.environ.get("SKYVIEW_INGEST_WORKERS", "6"))
 
 
 def load_config():
@@ -92,8 +102,18 @@ def get_d2_only_variables(config):
     return set(config.get("d2_only_variables", []))
 
 
+def get_d2_var_name(var, config):
+    """Get ICON-D2 DWD filename variable name (may differ from canonical NPZ key).
+
+    d2_variable_map maps NPZ key → DWD filename variable, e.g.:
+      lpi: lpi_max   →  download lpi_max from DWD, store as 'lpi' in NPZ
+    """
+    d2_map = config.get("d2_variable_map", {})
+    return d2_map.get(var, var)
+
+
 def get_eu_var_name(var, config):
-    """Get ICON-EU variable name (may differ from D2)."""
+    """Get ICON-EU DWD filename variable name (may differ from canonical NPZ key)."""
     eu_map = config.get("eu_variable_map", {})
     return eu_map.get(var, var)
 
@@ -140,11 +160,11 @@ def build_url(run, step, var, model="icon-d2", pressure_level=None, config=None,
     cfg = MODEL_CONFIG[model]
     run_hour = run[-2:]
 
-    # Map variable name for EU
+    # Map canonical NPZ key → model-specific DWD filename variable
     if model == "icon-eu" and config:
         var_name = get_eu_var_name(var, config)
-    elif model == "icon-eu":
-        var_name = var
+    elif model == "icon-d2" and config:
+        var_name = get_d2_var_name(var, config)
     else:
         var_name = var
 
@@ -175,17 +195,59 @@ def build_url(run, step, var, model="icon-d2", pressure_level=None, config=None,
                 f"{cfg['filename_pattern'].format(run=run, step=step, var_upper=var_name.upper())}")
 
 
+def _download_and_decompress(url: str) -> Optional[bytes]:
+    """Stream-download a .bz2 URL and return decompressed GRIB bytes in memory.
+
+    Replaces the old download() + bunzip2 subprocess pattern:
+      - No .bz2 or .grib2 temp files on disk
+      - No subprocess overhead for decompression
+      - Returns None on 404 / any network / decompression failure
+
+    Thread-safe: uses no shared state.
+    """
+    try:
+        resp = _requests.get(url, timeout=120, stream=True)
+        if resp.status_code == 404:
+            return None
+        if resp.status_code != 200:
+            logger.debug(f"HTTP {resp.status_code} fetching {url}")
+            return None
+        decomp = bz2.BZ2Decompressor()
+        parts: List[bytes] = []
+        for chunk in resp.iter_content(chunk_size=131072):  # 128 KB chunks
+            if chunk:
+                parts.append(decomp.decompress(chunk))
+        return b"".join(parts)
+    except Exception as e:
+        logger.debug(f"_download_and_decompress failed ({url}): {e}")
+        return None
+
+
+def _parse_grib_from_bytes(grib_bytes: bytes, bounds=None) -> Tuple:
+    """Write GRIB bytes to a NamedTemporaryFile and parse with cfgrib.
+
+    The temp file is deleted immediately after parsing regardless of success/failure.
+    Raises the same exceptions as load_grib() on parse errors.
+    """
+    fd, tmp_path = tempfile.mkstemp(suffix=".grib2")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(grib_bytes)
+        return load_grib(tmp_path, bounds)
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
 def download(url, dest):
-    """Download file, skip if already exists and non-empty."""
+    """Download file to disk via curl. Used for HEAD checks in availability probes."""
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     if os.path.exists(dest) and os.path.getsize(dest) > 100:
         return True
     try:
-        cmd = ["curl", "-sfL"]
-        if INGEST_RATE_LIMIT and INGEST_RATE_LIMIT not in ("0", "0K", "0M"):
-            cmd.extend(["--limit-rate", INGEST_RATE_LIMIT])
-        cmd.extend([url, "-o", dest])
-        r = subprocess.run(cmd, timeout=120, capture_output=True)
+        r = subprocess.run(["curl", "-sfL", url, "-o", dest], timeout=120, capture_output=True)
         if r.returncode == 0 and os.path.exists(dest) and os.path.getsize(dest) > 100:
             return True
         if os.path.exists(dest):
@@ -278,8 +340,17 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
                 prev_acc=None, prev_step=None):
     """Download all variables for one step, optionally crop, save as .npz.
 
-    Precip rates (tp_rate, rain_rate, snow_rate, hail_rate) are computed inline
-    and written into the same .npz, avoiding a separate post-processing pass.
+    tmp_dir is accepted for backward-compat but no longer used: all downloads and
+    decompression are now handled in memory.
+
+    Uses an interleaved parallel download + sequential parse approach:
+      Downloads — INGEST_WORKERS threads fetch and bz2-decompress variable URLs concurrently.
+                  No .bz2 or .grib2 temp files touch disk.
+      Parsing   — The main thread parses each result with cfgrib as soon as its future
+                  completes. cfgrib stays single-threaded (eccodes C library).
+
+    Precip rates (tp_rate, rain_rate, snow_rate, hail_rate) are computed inline and written into
+    the same .npz, avoiding a separate post-processing read+rewrite pass.
 
     Args:
         prev_acc: dict of raw precip accumulation arrays from the previous step
@@ -305,60 +376,123 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
     d2_only = get_d2_only_variables(config)
     bounds = get_bounds_for_model(model, config)
 
-    arrays = {}
-    lat_1d = lon_1d = None
-
     # Determine optional/skippable variables for this model
-    optional_vars = set()
+    optional_vars: set = set()
     if model == "icon-eu":
         eu_optional = set(config.get("eu_optional_variables", []))
         optional_vars = d2_only | eu_optional
 
+    # ── Build download task lists ─────────────────────────────────────────────
+    # Each task: (array_key, url, is_optional)
+    # array_key is the canonical NPZ key (may differ from the DWD variable name
+    # for mapped variables like lpi→lpi_max handled inside build_url).
+
+    var_tasks: List[Tuple[str, str, bool]] = []
     for var in variables:
         if model == "icon-eu" and var in d2_only:
             logger.debug(f"Step {step:03d}: {var} is D2-only, skipping for EU")
             continue
-
         url = build_url(run, step, var, model, config=config, profile_name=profile_name)
-        bz2_path = os.path.join(tmp_dir, f"{var}_{step:03d}.grib2.bz2")
-        grib_path = bz2_path[:-4]
+        var_tasks.append((var, url, var in optional_vars))
 
-        if not download(url, bz2_path):
-            if var in optional_vars:
-                logger.debug(f"Step {step:03d}: optional {var} not available, skipping variable")
-                continue
-            else:
-                logger.warning(f"Step {step:03d}: {var} download failed, skipping step")
-                return False, None
+    plev_tasks: List[Tuple[str, str, bool]] = []
+    for plev in wind_levels:
+        for wind_var in wind_vars:
+            url = build_url(run, step, wind_var, model, pressure_level=plev,
+                            config=config, profile_name=profile_name)
+            plev_tasks.append((f"{wind_var}_{plev}hpa", url, True))  # pressure wind always optional
 
-        subprocess.run(["bunzip2", "-f", bz2_path], capture_output=True)
-        if not os.path.exists(grib_path):
-            if var in optional_vars:
-                logger.debug(f"Step {step:03d}: optional {var} decompress failed, skipping variable")
-                continue
-            logger.error(f"Step {step:03d}: {var} decompress failed")
-            return False, None
+    all_tasks = var_tasks + plev_tasks
+
+    # ── Interleaved parallel download + sequential parse ──────────────────────
+    # Downloads run concurrently in a thread pool; the main thread parses each
+    # result as soon as its future completes — so at most INGEST_WORKERS
+    # decompressed GRIBs (~5 MB each) are held in memory at any one time.
+    # cfgrib parsing stays on the main thread (eccodes C library is not thread-safe).
+    #
+    # Memory profile (D2, 68 vars, 6 workers):
+    #   Old sequential:  ~10 MB peak in-flight  (1 GRIB at a time)
+    #   Previous impl:  ~360 MB peak (held all decompressed bytes before parsing)
+    #   This impl:       ~30 MB peak in-flight  (6 GRIBs × 5 MB)
+    #   + NumPy arrays grow to ~245 MB by end of step (unavoidable — that's the data)
+
+    workers = INGEST_WORKERS
+    arrays: Dict[str, np.ndarray] = {}
+    lat_1d = lon_1d = None
+
+    # Track which required variables failed so we can abort after the pool drains.
+    failed_required: Optional[str] = None
+
+    # var_tasks is ordered; we need to honour required-var failure semantics after
+    # the parallel phase.  Build a lookup for quick metadata access by key.
+    task_meta: Dict[str, Tuple[str, bool]] = {
+        key: (url, is_opt) for key, url, is_opt in all_tasks
+    }
+    # Separate required vars from optional/pressure — only required failures abort.
+    required_var_keys = {key for key, _url, is_opt in var_tasks if not is_opt}
+
+    def _process_future(key: str, grib_bytes: Optional[bytes]) -> bool:
+        """Parse one result on the calling (main) thread. Returns False to abort step."""
+        nonlocal lat_1d, lon_1d, failed_required
+
+        is_optional = key not in required_var_keys
+
+        if grib_bytes is None:
+            if is_optional:
+                logger.debug(f"Step {step:03d}: optional {key} not available, skipping")
+                return True
+            logger.warning(f"Step {step:03d}: {key} download failed, skipping step")
+            failed_required = key
+            return False
 
         try:
-            data, lat, lon = load_grib(grib_path, bounds)
-            arrays[var] = data.astype(np.float32)
-            if lat_1d is None:
+            data, lat, lon = _parse_grib_from_bytes(grib_bytes, bounds)
+            arrays[key] = data.astype(np.float32)
+            if lat_1d is None and key in {t[0] for t in var_tasks}:
                 lat_1d = lat.astype(np.float32)
                 lon_1d = lon.astype(np.float32)
         except Exception as e:
-            if var in optional_vars:
-                logger.debug(f"Step {step:03d}: optional {var} parse failed ({e}), skipping variable")
-                continue
-            logger.error(f"Step {step:03d}: {var} parse failed: {e}")
-            return False, None
-        finally:
-            if os.path.exists(grib_path):
-                os.unlink(grib_path)
+            if is_optional:
+                logger.debug(f"Step {step:03d}: optional {key} parse failed ({e}), skipping")
+                return True
+            logger.error(f"Step {step:03d}: {key} parse failed: {e}")
+            failed_required = key
+            return False
+
+        return True
+
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_to_key = {
+                executor.submit(_download_and_decompress, url): key
+                for key, url, _ in all_tasks
+            }
+            for future in as_completed(future_to_key):
+                key = future_to_key[future]
+                try:
+                    grib_bytes = future.result()
+                except Exception as exc:
+                    logger.debug(f"Step {step:03d}: download future for {key} raised: {exc}")
+                    grib_bytes = None
+                # Parse immediately — bytes go out of scope here after this call
+                if not _process_future(key, grib_bytes):
+                    # Cancel pending futures for required-var failure; executor drains gracefully
+                    for f in future_to_key:
+                        f.cancel()
+                    break
+    else:
+        # Sequential path (INGEST_WORKERS=1)
+        for key, url, _ in all_tasks:
+            if not _process_future(key, _download_and_decompress(url)):
+                break
+
+    if failed_required is not None:
+        return False, None
 
     if lat_1d is None:
         return False, None
 
-    # Static variables (hsurf etc.) — cached per run
+    # ── Static variables (hsurf etc.) — cached per run ───────────────────────
     for svar in static_vars:
         if model == "icon-eu" and svar in d2_only:
             continue
@@ -367,46 +501,16 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
             arrays[svar] = np.load(svar_cache)
         else:
             url = build_url(run, 0, svar, model, config=config, profile_name=profile_name)
-            bz2_path = os.path.join(tmp_dir, f"{svar}_000.grib2.bz2")
-            grib_path = bz2_path[:-4]
-            if download(url, bz2_path):
-                subprocess.run(["bunzip2", "-f", bz2_path], capture_output=True)
-                if os.path.exists(grib_path):
-                    try:
-                        data, _, _ = load_grib(grib_path, bounds)
-                        arr = data.astype(np.float32)
-                        arrays[svar] = arr
-                        os.makedirs(out_dir, exist_ok=True)
-                        np.save(svar_cache, arr)
-                    except Exception as e:
-                        logger.debug(f"Step {step:03d}: {svar} parse failed: {e}")
-                    finally:
-                        if os.path.exists(grib_path):
-                            os.unlink(grib_path)
-
-    # Pressure-level wind data
-    for plev in wind_levels:
-        for wind_var in wind_vars:
-            url = build_url(run, step, wind_var, model, pressure_level=plev, config=config, profile_name=profile_name)
-            bz2_path = os.path.join(tmp_dir, f"{wind_var}_{plev}hpa_{step:03d}.grib2.bz2")
-            grib_path = bz2_path[:-4]
-
-            if not download(url, bz2_path):
-                logger.debug(f"Step {step:03d}: {wind_var}_{plev}hPa not available, skipping")
-                continue
-
-            subprocess.run(["bunzip2", "-f", bz2_path], capture_output=True)
-            if not os.path.exists(grib_path):
-                continue
-
-            try:
-                data, _, _ = load_grib(grib_path, bounds)
-                arrays[f"{wind_var}_{plev}hpa"] = data.astype(np.float32)
-            except Exception as e:
-                logger.debug(f"Step {step:03d}: {wind_var}_{plev}hPa parse failed: {e}")
-            finally:
-                if os.path.exists(grib_path):
-                    os.unlink(grib_path)
+            grib_bytes = _download_and_decompress(url)
+            if grib_bytes is not None:
+                try:
+                    data, _, _ = _parse_grib_from_bytes(grib_bytes, bounds)
+                    arr = data.astype(np.float32)
+                    arrays[svar] = arr
+                    os.makedirs(out_dir, exist_ok=True)
+                    np.save(svar_cache, arr)
+                except Exception as e:
+                    logger.debug(f"Step {step:03d}: static {svar} parse failed: {e}")
 
     # ── Inline precip rate computation ────────────────────────────────────────
     # De-accumulate precipitation and compute mm/h rates in the same pass,

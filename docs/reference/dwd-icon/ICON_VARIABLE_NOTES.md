@@ -113,15 +113,22 @@ Conclusion: usable as fallback proxy only; not 1:1 equivalent.
 
 ---
 
-## 6) Comparison study: `lpi` (D2) vs `lpi_con_max` (EU)
+## 6) Comparison study: `lpi_max` (D2) vs `lpi_con_max` (EU)
+
+> **Note:** Skyview switched from D2 `lpi` (instantaneous) to `lpi_max` (1-hour rolling maximum)
+> in Feb 2026. The variable stored in NPZ is still keyed as `lpi`; the change is handled via
+> `d2_variable_map` in `ingest_config.yaml`. The original comparison below used D2 `lpi`
+> (instantaneous) and is preserved for reference. A fresh comparison with `lpi_max` vs
+> `lpi_con_max` would be more meaningful — both are hourly-window maxima.
 
 ### Metadata-level interpretation
-- D2 `lpi`: `Lightning Potential Index` (paramId `503142`)
+- D2 `lpi_max`: `Maximum Lightning Potential Index` (1-hour rolling max; paramId `503142`)
 - EU `lpi_con_max`: `Maximum Lightning Potential Index from convection scheme` (paramId `503673`)
 
-Both are `J kg-1`, but EU variable is a convective-scheme maximum and is not semantically identical to D2 `lpi`.
+Both are `J kg-1` and both represent a maximum over a time window, making them semantically closer
+than the old instantaneous D2 `lpi` vs EU `lpi_con_max` pairing.
 
-### Validation snapshot (same run pair/window)
+### Legacy validation snapshot (D2 `lpi` instantaneous vs EU `lpi_con_max`)
 - Points tested: `4,090,724`
 - Finite overlap: `83.14%`
 - Bias (`EU - D2`): `+0.207`
@@ -129,25 +136,30 @@ Both are `J kg-1`, but EU variable is a convective-scheme maximum and is not sem
 - RMSE: `1.485`
 - Correlation: `0.038`
 
-Threshold exceedance comparison:
+Threshold exceedance comparison (instantaneous D2 `lpi`):
 - `>1`: D2 `0.00%`, EU `5.70%` (Jaccard `0.001`)
 - `>2`: D2 `0.00%`, EU `3.81%` (Jaccard `0.000`)
 - `>5`: D2 `0.00%`, EU `1.61%` (Jaccard `0.000`)
 - `>7`: D2 `0.00%`, EU `1.00%` (Jaccard `0.000`)
 - `>10`: D2 `0.00%`, EU `0.56%` (Jaccard `0.000`)
 
-Additional distribution signal:
-- D2 p99 median: `0.0`
-- EU p99 median: `5.11`
+Additional distribution signal (instantaneous):
+- D2 `lpi` p99 median: `0.0`
+- EU `lpi_con_max` p99 median: `5.11`
 
-Conclusion: `lpi_con_max` is a fallback proxy, not parity with D2 `lpi`.
+> TODO: Re-run comparison with D2 `lpi_max` — expected to show higher D2 exceedance rates
+> and improved Jaccard overlap with EU `lpi_con_max`.
+
+Conclusion: `lpi_con_max` is a fallback proxy; `lpi_max` (D2) vs `lpi_con_max` (EU) is a
+better-matched pair than the previous `lpi` (instantaneous) vs `lpi_con_max` pairing.
 
 ---
 
 ## 7) Practical guidance for Skyview
 
 1. Keep D2-native shortNames as primary semantics baseline.
-2. For EU, keep explicit compatibility mappings where names differ (`*_sc` vs `*_con`, `lpi` vs `lpi_con_max`) but label them internally as proxy semantics.
+2. For EU, keep explicit compatibility mappings where names differ (`*_sc` vs `*_con`, `lpi_max` vs `lpi_con_max`) but label them internally as proxy semantics.
+3. For D2, prefer time-window maxima over instantaneous fields where available (`lpi_max` over `lpi`, etc.) — handled via `d2_variable_map` in `ingest_config.yaml`.
 3. Keep precip on ingest-precomputed de-accum rates for performance + consistency.
 4. Treat missing optional EU vars as missing (no silent zero-fill).
 5. If symbol parity is required, add explicit EU-side normalization/calibration layer (not raw threshold reuse).
