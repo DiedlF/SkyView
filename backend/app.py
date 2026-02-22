@@ -176,6 +176,8 @@ def _filter_symbols_to_bbox(payload: dict, lat_min: float, lon_min: float, lat_m
     diag["euCells"] = eu_cells
     diag["d2Cells"] = d2_cells
     diag["euShare"] = round(eu_share, 4)
+    if "servedFrom" not in diag:
+        diag["servedFrom"] = "cache"
     out["diagnostics"] = diag
 
     return out
@@ -622,7 +624,13 @@ async def api_symbols(
     bbox: str = Query("30,-30,72,45"),
     time: str = Query("latest"),
     model: Optional[str] = Query(None),
+    request: Optional[Request] = None,
 ):
+    t0 = perf_counter()
+    rid = (request.headers.get("X-Request-ID") if request is not None else None) or uuid.uuid4().hex[:12]
+    t_load_ms = 0.0
+    t_grid_ms = 0.0
+    t_agg_ms = 0.0
     cell_size = CELL_SIZES_BY_ZOOM[zoom]
 
     parts = bbox.split(",")
@@ -656,12 +664,17 @@ async def api_symbols(
             else:
                 low_zoom_symbols_cache_metrics["diskMisses"] += 1
     if cached_symbols is not None:
-        return _filter_symbols_to_bbox(cached_symbols, lat_min, lon_min, lat_max, lon_max) if is_low_zoom_global else cached_symbols
+        out_payload = _filter_symbols_to_bbox(cached_symbols, lat_min, lon_min, lat_max, lon_max) if is_low_zoom_global else cached_symbols
+        total_ms = (perf_counter() - t0) * 1000.0
+        logger.info("/api/symbols rid=%s served=cache zoom=%s count=%s totalMs=%.2f", rid, zoom, out_payload.get("count"), total_ms)
+        return out_payload
 
     if is_low_zoom_global:
         lat_min, lon_min, lat_max, lon_max = LOW_ZOOM_GLOBAL_BBOX
 
+    t_load0 = perf_counter()
     d = load_data(run, step, model_used, keys=symbol_keys)
+    t_load_ms += (perf_counter() - t_load0) * 1000.0
 
     lat = d["lat"]  # 1D
     lon = d["lon"]  # 1D
@@ -748,6 +761,7 @@ async def api_symbols(
                 d_eu = None
 
     # Shared GridContext (symbols/wind)
+    t_grid0 = perf_counter()
     ctx = build_grid_context(
         lat=lat,
         lon=lon,
@@ -766,6 +780,7 @@ async def api_symbols(
         c_lat_eu=c_lat_eu if d_eu is not None else None,
         c_lon_eu=c_lon_eu if d_eu is not None else None,
     )
+    t_grid_ms += (perf_counter() - t_grid0) * 1000.0
     lat_edges = ctx.lat_edges
     lon_edges = ctx.lon_edges
     lat_cell_count = ctx.lat_cell_count
@@ -786,6 +801,7 @@ async def api_symbols(
             CAPE_CONV_THRESHOLD, CEILING_VALID_MAX_METERS,
         )
 
+    t_agg0 = perf_counter()
     symbols = []
     used_eu_any = False
     used_d2_any = False
@@ -970,6 +986,7 @@ async def api_symbols(
                 "sourceModel": source_model,
             })
 
+    t_agg_ms += (perf_counter() - t_agg0) * 1000.0
     if used_eu_any and used_d2_any:
         app_state.fallback_stats["symbolsBlended"] += 1
 
@@ -1022,12 +1039,18 @@ async def api_symbols(
             "euCells": used_eu_cells,
             "d2Cells": used_d2_cells,
             "euShare": round(eu_share, 4),
+            "timingsMs": {"load": round(t_load_ms, 2), "grid": round(t_grid_ms, 2), "aggregate": round(t_agg_ms, 2)},
+            "servedFrom": "computed",
         },
     }
     symbols_cache_set(symbols_cache_key, result)
+    total_ms = (perf_counter() - t0) * 1000.0
     if is_low_zoom_global:
         _save_symbols_precomputed(model_used, run, step, zoom, result)
-        return _filter_symbols_to_bbox(result, req_lat_min, req_lon_min, req_lat_max, req_lon_max)
+        out_payload = _filter_symbols_to_bbox(result, req_lat_min, req_lon_min, req_lat_max, req_lon_max)
+        logger.info("/api/symbols rid=%s served=computed-global zoom=%s count=%s euCells=%s d2Cells=%s loadMs=%.2f gridMs=%.2f aggMs=%.2f totalMs=%.2f", rid, zoom, out_payload.get("count"), out_payload.get("diagnostics", {}).get("euCells"), out_payload.get("diagnostics", {}).get("d2Cells"), t_load_ms, t_grid_ms, t_agg_ms, total_ms)
+        return out_payload
+    logger.info("/api/symbols rid=%s served=computed zoom=%s count=%s euCells=%s d2Cells=%s loadMs=%.2f gridMs=%.2f aggMs=%.2f totalMs=%.2f", rid, zoom, result.get("count"), result.get("diagnostics", {}).get("euCells"), result.get("diagnostics", {}).get("d2Cells"), t_load_ms, t_grid_ms, t_agg_ms, total_ms)
     return result
 
 
@@ -1039,6 +1062,11 @@ async def api_wind(
     level: str = Query("10m"),
 ):
     """Return wind barb data on the same grid as convection symbols."""
+    t0 = perf_counter()
+    rid = (request.headers.get("X-Request-ID") if request is not None else None) or uuid.uuid4().hex[:12]
+    t_load_ms = 0.0
+    t_grid_ms = 0.0
+    t_agg_ms = 0.0
     cell_size = CELL_SIZES_BY_ZOOM[zoom]
 
     parts = bbox.split(",")
@@ -1114,6 +1142,7 @@ async def api_wind(
                         gust_eu = _slice_array(d_eu["vmax_10m"], li_eu, lo_eu) if gust_mode and "vmax_10m" in d_eu else None
 
     # Shared GridContext (symbols/wind)
+    t_grid0 = perf_counter()
     ctx = build_grid_context(
         lat=lat,
         lon=lon,
@@ -1132,6 +1161,7 @@ async def api_wind(
         c_lat_eu=c_lat_eu if (c_lat_eu is not None and u_eu is not None and v_eu is not None) else None,
         c_lon_eu=c_lon_eu if (c_lon_eu is not None and u_eu is not None and v_eu is not None) else None,
     )
+    t_grid_ms += (perf_counter() - t_grid0) * 1000.0
     lat_edges = ctx.lat_edges
     lon_edges = ctx.lon_edges
     lat_cell_count = ctx.lat_cell_count
