@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 POINT_KEYS = [
     # Core weather / cloud
     "ww", "ceiling", "clcl", "clcm", "clch", "clct", "clct_mod",
-    "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi", "hsurf",
+    "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hsurf",
     # Precipitation (pre-computed rate fields, already mm/h equivalent)
     "tp_rate", "rain_rate", "snow_rate", "hail_rate",
     # Boundary layer / atmosphere
@@ -156,7 +156,9 @@ def build_overlay_values_from_raw(
         ov["cloud_base"] = round(values["hbas_sc"], 0)
     if values.get("htop_dc") is not None and values["htop_dc"] > 0:
         ov["dry_conv_top"] = round(values["htop_dc"], 0)
-    if values.get("lpi") is not None:
+    if values.get("lpi_max") is not None:
+        ov["lpi"] = round(values["lpi_max"], 1)
+    elif values.get("lpi") is not None:
         ov["lpi"] = round(values["lpi"], 1)
     if values.get("htop_sc") is not None and values.get("hbas_sc") is not None:
         thick = max(0.0, values["htop_sc"] - values["hbas_sc"])
@@ -278,7 +280,9 @@ def build_overlay_values(
         thick = max(0.0, htop_sc - hbas)
         ov["conv_thickness"] = round(thick, 0) if thick > 0 else None
 
-    lpi = _safe_get(d, "lpi", i0, j0)
+    lpi = _safe_get(d, "lpi_max", i0, j0)
+    if lpi is None:
+        lpi = _safe_get(d, "lpi", i0, j0)
     if lpi is not None:
         ov["lpi"] = round(lpi, 1)
 

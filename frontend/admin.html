@@ -65,16 +65,27 @@
 <script>
 const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const fmt=n=>!Number.isFinite(n)?'-':(()=>{const u=['B','KB','MB','GB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return n.toFixed(i?1:0)+' '+u[i]})();
+const pct=n=>Number.isFinite(n)?`${(n*100).toFixed(1)}%`:'-';
+function hitRateBadge(rate){
+  if(!Number.isFinite(rate)) return '<span class="tag">-</span>';
+  const p=(rate*100).toFixed(1)+'%';
+  let bg='#3b2f13', bd='#a16207';
+  if(rate>=0.85){bg='#113422'; bd='#16a34a';}
+  else if(rate<0.6){bg='#3a1b1b'; bd='#dc2626';}
+  return `<span class="tag" style="background:${bg};border-color:${bd};font-weight:600">${p}</span>`;
+}
 async function j(url,opt){const r=await fetch(url,opt);if(!r.ok)throw new Error(url+': '+r.status);return r.json();}
 const state={fbStatus:'',fbSearch:'',logLevel:'all',logSource:'all',logFilter:'',logFile:'all',logNewest:true};
 let _logsCache=[];
 
-function kvTable(rows){return '<table>'+rows.map(([k,v])=>`<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')+'</table>'}
+function kvTable(rows){return '<table>'+rows.map(([k,v])=>`<tr><th>${esc(k)}</th><td>${(v&&typeof v==='object'&&v.html)?v.html:esc(v)}</td></tr>`).join('')+'</table>'}
 
 async function loadStatus(){
   const s=await j('/api/status');
   const d2=s?.ingestHealth?.models?.icon_d2||{}, eu=s?.ingestHealth?.models?.icon_eu||{};
   const fep = s?.fallback?.endpoints || {};
+  const lz = s?.symbolsLowZoomCache || {};
+  const lzm = lz?.metrics || {};
   const rows=[
     ['Server time', s.serverTime],
     ['Freshness (since full ingest)', s?.ingest?.freshnessMinutes],
@@ -83,6 +94,12 @@ async function loadStatus(){
     ['Overlay tile p50 total(ms)', s?.perf?.overlayTilePhases?.recentWindow?.p50?.totalMs],
     ['Tile cache hitRate', s?.cache?.tile?.hitRate],
     ['Symbols cache items', s?.cache?.symbols?.items],
+    ['Low-zoom cache maxZoom', lz?.maxZoom],
+    ['Low-zoom memory hitRate', {html: hitRateBadge(lz?.hitRate)}],
+    ['Low-zoom memory hits', lzm?.hits],
+    ['Low-zoom memory misses', lzm?.misses],
+    ['Low-zoom disk hits', lzm?.diskHits],
+    ['Low-zoom disk misses', lzm?.diskMisses],
     ['Fallback snapshot updated', s?.fallback?.updatedAt],
     ['Symbols decision (current)', fep?.symbols?.decision],
     ['Point decision (current)', fep?.point?.decision],

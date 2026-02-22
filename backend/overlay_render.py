@@ -237,7 +237,7 @@ OVERLAY_CONFIGS = {
     "ceiling": {"var": "ceiling", "cmap": colormap_ceiling},
     "cloud_base": {"var": "hbas_sc", "cmap": colormap_hbas_sc},
     "conv_thickness": {"var": "conv_thickness", "cmap": colormap_conv_thickness, "computed": True},
-    "lpi": {"var": "lpi", "cmap": colormap_lpi},
+    "lpi": {"var": "lpi_max", "cmap": colormap_lpi},
     "thermals": {"var": "cape_ml", "cmap": colormap_thermals},
     "wstar": {"var": "wstar", "cmap": colormap_wstar, "computed": True},
     "climb_rate": {"var": "climb_rate", "cmap": colormap_climb_rate, "computed": True},

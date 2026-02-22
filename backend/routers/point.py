@@ -80,7 +80,7 @@ def build_point_router(
             return None if not np.isfinite(v) else v
 
         vars_out = ["ww", "clcl", "clcm", "clch", "clct", "cape_ml",
-                    "htop_dc", "hbas_sc", "htop_sc", "lpi", "ceiling"]
+                    "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "ceiling"]
         result = {}
         for v in vars_out:
             val = _get(v)
@@ -100,7 +100,7 @@ def build_point_router(
             htop_dc=_get("htop_dc") or 0.0,
             hbas_sc=_get("hbas_sc") or 0.0,
             htop_sc=_get("htop_sc") or 0.0,
-            lpi=_get("lpi") or 0.0,
+            lpi=(_get("lpi_max") if _get("lpi_max") is not None else (_get("lpi") or 0.0)),
             ceiling=_get("ceiling") or 0.0,
             hsurf=_get("hsurf") or 0.0,
         )
@@ -149,7 +149,7 @@ def build_point_router(
 
         # Explorer/Skyview contract convergence: raw values dict
         result["values"] = {k: result.get(k) for k in [
-            "ww", "clcl", "clcm", "clch", "clct", "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi", "ceiling"
+            "ww", "clcl", "clcm", "clch", "clct", "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "ceiling"
         ]}
 
         # Closest grid point coordinates (li0/lo0 already computed above — no duplicate argmin)

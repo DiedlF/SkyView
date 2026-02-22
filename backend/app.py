@@ -117,6 +117,54 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(SCRIPT_DIR, "..", "data")
 FRONTEND_DIR = os.path.join(SCRIPT_DIR, "..", "frontend")
 PID_FILE = os.path.join(SCRIPT_DIR, "logs", "skyview.pid")
+LOW_ZOOM_GLOBAL_CACHE_MAX_ZOOM = 9
+LOW_ZOOM_GLOBAL_BBOX = (30.0, -30.0, 72.0, 45.0)
+low_zoom_symbols_cache_metrics = {
+    "hits": 0,
+    "misses": 0,
+    "diskHits": 0,
+    "diskMisses": 0,
+}
+
+
+def _symbols_precomputed_path(model_used: str, run: str, step: int, zoom: int) -> str:
+    return os.path.join(DATA_DIR, model_used, run, f"_symbols_z{zoom}_{int(step):03d}.json")
+
+
+def _filter_symbols_to_bbox(payload: dict, lat_min: float, lon_min: float, lat_max: float, lon_max: float) -> dict:
+    symbols = payload.get("symbols", [])
+    filtered = [
+        s for s in symbols
+        if lat_min <= float(s.get("lat", 0.0)) <= lat_max and lon_min <= float(s.get("lon", 0.0)) <= lon_max
+    ]
+    out = dict(payload)
+    out["symbols"] = filtered
+    out["count"] = len(filtered)
+    return out
+
+
+def _seed_symbols_cache_from_disk(max_runs_per_model: int = 1) -> int:
+    loaded = 0
+    model_dirs = ["icon_d2", "icon_eu"]
+    for model in model_dirs:
+        run_root = os.path.join(DATA_DIR, model)
+        if not os.path.isdir(run_root):
+            continue
+        runs = sorted([d for d in os.listdir(run_root) if len(d) == 10 and d.isdigit()], reverse=True)[:max_runs_per_model]
+        for run in runs:
+            run_dir = os.path.join(run_root, run)
+            for zoom in [5, 6, 7, 8, 9]:
+                for p in glob.glob(os.path.join(run_dir, f"_symbols_z{zoom}_*.json")):
+                    try:
+                        step = int(os.path.basename(p).split("_")[-1].split(".")[0])
+                        with open(p, "r", encoding="utf-8") as f:
+                            payload = json.load(f)
+                        key = f"{model}|{run}|{step}|z{zoom}|global"
+                        symbols_cache_set(key, payload)
+                        loaded += 1
+                    except Exception:
+                        continue
+    return loaded
 
 
 @asynccontextmanager
@@ -141,6 +189,9 @@ async def lifespan(app: FastAPI):
     if runs:
         latest = runs[0]
         logger.info(f"Latest run: {latest['model']} {latest['run']} ({len(latest['steps'])} timesteps)")
+    seeded = _seed_symbols_cache_from_disk(max_runs_per_model=1)
+    if seeded:
+        logger.info("Seeded low-zoom symbols cache entries from disk: %s", seeded)
 
     workers_env = os.environ.get("WEB_CONCURRENCY") or os.environ.get("UVICORN_WORKERS") or "1"
     try:
@@ -490,6 +541,44 @@ app.include_router(build_domain_router(
     DATA_DIR=DATA_DIR,
 ))
 
+def _load_symbols_precomputed(model_used: str, run: str, step: int, zoom: int) -> Optional[dict]:
+    path = _symbols_precomputed_path(model_used, run, step, zoom)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _save_symbols_precomputed(model_used: str, run: str, step: int, zoom: int, payload: dict) -> None:
+    path = _symbols_precomputed_path(model_used, run, step, zoom)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+    except Exception as e:
+        logger.warning("Failed writing symbols precompute %s: %s", path, e)
+
+
+def precompute_low_zoom_symbols_for_context(model_used: str, run: str, step: int, zooms: Optional[List[int]] = None) -> int:
+    targets = zooms or [5, 6, 7, 8, 9]
+    ok = 0
+    for z in targets:
+        if z > LOW_ZOOM_GLOBAL_CACHE_MAX_ZOOM:
+            continue
+        key = f"{model_used}|{run}|{step}|z{z}|global"
+        if symbols_cache_get(key) is not None:
+            ok += 1
+            continue
+        loaded = _load_symbols_precomputed(model_used, run, step, z)
+        if loaded is not None:
+            symbols_cache_set(key, loaded)
+            ok += 1
+    return ok
+
+
 async def api_symbols(
     zoom: int = Query(8, ge=5, le=12),
     bbox: str = Query("30,-30,72,45"),
@@ -502,17 +591,37 @@ async def api_symbols(
     if len(parts) != 4:
         raise HTTPException(400, "bbox: lat_min,lon_min,lat_max,lon_max")
     lat_min, lon_min, lat_max, lon_max = map(float, parts)
+    req_lat_min, req_lon_min, req_lat_max, req_lon_max = lat_min, lon_min, lat_max, lon_max
 
     # Keys needed for symbols endpoint
-    symbol_keys = ["ww", "ceiling", "clcl", "clcm", "clch", "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi", "hsurf"]
+    symbol_keys = ["ww", "ceiling", "clcl", "clcm", "clch", "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hsurf"]
     run, step, model_used = resolve_time_with_cache_context(time, model)
 
     # Short-TTL response cache for repeated pan/zoom requests
+    is_low_zoom_global = zoom <= LOW_ZOOM_GLOBAL_CACHE_MAX_ZOOM
     cache_bbox = f"{lat_min:.4f},{lon_min:.4f},{lat_max:.4f},{lon_max:.4f}"
-    symbols_cache_key = f"{model_used}|{run}|{step}|z{zoom}|{cache_bbox}"
+    symbols_cache_key = (
+        f"{model_used}|{run}|{step}|z{zoom}|global"
+        if is_low_zoom_global
+        else f"{model_used}|{run}|{step}|z{zoom}|{cache_bbox}"
+    )
     cached_symbols = symbols_cache_get(symbols_cache_key)
+    if is_low_zoom_global:
+        if cached_symbols is not None:
+            low_zoom_symbols_cache_metrics["hits"] += 1
+        else:
+            low_zoom_symbols_cache_metrics["misses"] += 1
+            cached_symbols = _load_symbols_precomputed(model_used, run, step, zoom)
+            if cached_symbols is not None:
+                low_zoom_symbols_cache_metrics["diskHits"] += 1
+                symbols_cache_set(symbols_cache_key, cached_symbols)
+            else:
+                low_zoom_symbols_cache_metrics["diskMisses"] += 1
     if cached_symbols is not None:
-        return cached_symbols
+        return _filter_symbols_to_bbox(cached_symbols, lat_min, lon_min, lat_max, lon_max) if is_low_zoom_global else cached_symbols
+
+    if is_low_zoom_global:
+        lat_min, lon_min, lat_max, lon_max = LOW_ZOOM_GLOBAL_BBOX
 
     d = load_data(run, step, model_used, keys=symbol_keys)
 
@@ -550,7 +659,7 @@ async def api_symbols(
         c_htop_dc = _slice_array(d["htop_dc"], li, lo) if "htop_dc" in d else np.zeros_like(ww)
         c_hbas_sc = _slice_array(d["hbas_sc"], li, lo) if "hbas_sc" in d else np.zeros_like(ww)
         c_htop_sc = _slice_array(d["htop_sc"], li, lo) if "htop_sc" in d else np.zeros_like(ww)
-        c_lpi = _slice_array(d["lpi"], li, lo) if "lpi" in d else np.zeros_like(ww)
+        c_lpi = _slice_array(d["lpi_max"], li, lo) if "lpi_max" in d else (_slice_array(d["lpi"], li, lo) if "lpi" in d else np.zeros_like(ww))
         c_hsurf = _slice_array(d["hsurf"], li, lo) if "hsurf" in d else np.zeros_like(ww)
 
     # Prepare EU fallback arrays over same padded bbox when D2 is primary model
@@ -589,7 +698,7 @@ async def api_symbols(
                         c_htop_dc_eu = _slice_array(d_eu["htop_dc"], li_eu, lo_eu) if "htop_dc" in d_eu else np.zeros_like(ww_eu)
                         c_hbas_sc_eu = _slice_array(d_eu["hbas_sc"], li_eu, lo_eu) if "hbas_sc" in d_eu else np.zeros_like(ww_eu)
                         c_htop_sc_eu = _slice_array(d_eu["htop_sc"], li_eu, lo_eu) if "htop_sc" in d_eu else np.zeros_like(ww_eu)
-                        c_lpi_eu = _slice_array(d_eu["lpi"], li_eu, lo_eu) if "lpi" in d_eu else np.zeros_like(ww_eu)
+                        c_lpi_eu = _slice_array(d_eu["lpi_max"], li_eu, lo_eu) if "lpi_max" in d_eu else (_slice_array(d_eu["lpi"], li_eu, lo_eu) if "lpi" in d_eu else np.zeros_like(ww_eu))
                         c_hsurf_eu = _slice_array(d_eu["hsurf"], li_eu, lo_eu) if "hsurf" in d_eu else np.zeros_like(ww_eu)
             except Exception:
                 d_eu = None
@@ -833,6 +942,9 @@ async def api_symbols(
         },
     }
     symbols_cache_set(symbols_cache_key, result)
+    if is_low_zoom_global:
+        _save_symbols_precomputed(model_used, run, step, zoom, result)
+        return _filter_symbols_to_bbox(result, req_lat_min, req_lon_min, req_lat_max, req_lon_max)
     return result
 
 
@@ -1865,12 +1977,20 @@ async def api_status():
         "strictWindowHours": EU_STRICT_MAX_DELTA_HOURS,
     })
 
+    lz_total = low_zoom_symbols_cache_metrics["hits"] + low_zoom_symbols_cache_metrics["misses"]
+    payload["symbolsLowZoomCache"] = {
+        "maxZoom": LOW_ZOOM_GLOBAL_CACHE_MAX_ZOOM,
+        "metrics": low_zoom_symbols_cache_metrics,
+        "hitRate": (low_zoom_symbols_cache_metrics["hits"] / lz_total) if lz_total else None,
+    }
+
     return payload
 
 
 async def api_cache_stats():
     tile_cache_prune("desktop")
     tile_cache_prune("mobile")
+    lz_total = low_zoom_symbols_cache_metrics["hits"] + low_zoom_symbols_cache_metrics["misses"]
     return {
         "tileCache": {
             "desktopItems": len(tile_cache_desktop),
@@ -1882,6 +2002,11 @@ async def api_cache_stats():
         "metrics": cache_stats,
         "computedFieldCacheItems": len(computed_field_cache),
         "computedFieldMetrics": computed_metrics_payload(),
+        "symbolsLowZoomCache": {
+            "maxZoom": LOW_ZOOM_GLOBAL_CACHE_MAX_ZOOM,
+            "metrics": low_zoom_symbols_cache_metrics,
+            "hitRate": (low_zoom_symbols_cache_metrics["hits"] / lz_total) if lz_total else None,
+        },
     }
 
 
@@ -1913,6 +2038,10 @@ async def api_perf_stats(reset: bool = Query(False, description="Reset perf coun
         overlay_phase_totals['colorizeMs'] = 0.0
         overlay_phase_totals['encodeMs'] = 0.0
         overlay_phase_totals['totalMs'] = 0.0
+        low_zoom_symbols_cache_metrics['hits'] = 0
+        low_zoom_symbols_cache_metrics['misses'] = 0
+        low_zoom_symbols_cache_metrics['diskHits'] = 0
+        low_zoom_symbols_cache_metrics['diskMisses'] = 0
         payload['reset'] = True
 
     return payload
