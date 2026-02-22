@@ -24,6 +24,7 @@ import cfgrib
 import requests as _requests
 import yaml
 from datetime import datetime, timedelta, timezone
+import time
 from logging_config import setup_logging
 from constants import ICON_EU_STEP_3H_START
 
@@ -195,32 +196,40 @@ def build_url(run, step, var, model="icon-d2", pressure_level=None, config=None,
                 f"{cfg['filename_pattern'].format(run=run, step=step, var_upper=var_name.upper())}")
 
 
-def _download_and_decompress(url: str) -> Optional[bytes]:
+def _download_and_decompress(url: str, retries: int = 3) -> Optional[bytes]:
     """Stream-download a .bz2 URL and return decompressed GRIB bytes in memory.
 
     Replaces the old download() + bunzip2 subprocess pattern:
       - No .bz2 or .grib2 temp files on disk
       - No subprocess overhead for decompression
-      - Returns None on 404 / any network / decompression failure
+      - Returns None on persistent 404 / network / decompression failure
 
-    Thread-safe: uses no shared state.
+    Includes lightweight retries for transient DWD/network issues.
     """
-    try:
-        resp = _requests.get(url, timeout=120, stream=True)
-        if resp.status_code == 404:
+    for attempt in range(1, max(1, retries) + 1):
+        try:
+            resp = _requests.get(url, timeout=120, stream=True)
+            if resp.status_code == 404:
+                return None
+            if resp.status_code != 200:
+                logger.debug(f"HTTP {resp.status_code} fetching {url} (attempt {attempt}/{retries})")
+                if attempt < retries:
+                    time.sleep(0.6 * attempt)
+                    continue
+                return None
+            decomp = bz2.BZ2Decompressor()
+            parts: List[bytes] = []
+            for chunk in resp.iter_content(chunk_size=131072):  # 128 KB chunks
+                if chunk:
+                    parts.append(decomp.decompress(chunk))
+            return b"".join(parts)
+        except Exception as e:
+            logger.debug(f"_download_and_decompress failed ({url}) attempt {attempt}/{retries}: {e}")
+            if attempt < retries:
+                time.sleep(0.6 * attempt)
+                continue
             return None
-        if resp.status_code != 200:
-            logger.debug(f"HTTP {resp.status_code} fetching {url}")
-            return None
-        decomp = bz2.BZ2Decompressor()
-        parts: List[bytes] = []
-        for chunk in resp.iter_content(chunk_size=131072):  # 128 KB chunks
-            if chunk:
-                parts.append(decomp.decompress(chunk))
-        return b"".join(parts)
-    except Exception as e:
-        logger.debug(f"_download_and_decompress failed ({url}): {e}")
-        return None
+    return None
 
 
 def _parse_grib_from_bytes(grib_bytes: bytes, bounds=None) -> Tuple:
@@ -441,7 +450,8 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
             if is_optional:
                 logger.debug(f"Step {step:03d}: optional {key} not available, skipping")
                 return True
-            logger.warning(f"Step {step:03d}: {key} download failed, skipping step")
+            url = task_meta.get(key, ("", False))[0]
+            logger.warning(f"Step {step:03d}: {key} download failed ({url}), skipping step")
             failed_required = key
             return False
 
