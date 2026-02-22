@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import bz2
 import tempfile
+import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Tuple
 import numpy as np
@@ -28,6 +29,19 @@ from constants import ICON_EU_STEP_3H_START
 from classify import classify_cloud_type, get_cloud_base
 
 logger = setup_logging(__name__, level="INFO", log_name="ingest")
+# Reduce cfgrib index-cache noise like "Ignoring index file ... older than GRIB file".
+try:
+    import logging as _logging
+    _logging.getLogger("cfgrib").setLevel(_logging.ERROR)
+except Exception:
+    pass
+
+# Silence xarray/cfgrib FutureWarning about decode_timedelta('step') to keep ingest logs clean.
+warnings.filterwarnings(
+    "ignore",
+    message=r".*will not decode the variable 'step' into a timedelta64 dtype.*",
+    category=FutureWarning,
+)
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(SCRIPT_DIR, "..", "data")
@@ -232,7 +246,7 @@ MODEL_CONFIG = {
 def get_latest_run(model="icon-d2"):
     """Determine latest available run, accounting for publication delay."""
     now = datetime.now(timezone.utc)
-    delay_hours = 2 if model == "icon-d2" else 4
+    delay_hours = 0 if model == "icon-d2" else 2
     ref = now - timedelta(hours=delay_hours)
     cfg = MODEL_CONFIG[model]
     hour = (ref.hour // cfg["run_interval"]) * cfg["run_interval"]
@@ -1045,6 +1059,8 @@ def main():
 
         nxt = expected_next_run_time(model)
         nxt_iso = nxt.isoformat().replace("+00:00", "Z")
+
+
         if available and not has_local:
             logger.info(f"NEW: {model} {run} available, not yet downloaded")
             logger.info(f"Next expected {model} run time (UTC): {nxt_iso}")
