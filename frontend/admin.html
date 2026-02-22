@@ -43,11 +43,21 @@
     <section class="card" style="grid-column:1/-1">
       <h2>Logs</h2>
       <div class="toolbar">
-        <select id="logLevel"><option value="all">all</option><option value="error">error</option><option value="warn">warn</option><option value="info">info</option><option value="debug">debug</option></select>
-        <input id="logFilter" placeholder="filter lines…" style="min-width:260px">
+        <select id="logSource">
+          <option value="all">all sources</option>
+          <option value="backend">backend</option>
+          <option value="ingest">ingest</option>
+          <option value="stdout">stdout</option>
+        </select>
+        <select id="logLevel"><option value="all">all levels</option><option value="error">error</option><option value="warn">warn</option><option value="info">info</option><option value="debug">debug</option></select>
+        <input id="logFilter" placeholder="filter lines…" style="min-width:200px">
         <select id="logFile"><option value="all">all files</option></select>
+        <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="logNewest" checked> newest first
+        </label>
         <button id="logApply">Apply</button>
       </div>
+      <div id="logsArtifacts" style="margin-bottom:8px"></div>
       <div id="logs">Loading…</div>
     </section>
   </div>
@@ -56,7 +66,7 @@
 const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const fmt=n=>!Number.isFinite(n)?'-':(()=>{const u=['B','KB','MB','GB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return n.toFixed(i?1:0)+' '+u[i]})();
 async function j(url,opt){const r=await fetch(url,opt);if(!r.ok)throw new Error(url+': '+r.status);return r.json();}
-const state={fbStatus:'',fbSearch:'',logLevel:'all',logFilter:'',logFile:'all'};
+const state={fbStatus:'',fbSearch:'',logLevel:'all',logSource:'all',logFilter:'',logFile:'all',logNewest:true};
 let _logsCache=[];
 
 function kvTable(rows){return '<table>'+rows.map(([k,v])=>`<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')+'</table>'}
@@ -143,38 +153,66 @@ async function loadFeedback(){
     : '<div class="muted">No feedback.</div>';
 }
 
+const SOURCE_LABEL={'backend':'⚙️ Backend','ingest':'📥 Ingest','stdout':'📄 stdout'};
+const SOURCE_COLOR={'backend':'#2563eb','ingest':'#d97706','stdout':'#475569'};
+
 function renderLogs(){
   const needle=(state.logFilter||'').toLowerCase();
   const fileFilter=state.logFile;
-  const logs=fileFilter==='all'?_logsCache:_logsCache.filter(l=>l.file===fileFilter);
+  const newestFirst=state.logNewest;
+
+  let logs=fileFilter==='all'?_logsCache:_logsCache.filter(l=>l.file===fileFilter);
   if(!logs.length){document.getElementById('logs').innerHTML='<div class="muted">No logs.</div>';return;}
-  let html='';
+
+  // Group by source
+  const groups={};
   for(const l of logs){
-    // Reverse: most-recent lines first
-    let lines=[...(l.tail||[])].reverse();
-    const total=lines.length;
-    if(needle) lines=lines.filter(ln=>ln.toLowerCase().includes(needle));
-    const shown=lines.length;
-    const pre=esc(lines.join('\n'));
-    const counter=needle?`${shown} of ${total} lines`:`${total} lines`;
-    html+=`<h3>${esc(l.file)} <span class="muted" style="font-size:12px;font-weight:normal">${fmt(l.sizeBytes)} · ${counter}</span></h3><pre>${pre}</pre>`;
+    const s=l.source||'backend';
+    if(!groups[s]) groups[s]=[];
+    groups[s].push(l);
+  }
+
+  let html='';
+  for(const src of ['backend','ingest','stdout']){
+    const grp=groups[src];
+    if(!grp||!grp.length) continue;
+    const color=SOURCE_COLOR[src]||'#475569';
+    const label=SOURCE_LABEL[src]||src;
+    html+=`<div style="border-left:3px solid ${color};padding-left:10px;margin-bottom:18px">`;
+    html+=`<h3 style="margin:0 0 8px;color:${color}">${label}</h3>`;
+    for(const l of grp){
+      let lines=[...(l.tail||[])];
+      if(newestFirst) lines=lines.reverse();
+      const total=lines.length;
+      if(needle) lines=lines.filter(ln=>ln.toLowerCase().includes(needle));
+      const shown=lines.length;
+      const counter=needle?`${shown} of ${total} lines`:`${total} lines`;
+      const pre=esc(lines.join('\n'));
+      html+=`<details open><summary style="cursor:pointer;font-size:13px;margin-bottom:4px">${esc(l.file)} <span class="muted">${fmt(l.sizeBytes)} · ${counter}</span></summary>`;
+      html+=`<pre>${pre||'(empty)'}</pre></details>`;
+    }
+    html+=`</div>`;
   }
   document.getElementById('logs').innerHTML=html;
 }
 
 async function loadLogs(){
-  const r=await j('/api/admin/logs?limit=500&level='+encodeURIComponent(state.logLevel));
+  const params=new URLSearchParams({limit:'500',level:state.logLevel,source:state.logSource});
+  const r=await j('/api/admin/logs?'+params.toString());
   const arts=r.artifacts||{};
-  const ai=(arts.ingest||[]).map(x=>`${esc(x.name)} (${fmt(x.sizeBytes)})`).join(', ')||'none';
+
   _logsCache=r.logs||[];
 
-  // Populate file selector
+  // Populate file selector (preserve previous selection)
   const sel=document.getElementById('logFile');
   const prev=sel.value;
   sel.innerHTML='<option value="all">all files</option>'+_logsCache.map(l=>`<option value="${esc(l.file)}">${esc(l.file)}</option>`).join('');
   if(_logsCache.some(l=>l.file===prev)) sel.value=prev;
 
-  document.getElementById('logs').insertAdjacentHTML('afterbegin',`<div class="muted" style="margin-bottom:6px">Ingest artifacts: ${ai}</div>`);
+  // Artifacts banner (rendered once, not appended)
+  const ai=(arts.ingest||[]).map(x=>`<span title="${esc(x.path)}">${esc(x.name)} (${fmt(x.sizeBytes)})</span>`).join(', ')||'<span class="muted">none</span>';
+  document.getElementById('logsArtifacts').innerHTML=`<span class="muted" style="font-size:12px">Ingest artifacts: ${ai}</span>`;
+
   renderLogs();
 }
 
@@ -184,8 +222,10 @@ document.getElementById('refresh').onclick=()=>loadAll().catch(e=>alert(e.messag
 document.getElementById('fbApply').onclick=()=>{state.fbStatus=document.getElementById('fbStatus').value;state.fbSearch=document.getElementById('fbSearch').value.trim();loadFeedback().catch(e=>alert(e.message));};
 document.getElementById('logApply').onclick=()=>{
   state.logLevel=document.getElementById('logLevel').value;
+  state.logSource=document.getElementById('logSource').value;
   state.logFilter=document.getElementById('logFilter').value.trim();
   state.logFile=document.getElementById('logFile').value;
+  state.logNewest=document.getElementById('logNewest').checked;
   loadLogs().catch(e=>alert(e.message));
 };
 document.getElementById('logFilter').addEventListener('input',()=>{
@@ -195,6 +235,15 @@ document.getElementById('logFilter').addEventListener('input',()=>{
 document.getElementById('logFile').addEventListener('change',()=>{
   state.logFile=document.getElementById('logFile').value;
   if(_logsCache.length) renderLogs();
+});
+document.getElementById('logNewest').addEventListener('change',()=>{
+  state.logNewest=document.getElementById('logNewest').checked;
+  if(_logsCache.length) renderLogs();
+});
+document.getElementById('logSource').addEventListener('change',()=>{
+  state.logSource=document.getElementById('logSource').value;
+  // Source change requires a new API fetch (server-side filter)
+  loadLogs().catch(e=>alert(e.message));
 });
 window.setStatus=(id,s)=>setStatus(id,s).catch(e=>alert(e.message));
 loadAll().catch(e=>{document.body.insertAdjacentHTML('beforeend','<pre>'+esc(e.message)+'</pre>');});
