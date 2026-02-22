@@ -620,14 +620,14 @@ def precompute_low_zoom_symbols_for_context(model_used: str, run: str, step: int
 
 
 async def api_symbols(
+    request: Request,
     zoom: int = Query(8, ge=5, le=12),
     bbox: str = Query("30,-30,72,45"),
     time: str = Query("latest"),
     model: Optional[str] = Query(None),
-    request: Optional[Request] = None,
 ):
     t0 = perf_counter()
-    rid = (request.headers.get("X-Request-ID") if request is not None else None) or uuid.uuid4().hex[:12]
+    rid = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
     t_load_ms = 0.0
     t_grid_ms = 0.0
     t_agg_ms = 0.0
@@ -1063,7 +1063,7 @@ async def api_wind(
 ):
     """Return wind barb data on the same grid as convection symbols."""
     t0 = perf_counter()
-    rid = (request.headers.get("X-Request-ID") if request is not None else None) or uuid.uuid4().hex[:12]
+    rid = uuid.uuid4().hex[:12]
     t_load_ms = 0.0
     t_grid_ms = 0.0
     t_agg_ms = 0.0
