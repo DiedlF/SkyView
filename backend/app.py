@@ -2559,12 +2559,15 @@ def _ingest_model_timings() -> dict[str, dict[str, Any]]:
 
         latest_run_first_ingested_iso = None
         ingest_running_minutes = None
+        latest_run_step_count = 0
         if latest_run:
             latest_run_npz = sorted(glob.glob(os.path.join(base, latest_run, "*.npz")))
+            latest_run_step_count = len(latest_run_npz)
             if latest_run_npz:
                 first_dt = datetime.fromtimestamp(min(os.path.getmtime(p) for p in latest_run_npz), tz=timezone.utc)
                 latest_run_first_ingested_iso = first_dt.isoformat().replace("+00:00", "Z")
-                ingest_running_minutes = round((now - first_dt).total_seconds() / 60.0, 1)
+                if latest_run_step_count < expected_steps[model_key]:
+                    ingest_running_minutes = round((now - first_dt).total_seconds() / 60.0, 1)
 
         calc_minutes = None
         if latest_run_start_iso and dwd_available_iso:
@@ -2709,7 +2712,7 @@ async def api_admin_storage():
 
 
 async def api_admin_logs(
-    limit: int = Query(300, ge=50, le=2000),
+    limit: int = Query(5000, ge=50, le=5000),
     level: str = Query("all", description="all|error|warn|info|debug"),
     source: str = Query("all", description="all|backend|ingest|stdout"),
 ):
@@ -2746,7 +2749,7 @@ async def api_admin_logs(
         src_filter = (source or "all").strip().lower()
 
         payload: list[dict[str, Any]] = []
-        for fp in all_files[-10:]:
+        for fp in all_files:
             basename = os.path.basename(fp)
             file_source = _source_for_file(basename)
 
