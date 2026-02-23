@@ -1938,12 +1938,15 @@ function renderMeteogramSvg(series) {
     if (hP > 0) svg += `<rect x="${(xx - bw/2).toFixed(1)}" y="${(yBase - hP).toFixed(1)}" width="${bw.toFixed(1)}" height="${hP.toFixed(1)}" fill="rgba(80,170,255,0.82)"/>`;
   }
 
+  let snowUnit = 'm';
+  let snowTopLabel = '0.00';
   if (hasSnow) {
     const snowUseCm = snowMax < 1.0;
-    const snowUnit = snowUseCm ? 'cm' : 'm';
-    const snowTopLabel = snowUseCm ? (snowMax * 100).toFixed(0) : snowMax.toFixed(2);
+    snowUnit = snowUseCm ? 'cm' : 'm';
+    snowTopLabel = snowUseCm ? (snowMax * 100).toFixed(0) : snowMax.toFixed(2);
     const snowPath = linePath('snowDepthM', pPre, 0, snowMax);
     if (snowPath) svg += `<path d="${snowPath}" fill="none" stroke="#ffffff" stroke-width="1.4"/>`;
+  }
 
   const tPath = linePath('t2mC', pTemp, tMin, tMax);
   if (tPath) svg += `<path d="${tPath}" fill="none" stroke="#ff9a66" stroke-width="1.8"/>`;
@@ -1965,7 +1968,8 @@ function renderMeteogramSvg(series) {
   svg += `<text x="${m.l-6}" y="${(pPre.y + pPre.ph + 4).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="end">0 mm/h</text>`;
   svg += `<text x="${m.l-6}" y="${(pPre.y + 4).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="end">${precipMax.toFixed(1)} mm/h</text>`;
 
-  // Snow axis (right): 0 .. snowMax (cm when appropriate)
+  // Snow axis (right): 0 .. snowMax
+  if (hasSnow) {
     svg += `<line x1="${W - m.r}" y1="${(pPre.y + pPre.ph).toFixed(1)}" x2="${(W - m.r + 4)}" y2="${(pPre.y + pPre.ph).toFixed(1)}" stroke="rgba(255,255,255,0.65)"/>`;
     svg += `<line x1="${W - m.r}" y1="${pPre.y.toFixed(1)}" x2="${(W - m.r + 4)}" y2="${pPre.y.toFixed(1)}" stroke="rgba(255,255,255,0.65)"/>`;
     svg += `<text x="${W - m.r + 6}" y="${(pPre.y + pPre.ph + 4).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="start">0 ${snowUnit}</text>`;

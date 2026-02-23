@@ -133,9 +133,11 @@ def build_overlay_values_from_raw(
         ov["clouds_total_mod"] = round(v, 1)
 
     # Scalars
-    for k in ("mh", "ashfl_s", "relhum_2m", "h_snow"):
+    for k in ("mh", "ashfl_s", "relhum_2m"):
         if values.get(k) is not None:
             ov[k] = round(float(values[k]), 1)
+    if values.get("h_snow") is not None:
+        ov["h_snow"] = round(float(values["h_snow"]), 3)
     if values.get("t_2m") is not None and values.get("td_2m") is not None:
         ov["dew_spread_2m"] = round(float(values["t_2m"]) - float(values["td_2m"]), 1)
 
@@ -248,10 +250,13 @@ def build_overlay_values(
     if cape is not None:
         ov["thermals"] = round(cape, 1)
 
-    for key in ("mh", "ashfl_s", "relhum_2m", "h_snow"):
+    for key in ("mh", "ashfl_s", "relhum_2m"):
         v = _safe_get(d, key, i0, j0)
         if v is not None:
             ov[key] = round(v, 1)
+    hs = _safe_get(d, "h_snow", i0, j0)
+    if hs is not None:
+        ov["h_snow"] = round(hs, 3)
 
     # Extract shared temperature/humidity scalars once for reuse below
     t2m  = _safe_get(d, "t_2m",  i0, j0)
