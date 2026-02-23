@@ -789,10 +789,13 @@ async function loadPoint(lat, lon, time, model, windLvl = '10m', zoom = null) {
       }
     }
 
-    const emagramBtn = `<div style="margin-top:8px"><button onclick="openEmagramAt(${Number(lat).toFixed(5)},${Number(lon).toFixed(5)},'${String(time || 'latest').replace(/'/g, "&#39;")}','${String(model || '').replace(/'/g, "&#39;")}')" style="font-size:11px;padding:2px 6px;line-height:1.1;">Skew-T</button></div>`;
-    L.popup({ maxWidth: 260 })
+    const btns = `<div style="margin-top:8px;display:flex;gap:6px;align-items:center">`
+      + `<button onclick="openEmagramAt(${Number(lat).toFixed(5)},${Number(lon).toFixed(5)},'${String(time || 'latest').replace(/'/g, "&#39;")}','${String(model || '').replace(/'/g, "&#39;")}')" style="font-size:11px;padding:2px 6px;line-height:1.1;">Skew-T</button>`
+      + `<button onclick="openMeteogramAt(${Number(lat).toFixed(5)},${Number(lon).toFixed(5)},'${String(model || '').replace(/'/g, "&#39;")}')" style="font-size:11px;padding:2px 6px;line-height:1.1;">Meteogram</button>`
+      + `</div>`;
+    L.popup({ maxWidth: 280 })
       .setLatLng([lat, lon])
-      .setContent(lines.join('<br/>') + emagramBtn)
+      .setContent(lines.join('<br/>') + btns)
       .openOn(map);
   } catch (e) {
     console.error('Error loading point:', e);
@@ -1555,9 +1558,16 @@ const emagramOverlay = document.getElementById('emagram-overlay');
 const emagramClose = document.getElementById('emagram-close');
 const emagramTitle = document.getElementById('emagram-title');
 const emagramBody = document.getElementById('emagram-body');
+const meteogramOverlay = document.getElementById('meteogram-overlay');
+const meteogramClose = document.getElementById('meteogram-close');
+const meteogramTitle = document.getElementById('meteogram-title');
+const meteogramBody = document.getElementById('meteogram-body');
 let emagramState = { open: false, lat: null, lon: null, model: '', zoom: null };
+let meteogramState = { open: false, lat: null, lon: null, model: '' };
 const emagramCache = new Map();
+const meteogramCache = new Map();
 const EMAGRAM_CACHE_MAX = 96;
+const METEOGRAM_CACHE_MAX = 32;
 const langSelect = document.getElementById('lang-select');
 
 function openFeedback() {
@@ -1592,6 +1602,11 @@ function closeHelp() {
 function closeEmagram() {
   emagramState.open = false;
   if (emagramOverlay) emagramOverlay.style.display = 'none';
+}
+
+function closeMeteogram() {
+  meteogramState.open = false;
+  if (meteogramOverlay) meteogramOverlay.style.display = 'none';
 }
 
 function renderEmagramSvg(levels) {
@@ -1748,6 +1763,142 @@ function emagramCurrentStep() {
   return timesteps[currentTimeIndex] || null;
 }
 
+function meteogramCacheSet(key, value) {
+  if (meteogramCache.has(key)) meteogramCache.delete(key);
+  meteogramCache.set(key, value);
+  if (meteogramCache.size > METEOGRAM_CACHE_MAX) {
+    const oldest = meteogramCache.keys().next().value;
+    meteogramCache.delete(oldest);
+  }
+}
+
+function renderMeteogramSvg(series) {
+  const rows = (series || []).filter(r => r && r.validTime);
+  if (!rows.length) return '<div style="color:#ffb3b3">No meteogram data.</div>';
+
+  const W = 760, H = 420;
+  const m = { l: 48, r: 18, t: 18, b: 30 };
+  const panels = [
+    { key: 'wind', h: 110 },
+    { key: 'cloud', h: 95 },
+    { key: 'precip', h: 95 },
+    { key: 'conv', h: 72 },
+  ];
+  const totalH = panels.reduce((a, p) => a + p.h, 0);
+  const scaleY = (H - m.t - m.b) / totalH;
+  const pxW = W - m.l - m.r;
+
+  let y0 = m.t;
+  for (const p of panels) { p.y = y0; p.ph = p.h * scaleY; y0 += p.ph; }
+
+  const x = (idx) => m.l + (rows.length <= 1 ? 0 : (idx / (rows.length - 1)) * pxW);
+  const v = (row, key) => Number(row[key]);
+
+  const linePath = (key, panel, min, max) => {
+    const pts = rows.map((r, i) => {
+      const vv = v(r, key);
+      if (!Number.isFinite(vv)) return null;
+      const yy = panel.y + panel.ph - ((vv - min) / (max - min || 1)) * panel.ph;
+      return `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${yy.toFixed(1)}`;
+    }).filter(Boolean).join(' ');
+    return pts;
+  };
+
+  const winds = rows.map(r => v(r, 'wind10mKt')).filter(Number.isFinite);
+  const windMax = Math.max(20, ...(winds.length ? winds : [0]));
+  const cloudsMax = 100;
+  const precipVals = rows.flatMap(r => [v(r, 'precipTotal'), v(r, 'rain'), v(r, 'snow')]).filter(Number.isFinite);
+  const precipMax = Math.max(1, ...(precipVals.length ? precipVals : [0]));
+  const convVals = rows.flatMap(r => [v(r, 'capeMl'), v(r, 'lpi')]).filter(Number.isFinite);
+  const convMax = Math.max(10, ...(convVals.length ? convVals : [0]));
+
+  const pWind = panels[0], pCloud = panels[1], pPre = panels[2], pConv = panels[3];
+
+  let svg = `<svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="Meteogram">`;
+  svg += `<rect x="0" y="0" width="${W}" height="${H}" fill="#151b2d" rx="8"/>`;
+
+  for (const p of panels) {
+    svg += `<line x1="${m.l}" y1="${p.y.toFixed(1)}" x2="${W - m.r}" y2="${p.y.toFixed(1)}" stroke="rgba(255,255,255,0.2)"/>`;
+    svg += `<line x1="${m.l}" y1="${(p.y + p.ph).toFixed(1)}" x2="${W - m.r}" y2="${(p.y + p.ph).toFixed(1)}" stroke="rgba(255,255,255,0.2)"/>`;
+  }
+
+  for (let i = 0; i < rows.length; i += Math.max(1, Math.floor(rows.length / 10))) {
+    const xx = x(i);
+    svg += `<line x1="${xx}" y1="${m.t}" x2="${xx}" y2="${H - m.b}" stroke="rgba(255,255,255,0.08)"/>`;
+  }
+
+  const windPath = linePath('wind10mKt', pWind, 0, windMax);
+  if (windPath) svg += `<path d="${windPath}" fill="none" stroke="#8dd3ff" stroke-width="2"/>`;
+  const gustPath = linePath('gust10mKt', pWind, 0, windMax);
+  if (gustPath) svg += `<path d="${gustPath}" fill="none" stroke="#dbeafe" stroke-width="1.4" stroke-dasharray="4 3"/>`;
+
+  for (let i = 0; i < rows.length; i++) {
+    const cl = v(rows[i], 'cloudLowPct');
+    const cm = v(rows[i], 'cloudMidPct');
+    const ch = v(rows[i], 'cloudHighPct');
+    const xx = x(i);
+    const bw = Math.max(2, pxW / Math.max(rows.length, 24));
+    const hL = Number.isFinite(cl) ? (cl / cloudsMax) * pCloud.ph : 0;
+    const hM = Number.isFinite(cm) ? (cm / cloudsMax) * pCloud.ph : 0;
+    const hH = Number.isFinite(ch) ? (ch / cloudsMax) * pCloud.ph : 0;
+    const yBase = pCloud.y + pCloud.ph;
+    if (hH > 0) svg += `<rect x="${(xx - bw/2).toFixed(1)}" y="${(yBase - hH).toFixed(1)}" width="${bw.toFixed(1)}" height="${hH.toFixed(1)}" fill="rgba(180,180,180,0.55)"/>`;
+    if (hM > 0) svg += `<rect x="${(xx - bw/2).toFixed(1)}" y="${(yBase - hM).toFixed(1)}" width="${bw.toFixed(1)}" height="${hM.toFixed(1)}" fill="rgba(140,140,140,0.60)"/>`;
+    if (hL > 0) svg += `<rect x="${(xx - bw/2).toFixed(1)}" y="${(yBase - hL).toFixed(1)}" width="${bw.toFixed(1)}" height="${hL.toFixed(1)}" fill="rgba(95,95,95,0.70)"/>`;
+  }
+
+  for (let i = 0; i < rows.length; i++) {
+    const xx = x(i);
+    const bw = Math.max(2, pxW / Math.max(rows.length, 24));
+    const r = Math.max(0, v(rows[i], 'rain') || 0);
+    const s = Math.max(0, v(rows[i], 'snow') || 0);
+    const hR = (r / precipMax) * pPre.ph;
+    const hS = (s / precipMax) * pPre.ph;
+    const yBase = pPre.y + pPre.ph;
+    if (hR > 0) svg += `<rect x="${(xx - bw/2).toFixed(1)}" y="${(yBase - hR).toFixed(1)}" width="${bw.toFixed(1)}" height="${hR.toFixed(1)}" fill="rgba(80,170,255,0.80)"/>`;
+    if (hS > 0) svg += `<rect x="${(xx - bw/2).toFixed(1)}" y="${(yBase - hS).toFixed(1)}" width="${bw.toFixed(1)}" height="${hS.toFixed(1)}" fill="rgba(220,180,255,0.75)"/>`;
+  }
+
+  const capePath = linePath('capeMl', pConv, 0, convMax);
+  if (capePath) svg += `<path d="${capePath}" fill="none" stroke="#ffb347" stroke-width="1.8"/>`;
+  const lpiPath = linePath('lpi', pConv, 0, convMax);
+  if (lpiPath) svg += `<path d="${lpiPath}" fill="none" stroke="#ff6b6b" stroke-width="1.5"/>`;
+
+  svg += `<text x="6" y="${(pWind.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Wind kt</text>`;
+  svg += `<text x="6" y="${(pCloud.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Cloud %</text>`;
+  svg += `<text x="6" y="${(pPre.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Precip mm/h</text>`;
+  svg += `<text x="6" y="${(pConv.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">CAPE/LPI</text>`;
+
+  svg += `</svg>`;
+  return svg;
+}
+
+async function openMeteogramAt(lat, lon, model = '') {
+  if (!meteogramOverlay || !meteogramBody) return;
+  const key = `${Number(lat).toFixed(4)}|${Number(lon).toFixed(4)}|${model || ''}`;
+  meteogramState = { open: true, lat: Number(lat), lon: Number(lon), model: model || '' };
+  meteogramOverlay.style.display = 'flex';
+  meteogramBody.innerHTML = '<div style="opacity:.8">Loading meteogram…</div>';
+  try {
+    let data = meteogramCache.get(key);
+    if (!data) {
+      const modelPart = model ? `&model=${encodeURIComponent(model)}` : '';
+      const res = await fetch(`/api/meteogram_point?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}${modelPart}`);
+      if (!res.ok) await throwHttpError(res, 'API');
+      data = await res.json();
+      meteogramCacheSet(key, data);
+    }
+    const p = data.point || {};
+    if (meteogramTitle) meteogramTitle.textContent = `Meteogram · ${data.count || 0} steps`;
+    const meta = `<div style="font-size:12px;opacity:.88;margin-bottom:8px">Point ${p.gridLat ?? lat}, ${p.gridLon ?? lon} · ${data.series?.[0]?.run || ''}…</div>`;
+    meteogramBody.innerHTML = meta + renderMeteogramSvg(data.series || []);
+  } catch (e) {
+    meteogramBody.innerHTML = `<div style="color:#ff9f9f">Failed to load meteogram: ${String(e.message || e)}</div>`;
+  }
+}
+
+window.openMeteogramAt = openMeteogramAt;
+
 function emagramCacheKey({ lat, lon, model, zoom, time }) {
   return `${Number(lat).toFixed(4)}|${Number(lon).toFixed(4)}|${model || ''}|z${zoom ?? ''}|${time || 'latest'}`;
 }
@@ -1877,6 +2028,12 @@ if (emagramClose) emagramClose.addEventListener('click', closeEmagram);
 if (emagramOverlay) {
   emagramOverlay.addEventListener('click', (e) => {
     if (e.target === emagramOverlay) closeEmagram();
+  });
+}
+if (meteogramClose) meteogramClose.addEventListener('click', closeMeteogram);
+if (meteogramOverlay) {
+  meteogramOverlay.addEventListener('click', (e) => {
+    if (e.target === meteogramOverlay) closeMeteogram();
   });
 }
 if (langSelect) {

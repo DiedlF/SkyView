@@ -760,7 +760,8 @@ body {
 
 /* Help overlay (prototype explanation panel) */
 #help-overlay,
-#emagram-overlay {
+#emagram-overlay,
+#meteogram-overlay {
   position: fixed;
   top: 0;
   left: 0;
@@ -775,7 +776,8 @@ body {
 }
 
 #help-modal,
-#emagram-modal {
+#emagram-modal,
+#meteogram-modal {
   background: #1e2337;
   border-radius: 12px;
   width: 100%;
@@ -797,7 +799,8 @@ body {
 }
 
 #help-close,
-#emagram-close {
+#emagram-close,
+#meteogram-close {
   background: none;
   border: none;
   color: rgba(255,255,255,0.6);
@@ -808,7 +811,8 @@ body {
 }
 
 #help-close:hover,
-#emagram-close:hover {
+#emagram-close:hover,
+#meteogram-close:hover {
   color: white;
   background: rgba(255,255,255,0.1);
 }
