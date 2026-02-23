@@ -20,42 +20,86 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          timeout: 5m
-          command_timeout: 5m
+          timeout: 8m
+          command_timeout: 8m
           script: |
-            set -e
-            cd /opt/skyview || (git clone --quiet https://github.com/DiedlF/SkyView.git /opt/skyview && cd /opt/skyview)
-            git fetch --quiet origin master
-            git checkout -q master
-            git reset -q --hard FETCH_HEAD
+            set -euo pipefail
+            echo "[deploy] start $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-            # NOTE: libeccodes-dev apt package is NOT required.
-            # cfgrib>=0.9.14.1 + eccodes>=1.6.0 (both in requirements.txt) bundle
-            # the eccodes C library inside the Python wheel — no system lib needed.
+            cd /opt/skyview || (git clone https://github.com/DiedlF/SkyView.git /opt/skyview && cd /opt/skyview)
+            PREV_HEAD="$(git rev-parse --short HEAD 2>/dev/null || echo none)"
+            git fetch origin master
+            git checkout master
+            git reset --hard FETCH_HEAD
+            NEW_HEAD="$(git rev-parse --short HEAD)"
+            echo "[deploy] head: ${PREV_HEAD} -> ${NEW_HEAD}"
 
-            # Venv: create once, then let pip upgrade handle version changes
-            if [ ! -d venv ]; then
-              python3 -m venv venv
-              venv/bin/pip install --quiet --upgrade pip
+            CHANGED="$(git diff --name-only ${PREV_HEAD}..${NEW_HEAD} 2>/dev/null || true)"
+            echo "[deploy] changed files:"
+            if [ -n "${CHANGED}" ]; then
+              echo "${CHANGED}"
+            else
+              echo "(none / first deploy)"
             fi
-            venv/bin/pip install --quiet -r backend/requirements.txt --upgrade
 
-            # Systemd service: install from repo, reload and restart
+            # Venv: create once, then keep dependencies current
+            if [ ! -d venv ]; then
+              echo "[deploy] creating venv"
+              python3 -m venv venv
+            fi
+            echo "[deploy] installing python deps (with pip cache)"
+            export PIP_CACHE_DIR="$HOME/.cache/pip"
+            mkdir -p "$PIP_CACHE_DIR"
+            venv/bin/pip install --upgrade pip
+            venv/bin/pip install -r backend/requirements.txt --upgrade
+
+            # Always refresh systemd unit (safe, cheap)
+            echo "[deploy] installing systemd unit"
             sudo cp deploy/skyview.service /etc/systemd/system/skyview.service
             sudo systemctl daemon-reload
             sudo systemctl enable skyview
-            sudo systemctl restart skyview
 
-            # Ingest cron: register once, skip if already present
-            if ! crontab -l 2>/dev/null | grep -q 'skyview.*ingest'; then
-              (
-                crontab -l 2>/dev/null
-                echo "*/30 * * * * cd /opt/skyview && venv/bin/python backend/ingest.py latest --model icon-d2 >> /var/log/skyview-ingest.log 2>&1"
-                echo "0 * * * * cd /opt/skyview && venv/bin/python backend/ingest.py latest --model icon-eu >> /var/log/skyview-ingest.log 2>&1"
-              ) | crontab -
-              echo "Cron jobs registered"
-            else
-              echo "Cron already registered, skipping"
+            # Restart only when relevant files changed (or first deploy)
+            NEED_RESTART=1
+            if [ -n "${CHANGED}" ]; then
+              NEED_RESTART=0
+              echo "${CHANGED}" | grep -Eq '^(backend/|deploy/skyview\.service|\.github/workflows/deploy\.yml)' && NEED_RESTART=1 || true
             fi
 
-            echo "Deploy complete ($(date))"
+            if [ "${NEED_RESTART}" -eq 1 ]; then
+              echo "[deploy] restarting skyview service"
+              sudo systemctl restart skyview
+            else
+              echo "[deploy] skipping service restart (no backend/unit changes)"
+            fi
+
+            # Health check gate (up to ~60s)
+            echo "[deploy] health check /api/status"
+            ok=0
+            for i in $(seq 1 20); do
+              if curl -fsS http://127.0.0.1:8501/api/status >/dev/null; then
+                ok=1
+                break
+              fi
+              sleep 3
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "[deploy] health check failed"
+              sudo systemctl status skyview --no-pager || true
+              exit 1
+            fi
+            echo "[deploy] health check ok"
+
+            # Ingest cron: register once, skip if already present
+            # Use project cron-ingest script (it handles locking/concurrency policy itself).
+            if ! crontab -l 2>/dev/null | grep -q 'skyview.*cron-ingest.sh'; then
+              (
+                crontab -l 2>/dev/null
+                echo "*/30 * * * * cd /opt/skyview/backend && ./cron-ingest.sh >> /var/log/skyview-ingest.log 2>&1"
+              ) | crontab -
+              echo "[deploy] cron job registered (backend/cron-ingest.sh)"
+            else
+              echo "[deploy] cron already registered, skipping"
+            fi
+
+            echo "[deploy] complete $(date -u +%Y-%m-%dT%H:%M:%SZ)"

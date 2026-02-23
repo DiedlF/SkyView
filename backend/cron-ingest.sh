@@ -2,8 +2,8 @@
 # Skyview data ingestion cron script
 # Run every 10 minutes to check for new data
 # ICON-D2 and ICON-EU are checked independently — they publish at different times
-# D2: runs every 3h, ~2h publication delay
-# EU: runs every 6h, ~4h publication delay
+# D2: runs every 3h, ~1h publication delay
+# EU: runs every 6h, ~2h publication delay
 #
 # Config-driven: reads ingest_config.yaml for variable groups.
 # D2: full grid (746×1215), EU: cropped to D2 bounds.
@@ -32,16 +32,22 @@ fi
 touch "$LOCKFILE"
 trap "rm -f $LOCKFILE" EXIT
 
+# Prefer project venv python when available
+PYTHON_BIN="${PYTHON_BIN:-../venv/bin/python}"
+if [ ! -x "$PYTHON_BIN" ]; then
+    PYTHON_BIN="python3"
+fi
+
 # Check and ingest ICON-D2 (2.2km, 48h, full grid)
-python3 ingest.py --model icon-d2 --profile "$INGEST_PROFILE" --check-only 2>/dev/null
+"$PYTHON_BIN" ingest.py --model icon-d2 --profile "$INGEST_PROFILE" --check-only 2>/dev/null
 if [ $? -eq 0 ]; then
-    python3 ingest.py --model icon-d2 --profile "$INGEST_PROFILE" --steps all
+    "$PYTHON_BIN" ingest.py --model icon-d2 --profile "$INGEST_PROFILE" --steps all
 fi
 
 # Check and ingest ICON-EU (6.5km, 120h, cropped to D2 bounds)
-python3 ingest.py --model icon-eu --profile "$INGEST_PROFILE" --check-only 2>/dev/null
+"$PYTHON_BIN" ingest.py --model icon-eu --profile "$INGEST_PROFILE" --check-only 2>/dev/null
 if [ $? -eq 0 ]; then
-    python3 ingest.py --model icon-eu --profile "$INGEST_PROFILE" --steps all
+    "$PYTHON_BIN" ingest.py --model icon-eu --profile "$INGEST_PROFILE" --steps all
 fi
 
 # Lock automatically removed by trap on exit
