@@ -789,10 +789,14 @@ async function loadPoint(lat, lon, time, model, windLvl = '10m', zoom = null) {
       }
     }
 
-    const btns = `<div style="margin-top:8px;display:flex;gap:6px;align-items:center">`
-      + `<button onclick="openEmagramAt(${Number(lat).toFixed(5)},${Number(lon).toFixed(5)},'${String(time || 'latest').replace(/'/g, "&#39;")}','${String(model || '').replace(/'/g, "&#39;")}')" style="font-size:11px;padding:2px 6px;line-height:1.1;">Skew-T</button>`
-      + `<button onclick="openMeteogramAt(${Number(lat).toFixed(5)},${Number(lon).toFixed(5)},'icon_d2')" style="font-size:11px;padding:2px 6px;line-height:1.1;">Meteogram</button>`
-      + `</div>`;
+    const pointModel = String(data.model || model || '').replace('-', '_');
+    const showSkewT = pointModel === 'icon_d2';
+    let btns = `<div style="margin-top:8px;display:flex;gap:6px;align-items:center">`;
+    if (showSkewT) {
+      btns += `<button onclick="openEmagramAt(${Number(lat).toFixed(5)},${Number(lon).toFixed(5)},'${String(time || 'latest').replace(/'/g, "&#39;")}','icon_d2')" style="font-size:11px;padding:2px 6px;line-height:1.1;">Skew-T</button>`;
+    }
+    btns += `<button onclick="openMeteogramAt(${Number(lat).toFixed(5)},${Number(lon).toFixed(5)},'icon_d2')" style="font-size:11px;padding:2px 6px;line-height:1.1;">Meteogram</button>`;
+    btns += `</div>`;
     L.popup({ maxWidth: 280 })
       .setLatLng([lat, lon])
       .setContent(lines.join('<br/>') + btns)
@@ -1562,7 +1566,7 @@ const meteogramOverlay = document.getElementById('meteogram-overlay');
 const meteogramClose = document.getElementById('meteogram-close');
 const meteogramTitle = document.getElementById('meteogram-title');
 const meteogramBody = document.getElementById('meteogram-body');
-let emagramState = { open: false, lat: null, lon: null, model: '', zoom: null, loading: false, reqId: 0 };
+let emagramState = { open: false, lat: null, lon: null, model: '', zoom: null, loading: false, reqId: 0, allowedIndices: [] };
 let meteogramState = { open: false, lat: null, lon: null, model: '' };
 const emagramCache = new Map();
 const meteogramCache = new Map();
@@ -1764,6 +1768,32 @@ function emagramCurrentStep() {
   return timesteps[currentTimeIndex] || null;
 }
 
+function emagramAllowedIndices() {
+  const idx = [];
+  for (let i = 0; i < timesteps.length; i++) {
+    const m = String(timesteps[i]?.model || '').replace('-', '_');
+    if (m === 'icon_d2') idx.push(i);
+  }
+  return idx;
+}
+
+function emagramNeighborIndex(delta) {
+  const allowed = emagramState.allowedIndices?.length ? emagramState.allowedIndices : emagramAllowedIndices();
+  if (!allowed.length) return currentTimeIndex;
+  let pos = allowed.indexOf(currentTimeIndex);
+  if (pos < 0) {
+    // Snap to nearest available index
+    pos = 0;
+    let best = Infinity;
+    for (let i = 0; i < allowed.length; i++) {
+      const d = Math.abs(allowed[i] - currentTimeIndex);
+      if (d < best) { best = d; pos = i; }
+    }
+  }
+  const nextPos = Math.max(0, Math.min(allowed.length - 1, pos + delta));
+  return allowed[nextPos];
+}
+
 function meteogramCacheSet(key, value) {
   if (meteogramCache.has(key)) meteogramCache.delete(key);
   meteogramCache.set(key, value);
@@ -1905,8 +1935,9 @@ function emagramSetLoadingUI(isLoading) {
   const prevBtn = document.getElementById('emNavPrev');
   const nextBtn = document.getElementById('emNavNext');
   const st = document.getElementById('emNavStatus');
-  const atStart = currentTimeIndex <= 0;
-  const atEnd = currentTimeIndex >= (timesteps.length - 1);
+  const allowed = emagramState.allowedIndices?.length ? emagramState.allowedIndices : emagramAllowedIndices();
+  const atStart = !allowed.length || currentTimeIndex === allowed[0];
+  const atEnd = !allowed.length || currentTimeIndex === allowed[allowed.length - 1];
   if (prevBtn) {
     prevBtn.disabled = isLoading || atStart;
     prevBtn.style.opacity = (isLoading || atStart) ? '0.45' : '1';
@@ -1934,7 +1965,7 @@ function emagramCacheSet(key, value) {
 }
 
 function emagramNav(delta) {
-  const nextIdx = Math.max(0, Math.min(timesteps.length - 1, currentTimeIndex + delta));
+  const nextIdx = emagramNeighborIndex(delta);
   if (nextIdx === currentTimeIndex || emagramState.loading) return;
   currentTimeIndex = nextIdx;
   emagramState.loading = true;
@@ -1945,11 +1976,15 @@ function emagramNav(delta) {
 
 async function openEmagramAt(lat, lon, time = 'latest', model = '') {
   if (!emagramOverlay || !emagramBody) return;
-  const fixedModel = model || emagramState.model || '';
+  const fixedModel = 'icon_d2';
   const fixedZoom = (emagramState.zoom != null) ? emagramState.zoom : map.getZoom();
+  const allowedIndices = emagramAllowedIndices();
+  if (allowedIndices.length && !allowedIndices.includes(currentTimeIndex)) {
+    currentTimeIndex = emagramNeighborIndex(0);
+  }
   const hadContent = emagramState.open && emagramBody.innerHTML.trim().length > 0;
   const reqId = (emagramState.reqId || 0) + 1;
-  emagramState = { open: true, lat: Number(lat), lon: Number(lon), model: fixedModel, zoom: fixedZoom, loading: true, reqId };
+  emagramState = { open: true, lat: Number(lat), lon: Number(lon), model: fixedModel, zoom: fixedZoom, loading: true, reqId, allowedIndices };
   emagramOverlay.style.display = 'flex';
   if (!hadContent) emagramBody.innerHTML = '<div style="opacity:.8">Loading profile…</div>';
   else emagramSetLoadingUI(true);
@@ -1966,8 +2001,9 @@ async function openEmagramAt(lat, lon, time = 'latest', model = '') {
     if (reqId !== emagramState.reqId) return;
     const p = d.point || {};
     const step = emagramCurrentStep();
-    const atStart = currentTimeIndex <= 0;
-    const atEnd = currentTimeIndex >= (timesteps.length - 1);
+    const allowed = emagramState.allowedIndices?.length ? emagramState.allowedIndices : emagramAllowedIndices();
+    const atStart = !allowed.length || currentTimeIndex === allowed[0];
+    const atEnd = !allowed.length || currentTimeIndex === allowed[allowed.length - 1];
     if (emagramTitle) emagramTitle.textContent = `Emagram · ${d.validTime || d.run || ''}`;
     const nav = `<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
       <button id="emNavPrev" onclick="emagramNav(-1)" ${atStart ? 'disabled' : ''} style="font-size:12px;padding:2px 8px;${atStart ? 'opacity:.45;cursor:default;' : ''}">◀</button>
