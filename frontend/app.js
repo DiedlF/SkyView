@@ -456,18 +456,11 @@ const LEGEND_CONFIGS = {
   clouds_high: { title: 'Cloud Cover: High', gradient: 'linear-gradient(to right, rgb(225,225,225), rgb(45,45,45))', labels: ['1%', '100%'] },
   clouds_total: { title: 'Cloud Cover: Total', gradient: 'linear-gradient(to right, rgb(225,225,225), rgb(45,45,45))', labels: ['1%', '100%'] },
   clouds_total_mod: { title: 'Cloud Cover: Total_mod', gradient: 'linear-gradient(to right, rgb(225,225,225), rgb(45,45,45))', labels: ['1%', '100%'] },
-  t_2m: { title: 'Temperature 2m', gradient: 'linear-gradient(to right, rgb(40,90,230), rgb(120,180,200), rgb(220,210,90), rgb(255,80,20))', labels: ['-30 °C', '+40 °C'] },
-  t_950hpa: { title: 'Temperature 950 hPa', gradient: 'linear-gradient(to right, rgb(40,90,230), rgb(120,180,200), rgb(220,210,90), rgb(255,80,20))', labels: ['-30 °C', '+40 °C'] },
-  t_850hpa: { title: 'Temperature 850 hPa', gradient: 'linear-gradient(to right, rgb(40,90,230), rgb(120,180,200), rgb(220,210,90), rgb(255,80,20))', labels: ['-30 °C', '+40 °C'] },
-  t_700hpa: { title: 'Temperature 700 hPa', gradient: 'linear-gradient(to right, rgb(40,90,230), rgb(120,180,200), rgb(220,210,90), rgb(255,80,20))', labels: ['-30 °C', '+40 °C'] },
-  t_500hpa: { title: 'Temperature 500 hPa', gradient: 'linear-gradient(to right, rgb(40,90,230), rgb(120,180,200), rgb(220,210,90), rgb(255,80,20))', labels: ['-30 °C', '+40 °C'] },
-  t_300hpa: { title: 'Temperature 300 hPa', gradient: 'linear-gradient(to right, rgb(40,90,230), rgb(120,180,200), rgb(220,210,90), rgb(255,80,20))', labels: ['-30 °C', '+40 °C'] },
   dry_conv_top: { title: 'Dry Convection Top', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '9900m'] },
   sigwx: { title: 'Significant weather', gradient: 'linear-gradient(to right, rgba(0,0,0,0), rgb(205,205,205), rgb(145,145,145), rgb(85,85,85), rgb(160,170,40), rgb(70,180,80), rgb(70,180,210), rgb(145,110,230), rgb(220,40,80))', labels: ['ww0 clear', 'ww severe'] },
   ceiling: { title: 'Ceiling', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '9900m'] },
   cloud_base: { title: 'Cloud base (convective)', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '5000m'] },
   mh: { title: 'Boundary layer depth', gradient: 'linear-gradient(to right, rgb(220,90,40), rgb(160,170,60), rgb(80,240,100))', labels: ['0m', '3000m+'] },
-  ashfl_s: { title: 'Surface heat flux', gradient: 'linear-gradient(to right, rgb(70,170,240), rgb(170,120,120), rgb(255,60,20))', labels: ['20 W/m²', '400+ W/m²'] },
   relhum_2m: { title: 'Relative humidity 2m', gradient: 'linear-gradient(to right, rgb(230,230,230), rgb(120,150,190), rgb(60,110,190))', labels: ['0%', '100%'] },
   dew_spread_2m: { title: 'Dew point spread 2m', gradient: 'linear-gradient(to right, rgb(70,200,220), rgb(170,140,110), rgb(255,70,40))', labels: ['0 K', '25+ K'] },
   conv_thickness: { title: 'Cloud thickness (convective)', gradient: 'linear-gradient(to right, rgb(40,220,60), rgb(200,200,40), rgb(240,80,40))', labels: ['0m', '6000m'] },
@@ -702,17 +695,10 @@ const OVERLAY_META = {
   clouds_high: { label: 'Cloud cover high', unit: '%', decimals: 1 },
   clouds_total: { label: 'Cloud cover total', unit: '%', decimals: 1 },
   clouds_total_mod: { label: 'Cloud cover total mod', unit: '%', decimals: 1 },
-  t_2m: { label: 'Temperature 2m', unit: '°C', decimals: 1 },
-  t_950hpa: { label: 'Temperature 950 hPa', unit: '°C', decimals: 1 },
-  t_850hpa: { label: 'Temperature 850 hPa', unit: '°C', decimals: 1 },
-  t_700hpa: { label: 'Temperature 700 hPa', unit: '°C', decimals: 1 },
-  t_500hpa: { label: 'Temperature 500 hPa', unit: '°C', decimals: 1 },
-  t_300hpa: { label: 'Temperature 300 hPa', unit: '°C', decimals: 1 },
   ceiling: { label: 'Ceiling', unit: 'm', integer: true },
   cloud_base: { label: 'Cloud base', unit: 'm', integer: true },
   dry_conv_top: { label: 'Dry convection top', unit: 'm', integer: true },
   mh: { label: 'Boundary layer depth', unit: 'm', decimals: 1 },
-  ashfl_s: { label: 'Surface heat flux', unit: 'W/m²', decimals: 1 },
   relhum_2m: { label: 'Relative humidity 2m', unit: '%', decimals: 1 },
   dew_spread_2m: { label: 'Dew point spread 2m', unit: 'K', decimals: 1 },
   conv_thickness: { label: 'Convective thickness', unit: 'm', integer: true },
@@ -803,7 +789,7 @@ async function loadPoint(lat, lon, time, model, windLvl = '10m', zoom = null) {
       }
     }
 
-    const emagramBtn = `<div style="margin-top:8px"><button onclick="openEmagramAt(${Number(lat).toFixed(5)},${Number(lon).toFixed(5)},'${String(time || 'latest').replace(/'/g, "&#39;")}','${String(model || '').replace(/'/g, "&#39;")}')" style="font-size:12px;padding:4px 7px;">Emagram</button></div>`;
+    const emagramBtn = `<div style="margin-top:8px"><button onclick="openEmagramAt(${Number(lat).toFixed(5)},${Number(lon).toFixed(5)},'${String(time || 'latest').replace(/'/g, "&#39;")}','${String(model || '').replace(/'/g, "&#39;")}')" style="font-size:11px;padding:2px 6px;line-height:1.1;">Skew-T</button></div>`;
     L.popup({ maxWidth: 260 })
       .setLatLng([lat, lon])
       .setContent(lines.join('<br/>') + emagramBtn)
@@ -1006,9 +992,6 @@ function getEffectiveOverlayLayer() {
   }
   if (currentOverlay === 'clouds') {
     return document.getElementById('clouds-type')?.value || 'clouds_total';
-  }
-  if (currentOverlay === 'temperature') {
-    return document.getElementById('temp-type')?.value || 't_2m';
   }
   return currentOverlay;
 }
@@ -1330,16 +1313,6 @@ if (cloudsType) {
   });
 }
 
-const tempType = document.getElementById('temp-type');
-if (tempType) {
-  tempType.addEventListener('change', () => {
-    if (currentOverlay === 'temperature') {
-      updateLegend();
-      loadOverlay();
-    }
-  });
-}
-
 // Event listeners
 // Overlay uses fixed extent — only refresh symbols on pan/zoom
 map.on('moveend zoomend', () => { loadSymbols(); loadWind(); });
@@ -1628,13 +1601,16 @@ function renderEmagramSvg(levels) {
 
   if (!rows.length) return '<div style="color:#ffb3b3">No profile data available for this point/time.</div>';
 
-  const W = 560, H = 390;
-  const m = { l: 56, r: 64, t: 16, b: 34 };
-  const iw = W - m.l - m.r;
+  const W = 600, H = 390;
+  const m = { l: 92, r: 120, t: 16, b: 34 };
+  const plotRight = W - m.r;
+  const axisP = m.l - 58;
+  const axisZ = m.l - 18;
+  const iw = plotRight - m.l;
   const ih = H - m.t - m.b;
   const pTop = 200;
   const pBot = 1000;
-  const skew = 0.26; // right shift with height
+  const skew = 0.26;
 
   const temps = rows.flatMap(r => [Number(r.temperatureC), Number(r.dewpointC)]).filter(Number.isFinite);
   let tMin = Math.floor((Math.min(...temps) - 8) / 5) * 5;
@@ -1665,11 +1641,11 @@ function renderEmagramSvg(levels) {
   let grid = '';
   for (const p of pressureLines) {
     const yy = y(p);
-    grid += `<line x1="${m.l}" y1="${yy}" x2="${W - m.r}" y2="${yy}" stroke="rgba(255,255,255,0.14)"/>`;
-    grid += `<text x="${m.l - 8}" y="${yy + 4}" fill="rgba(255,255,255,0.75)" font-size="11" text-anchor="end">${p}</text>`;
+    grid += `<line x1="${m.l}" y1="${yy}" x2="${plotRight}" y2="${yy}" stroke="rgba(255,255,255,0.14)"/>`;
+    grid += `<text x="${axisP - 6}" y="${yy + 4}" fill="rgba(255,255,255,0.80)" font-size="11" text-anchor="end">${p}</text>`;
     const alt = altitudeAtP(p);
     if (Number.isFinite(alt)) {
-      grid += `<text x="${W - m.r + 6}" y="${yy + 4}" fill="rgba(255,255,255,0.75)" font-size="10" text-anchor="start">${Math.round(alt)}m</text>`;
+      grid += `<text x="${axisZ - 6}" y="${yy + 4}" fill="rgba(255,255,255,0.80)" font-size="10" text-anchor="end">${Math.round(alt)}m</text>`;
     }
   }
   for (let t = tMin; t <= tMax; t += 10) {
@@ -1678,7 +1654,6 @@ function renderEmagramSvg(levels) {
     grid += `<text x="${x1}" y="${H - 12}" fill="rgba(255,255,255,0.75)" font-size="11" text-anchor="middle">${t}</text>`;
   }
 
-  // Dry adiabats (theta lines): T(K) = theta * (p/1000)^kappa
   const kappa = 0.286;
   const dryThetas = [260, 270, 280, 290, 300, 310, 320, 330, 340];
   let dryGrid = '';
@@ -1693,14 +1668,13 @@ function renderEmagramSvg(levels) {
     if (pts.length > 1) dryGrid += `<path d="M${pts.join(' L')}" fill="none" stroke="rgba(255,170,70,0.20)" stroke-width="1"/>`;
   }
 
-  // Moist adiabats (visual approximation for guidance)
   const moistStarts = [-10, 0, 10, 20, 30];
   let moistGrid = '';
   for (const t0 of moistStarts) {
     const pts = [];
     for (let p = pBot; p >= pTop; p -= 25) {
-      const frac = (1000 - p) / 800; // 0 at 1000 hPa, ~1 at 200 hPa
-      const tC = t0 - (24 * frac) - (8 * frac * frac); // gentler than dry lapse
+      const frac = (1000 - p) / 800;
+      const tC = t0 - (24 * frac) - (8 * frac * frac);
       pts.push(`${x(tC, p).toFixed(1)},${y(p).toFixed(1)}`);
     }
     if (pts.length > 1) moistGrid += `<path d="M${pts.join(' L')}" fill="none" stroke="rgba(90,200,255,0.20)" stroke-width="1"/>`;
@@ -1723,20 +1697,14 @@ function renderEmagramSvg(levels) {
     let g = `<g transform="translate(${xx},${yy}) rotate(${dirDeg})">`;
     g += `<line x1="0" y1="0" x2="0" y2="-22" stroke="#d1d5db" stroke-width="1.6"/>`;
     let yyf = -22;
-    for (let i = 0; i < flags50; i++) {
-      g += `<polygon points="0,${yyf} 11,${yyf+3} 0,${yyf+6}" fill="#d1d5db"/>`;
-      yyf += 6;
-    }
-    for (let i = 0; i < flags10; i++) {
-      g += `<line x1="0" y1="${yyf}" x2="11" y2="${yyf+3}" stroke="#d1d5db" stroke-width="1.6"/>`;
-      yyf += 4;
-    }
+    for (let i = 0; i < flags50; i++) { g += `<polygon points="0,${yyf} 11,${yyf+3} 0,${yyf+6}" fill="#d1d5db"/>`; yyf += 6; }
+    for (let i = 0; i < flags10; i++) { g += `<line x1="0" y1="${yyf}" x2="11" y2="${yyf+3}" stroke="#d1d5db" stroke-width="1.6"/>`; yyf += 4; }
     if (flags5) g += `<line x1="0" y1="${yyf}" x2="7" y2="${yyf+2}" stroke="#d1d5db" stroke-width="1.6"/>`;
     g += `</g>`;
     return g;
   };
 
-  const barbX = W - m.r + 26;
+  const barbX = plotRight + 46;
   const barbs = rows
     .filter(r => Number.isFinite(Number(r.windSpeedKt)) && Number.isFinite(Number(r.windDirDeg)))
     .map(r => mkBarb(barbX, y(Number(r.pressureHpa)), Number(r.windSpeedKt), Number(r.windDirDeg)))
@@ -1746,16 +1714,23 @@ function renderEmagramSvg(levels) {
     <svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="Skew-T profile">
       <rect x="0" y="0" width="${W}" height="${H}" fill="#151b2d" rx="8"/>
       ${grid}
-      ${dryGrid}
-      ${moistGrid}
-      <line x1="${m.l}" y1="${m.t}" x2="${m.l}" y2="${H - m.b}" stroke="rgba(255,255,255,0.5)"/>
-      <line x1="${m.l}" y1="${H - m.b}" x2="${W - m.r}" y2="${H - m.b}" stroke="rgba(255,255,255,0.5)"/>
-      ${tPath ? `<path d="${tPath}" fill="none" stroke="#ff6b6b" stroke-width="2.2"/>` : ''}
-      ${tdPath ? `<path d="${tdPath}" fill="none" stroke="#69b1ff" stroke-width="2.2"/>` : ''}
+      <defs>
+        <clipPath id="skewPlotClip"><rect x="${m.l}" y="${m.t}" width="${plotRight - m.l}" height="${H - m.t - m.b}" /></clipPath>
+      </defs>
+      <line x1="${axisP}" y1="${m.t}" x2="${axisP}" y2="${H - m.b}" stroke="rgba(255,255,255,0.55)"/>
+      <line x1="${axisZ}" y1="${m.t}" x2="${axisZ}" y2="${H - m.b}" stroke="rgba(255,255,255,0.55)"/>
+      <line x1="${m.l}" y1="${m.t}" x2="${m.l}" y2="${H - m.b}" stroke="rgba(255,255,255,0.45)"/>
+      <line x1="${m.l}" y1="${H - m.b}" x2="${plotRight}" y2="${H - m.b}" stroke="rgba(255,255,255,0.5)"/>
+      <g clip-path="url(#skewPlotClip)">
+        ${dryGrid}
+        ${moistGrid}
+        ${tPath ? `<path d="${tPath}" fill="none" stroke="#ff6b6b" stroke-width="2.2"/>` : ''}
+        ${tdPath ? `<path d="${tdPath}" fill="none" stroke="#69b1ff" stroke-width="2.2"/>` : ''}
+      </g>
       ${barbs}
-      <text x="${W/2}" y="${H-2}" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="11">Skewed temperature lines (°C)</text>
-      <text x="12" y="${H/2}" transform="rotate(-90 12 ${H/2})" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="11">Pressure (hPa)</text>
-      <text x="${W - m.r + 6}" y="${m.t+8}" text-anchor="start" fill="rgba(255,255,255,0.8)" font-size="10">Alt</text>
+      <text x="${(m.l + plotRight)/2}" y="${H-2}" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="11">Skewed temperature lines (°C)</text>
+      <text x="${axisP-20}" y="${m.t+8}" text-anchor="start" fill="rgba(255,255,255,0.85)" font-size="10">P</text>
+      <text x="${axisZ-20}" y="${m.t+8}" text-anchor="start" fill="rgba(255,255,255,0.85)" font-size="10">Alt</text>
       <text x="${barbX}" y="${m.t+8}" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="10">Wind</text>
     </svg>
     <div style="display:flex;gap:14px;font-size:12px;margin-top:6px;align-items:center;flex-wrap:wrap">
