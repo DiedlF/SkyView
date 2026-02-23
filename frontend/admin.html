@@ -46,6 +46,25 @@
       <div id="emResult"></div>
     </section>
 
+
+
+    <section class="card" style="grid-column:1/-1">
+      <h2>Meteogram debug</h2>
+      <div class="toolbar">
+        <label style="font-size:13px">Lat <input id="mgLat" type="number" step="0.01" value="47.5" style="width:90px"></label>
+        <label style="font-size:13px">Lon <input id="mgLon" type="number" step="0.01" value="11.0" style="width:90px"></label>
+        <label style="font-size:13px">Model
+          <select id="mgModel">
+            <option value="">auto (merged)</option>
+            <option value="icon_d2">icon_d2</option>
+            <option value="icon_eu">icon_eu</option>
+          </select>
+        </label>
+        <button id="mgQuery">Query</button>
+      </div>
+      <div id="mgResult"></div>
+    </section>
+
     <section class="card" style="grid-column:1/-1">
       <h2>Feedback inbox</h2>
       <div class="toolbar">
@@ -306,9 +325,9 @@ async function queryEmagram(){
     let html=kvTable(meta);
     if((data.levels||[]).length){
       html+='<h3 style="margin:10px 0 6px">Levels</h3>';
-      html+='<table><tr><th>hPa</th><th>Alt (m)</th><th>Temp (°C)</th><th>Dew (°C)</th><th>RH (%)</th><th>Geopotential</th></tr>';
+      html+='<table><tr><th>hPa</th><th>Alt (m)</th><th>Temp (°C)</th><th>Dew (°C)</th><th>RH (%)</th><th>Wind (kt)</th><th>Dir (°)</th><th>Geopotential</th></tr>';
       for(const l of data.levels){
-        html+=`<tr><td>${esc(l.pressureHpa)}</td><td>${esc(l.altitudeM??'-')}</td><td>${esc(l.temperatureC??'-')}</td><td>${esc(l.dewpointC??'-')}</td><td>${esc(l.relativeHumidityPct??'-')}</td><td>${esc(l.geopotential??'-')}</td></tr>`;
+        html+=`<tr><td>${esc(l.pressureHpa)}</td><td>${esc(l.altitudeM??'-')}</td><td>${esc(l.temperatureC??'-')}</td><td>${esc(l.dewpointC??'-')}</td><td>${esc(l.relativeHumidityPct??'-')}</td><td>${esc(l.windSpeedKt??'-')}</td><td>${esc(l.windDirDeg??'-')}</td><td>${esc(l.geopotential??'-')}</td></tr>`;
       }
       html+='</table>';
     }
@@ -318,7 +337,49 @@ async function queryEmagram(){
     out.innerHTML=`<div style="color:#f87171">${esc(e.message)}</div>`;
   }
 }
+
+async function queryMeteogram(){
+  const lat=parseFloat(document.getElementById('mgLat').value);
+  const lon=parseFloat(document.getElementById('mgLon').value);
+  const model=document.getElementById('mgModel').value;
+  const out=document.getElementById('mgResult');
+  out.innerHTML='<div class="muted">Loading…</div>';
+  try{
+    const p=new URLSearchParams({lat,lon});
+    if(model) p.set('model',model);
+    const data=await j('/api/meteogram_point?'+p.toString());
+    const pt=data.point||{};
+    const series=data.series||[];
+    const first=series[0]||{}, last=series[series.length-1]||{};
+    const models=[...new Set(series.map(x=>x.model).filter(Boolean))].join(', ');
+    const rows=[
+      ['Requested',`${pt.requestedLat}, ${pt.requestedLon}`],
+      ['Grid point',`${pt.gridLat}, ${pt.gridLon} (i=${pt.i}, j=${pt.j})`],
+      ['Points',data.count],
+      ['Models',models||'-'],
+      ['From',first.validTime||'-'],
+      ['To',last.validTime||'-'],
+    ];
+    let html=kvTable(rows);
+    if(series.length){
+      const sample=series.slice(0,12);
+      html+='<h3 style="margin:10px 0 6px">Sample</h3>';
+      html+='<table><tr><th>Valid</th><th>Model</th><th>Wind kt</th><th>Dir°</th><th>Gust kt</th><th>Cloud %</th><th>Precip</th><th>SnowDepth m</th><th>CAPE</th><th>LPI</th></tr>';
+      for(const r of sample){
+        html+=`<tr><td>${esc(r.validTime)}</td><td>${esc(r.model)}</td><td>${esc(r.wind10mKt??'-')}</td><td>${esc(r.windDir10mDeg??'-')}</td><td>${esc(r.gust10mKt??'-')}</td><td>${esc(r.cloudTotalPct??'-')}</td><td>${esc(r.precipTotal??'-')}</td><td>${esc(r.snowDepthM??'-')}</td><td>${esc(r.capeMl??'-')}</td><td>${esc(r.lpi??'-')}</td></tr>`;
+      }
+      html+='</table>';
+      if(series.length>sample.length) html+=`<div class="muted" style="margin-top:6px">Showing first ${sample.length} of ${series.length} rows.</div>`;
+    }
+    html+=`<details style="margin-top:10px"><summary style="cursor:pointer;font-size:13px">Raw JSON</summary><pre>${esc(JSON.stringify(data,null,2))}</pre></details>`;
+    out.innerHTML=html;
+  }catch(e){
+    out.innerHTML=`<div style="color:#f87171">${esc(e.message)}</div>`;
+  }
+}
+
 document.getElementById('emQuery').onclick=()=>queryEmagram();
+document.getElementById('mgQuery').onclick=()=>queryMeteogram();
 
 loadAll().catch(e=>{document.body.insertAdjacentHTML('beforeend','<pre>'+esc(e.message)+'</pre>');});
 window.setInterval(()=>{loadAll().catch(()=>{});},120000);
