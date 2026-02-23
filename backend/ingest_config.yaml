@@ -59,9 +59,7 @@ profiles:
       - grau_gsp
       - h_snow
       # Helpful aviation context still used in point/overlay summaries
-      - vis
       - hzerocl
-      - snowlmt
 
 groups:
   aviation:
@@ -81,9 +79,7 @@ groups:
       - clct
       - clct_mod
       - cldepth
-      - vis
       - hzerocl
-      - snowlmt
       - mh
 
   surface_weather:

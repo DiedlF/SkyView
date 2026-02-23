@@ -1097,7 +1097,9 @@ async def api_emagram_point(
     t_keys = [f"t_{lev}hpa" for lev in EMAGRAM_D2_LEVELS_HPA]
     fi_keys = [f"fi_{lev}hpa" for lev in EMAGRAM_D2_LEVELS_HPA]
     rh_keys = [f"relhum_{lev}hpa" for lev in EMAGRAM_D2_LEVELS_HPA]
-    keys = t_keys + fi_keys + rh_keys
+    u_keys = [f"u_{lev}hpa" for lev in EMAGRAM_D2_LEVELS_HPA]
+    v_keys = [f"v_{lev}hpa" for lev in EMAGRAM_D2_LEVELS_HPA]
+    keys = t_keys + fi_keys + rh_keys + u_keys + v_keys
     d = load_data(run, step, model_used, keys=keys)
 
     lat_arr = d["lat"]
@@ -1124,22 +1126,36 @@ async def api_emagram_point(
         t_key = f"t_{lev}hpa"
         fi_key = f"fi_{lev}hpa"
         rh_key = f"relhum_{lev}hpa"
+        u_key = f"u_{lev}hpa"
+        v_key = f"v_{lev}hpa"
         t_val = d[t_key][i, j] if t_key in d else np.nan
         fi_val = d[fi_key][i, j] if fi_key in d else np.nan
         rh_val = d[rh_key][i, j] if rh_key in d else np.nan
-        if not np.isfinite(t_val) and not np.isfinite(fi_val) and not np.isfinite(rh_val):
+        u_val = d[u_key][i, j] if u_key in d else np.nan
+        v_val = d[v_key][i, j] if v_key in d else np.nan
+        if not np.isfinite(t_val) and not np.isfinite(fi_val) and not np.isfinite(rh_val) and not np.isfinite(u_val) and not np.isfinite(v_val):
             continue
 
         temp_c = (float(t_val) - 273.15) if np.isfinite(t_val) else None
         alt_m = (float(fi_val) / G0) if np.isfinite(fi_val) else None
         rh_pct = float(rh_val) if np.isfinite(rh_val) else None
         dew_c = _dewpoint_c(temp_c, rh_pct) if (temp_c is not None and rh_pct is not None) else None
+        u_ms = float(u_val) if np.isfinite(u_val) else None
+        v_ms = float(v_val) if np.isfinite(v_val) else None
+        wind_speed_ms = (math.hypot(u_ms, v_ms) if (u_ms is not None and v_ms is not None) else None)
+        wind_speed_kt = (wind_speed_ms * 1.943844 if wind_speed_ms is not None else None)
+        wind_dir_deg = ((270.0 - math.degrees(math.atan2(v_ms, u_ms))) % 360.0) if (u_ms is not None and v_ms is not None) else None
 
         levels.append({
             "pressureHpa": lev,
             "temperatureC": round(temp_c, 2) if temp_c is not None else None,
             "dewpointC": round(dew_c, 2) if dew_c is not None else None,
             "relativeHumidityPct": round(rh_pct, 1) if rh_pct is not None else None,
+            "uMs": round(u_ms, 3) if u_ms is not None else None,
+            "vMs": round(v_ms, 3) if v_ms is not None else None,
+            "windSpeedMs": round(wind_speed_ms, 2) if wind_speed_ms is not None else None,
+            "windSpeedKt": round(wind_speed_kt, 1) if wind_speed_kt is not None else None,
+            "windDirDeg": round(wind_dir_deg, 1) if wind_dir_deg is not None else None,
             "geopotential": round(float(fi_val), 2) if np.isfinite(fi_val) else None,
             "altitudeM": round(alt_m, 1) if alt_m is not None else None,
         })

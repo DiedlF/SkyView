@@ -1615,60 +1615,94 @@ function closeEmagram() {
 
 function renderEmagramSvg(levels) {
   const rows = (levels || [])
-    .filter(l => Number.isFinite(Number(l.altitudeM)) && (Number.isFinite(Number(l.temperatureC)) || Number.isFinite(Number(l.dewpointC))))
-    .sort((a, b) => Number(a.altitudeM) - Number(b.altitudeM));
+    .filter(l => Number.isFinite(Number(l.pressureHpa)) && (Number.isFinite(Number(l.temperatureC)) || Number.isFinite(Number(l.dewpointC))))
+    .sort((a, b) => Number(b.pressureHpa) - Number(a.pressureHpa));
 
   if (!rows.length) return '<div style="color:#ffb3b3">No profile data available for this point/time.</div>';
 
-  const W = 520, H = 360;
-  const m = { l: 54, r: 16, t: 16, b: 34 };
+  const W = 560, H = 390;
+  const m = { l: 56, r: 64, t: 16, b: 34 };
   const iw = W - m.l - m.r;
   const ih = H - m.t - m.b;
+  const pTop = 200;
+  const pBot = 1000;
+  const skew = 0.26; // right shift with height
 
   const temps = rows.flatMap(r => [Number(r.temperatureC), Number(r.dewpointC)]).filter(Number.isFinite);
-  let tMin = Math.floor((Math.min(...temps) - 4) / 5) * 5;
-  let tMax = Math.ceil((Math.max(...temps) + 4) / 5) * 5;
+  let tMin = Math.floor((Math.min(...temps) - 8) / 5) * 5;
+  let tMax = Math.ceil((Math.max(...temps) + 8) / 5) * 5;
   if (!(Number.isFinite(tMin) && Number.isFinite(tMax)) || tMax <= tMin) { tMin = -40; tMax = 30; }
-  const zMax = Math.max(...rows.map(r => Number(r.altitudeM)), 1000);
 
-  const x = (t) => m.l + ((t - tMin) / (tMax - tMin)) * iw;
-  const y = (z) => m.t + (1 - (z / zMax)) * ih;
+  const y = (p) => m.t + ((Math.log(p) - Math.log(pTop)) / (Math.log(pBot) - Math.log(pTop))) * ih;
+  const baseX = (t) => m.l + ((t - tMin) / (tMax - tMin)) * iw;
+  const x = (t, p) => baseX(t) + (H - m.b - y(p)) * skew;
 
+  const pressureLines = [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200].filter(p => p <= pBot && p >= pTop);
   let grid = '';
-  for (let t = tMin; t <= tMax; t += 5) {
-    const xx = x(t);
-    grid += `<line x1="${xx}" y1="${m.t}" x2="${xx}" y2="${H - m.b}" stroke="rgba(255,255,255,0.12)"/>`;
-    if (t % 10 === 0) grid += `<text x="${xx}" y="${H - 12}" fill="rgba(255,255,255,0.75)" font-size="11" text-anchor="middle">${t}</text>`;
+  for (const p of pressureLines) {
+    const yy = y(p);
+    grid += `<line x1="${m.l}" y1="${yy}" x2="${W - m.r}" y2="${yy}" stroke="rgba(255,255,255,0.14)"/>`;
+    grid += `<text x="${m.l - 8}" y="${yy + 4}" fill="rgba(255,255,255,0.75)" font-size="11" text-anchor="end">${p}</text>`;
   }
-  const zStep = zMax > 7000 ? 1000 : 500;
-  for (let z = 0; z <= zMax; z += zStep) {
-    const yy = y(z);
-    grid += `<line x1="${m.l}" y1="${yy}" x2="${W - m.r}" y2="${yy}" stroke="rgba(255,255,255,0.12)"/>`;
-    grid += `<text x="${m.l - 8}" y="${yy + 4}" fill="rgba(255,255,255,0.75)" font-size="11" text-anchor="end">${Math.round(z)}</text>`;
+  for (let t = tMin; t <= tMax; t += 10) {
+    const x1 = x(t, pBot), x2 = x(t, pTop);
+    grid += `<line x1="${x1}" y1="${y(pBot)}" x2="${x2}" y2="${y(pTop)}" stroke="rgba(255,255,255,0.12)"/>`;
+    grid += `<text x="${x1}" y="${H - 12}" fill="rgba(255,255,255,0.75)" font-size="11" text-anchor="middle">${t}</text>`;
   }
 
   const toPath = (key) => rows
-    .filter(r => Number.isFinite(Number(r[key])))
-    .map((r, i) => `${i ? 'L' : 'M'}${x(Number(r[key])).toFixed(1)},${y(Number(r.altitudeM)).toFixed(1)}`)
+    .filter(r => Number.isFinite(Number(r[key])) && Number.isFinite(Number(r.pressureHpa)))
+    .map((r, i) => `${i ? 'L' : 'M'}${x(Number(r[key]), Number(r.pressureHpa)).toFixed(1)},${y(Number(r.pressureHpa)).toFixed(1)}`)
     .join(' ');
 
   const tPath = toPath('temperatureC');
   const tdPath = toPath('dewpointC');
 
+  const mkBarb = (xx, yy, speedKt = 0, dirDeg = 0) => {
+    if (!(Number.isFinite(speedKt) && Number.isFinite(dirDeg))) return '';
+    let s = Math.max(0, Math.round(speedKt / 5) * 5);
+    const flags50 = Math.floor(s / 50); s -= flags50 * 50;
+    const flags10 = Math.floor(s / 10); s -= flags10 * 10;
+    const flags5 = s >= 5 ? 1 : 0;
+    let g = `<g transform="translate(${xx},${yy}) rotate(${dirDeg})">`;
+    g += `<line x1="0" y1="0" x2="0" y2="-22" stroke="#d1d5db" stroke-width="1.6"/>`;
+    let yyf = -22;
+    for (let i = 0; i < flags50; i++) {
+      g += `<polygon points="0,${yyf} 11,${yyf+3} 0,${yyf+6}" fill="#d1d5db"/>`;
+      yyf += 6;
+    }
+    for (let i = 0; i < flags10; i++) {
+      g += `<line x1="0" y1="${yyf}" x2="11" y2="${yyf+3}" stroke="#d1d5db" stroke-width="1.6"/>`;
+      yyf += 4;
+    }
+    if (flags5) g += `<line x1="0" y1="${yyf}" x2="7" y2="${yyf+2}" stroke="#d1d5db" stroke-width="1.6"/>`;
+    g += `</g>`;
+    return g;
+  };
+
+  const barbX = W - m.r + 26;
+  const barbs = rows
+    .filter(r => Number.isFinite(Number(r.windSpeedKt)) && Number.isFinite(Number(r.windDirDeg)))
+    .map(r => mkBarb(barbX, y(Number(r.pressureHpa)), Number(r.windSpeedKt), Number(r.windDirDeg)))
+    .join('');
+
   return `
-    <svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="Emagram profile">
+    <svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="Skew-T profile">
       <rect x="0" y="0" width="${W}" height="${H}" fill="#151b2d" rx="8"/>
       ${grid}
       <line x1="${m.l}" y1="${m.t}" x2="${m.l}" y2="${H - m.b}" stroke="rgba(255,255,255,0.5)"/>
       <line x1="${m.l}" y1="${H - m.b}" x2="${W - m.r}" y2="${H - m.b}" stroke="rgba(255,255,255,0.5)"/>
       ${tPath ? `<path d="${tPath}" fill="none" stroke="#ff6b6b" stroke-width="2.2"/>` : ''}
       ${tdPath ? `<path d="${tdPath}" fill="none" stroke="#69b1ff" stroke-width="2.2"/>` : ''}
-      <text x="${W/2}" y="${H-2}" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="11">Temperature / Dewpoint (°C)</text>
-      <text x="14" y="${H/2}" transform="rotate(-90 14 ${H/2})" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="11">Altitude (m)</text>
+      ${barbs}
+      <text x="${W/2}" y="${H-2}" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="11">Skewed temperature lines (°C)</text>
+      <text x="12" y="${H/2}" transform="rotate(-90 12 ${H/2})" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="11">Pressure (hPa)</text>
+      <text x="${barbX}" y="${m.t+8}" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="10">Wind</text>
     </svg>
     <div style="display:flex;gap:14px;font-size:12px;margin-top:6px;align-items:center;flex-wrap:wrap">
       <span style="display:flex;align-items:center;gap:6px"><span style="width:14px;height:2px;background:#ff6b6b;display:inline-block"></span>T</span>
       <span style="display:flex;align-items:center;gap:6px"><span style="width:14px;height:2px;background:#69b1ff;display:inline-block"></span>Td</span>
+      <span style="opacity:.75">barbs in kt</span>
     </div>`;
 }
 
