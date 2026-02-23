@@ -1582,7 +1582,9 @@ const emagramOverlay = document.getElementById('emagram-overlay');
 const emagramClose = document.getElementById('emagram-close');
 const emagramTitle = document.getElementById('emagram-title');
 const emagramBody = document.getElementById('emagram-body');
-let emagramState = { open: false, lat: null, lon: null, model: '' };
+let emagramState = { open: false, lat: null, lon: null, model: '', zoom: null };
+const emagramCache = new Map();
+const EMAGRAM_CACHE_MAX = 96;
 const langSelect = document.getElementById('lang-select');
 
 function openFeedback() {
@@ -1644,11 +1646,31 @@ function renderEmagramSvg(levels) {
   const x = (t, p) => baseX(t) + (H - m.b - y(p)) * skew;
 
   const pressureLines = [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200].filter(p => p <= pBot && p >= pTop);
+  const rowsByP = rows
+    .filter(r => Number.isFinite(Number(r.pressureHpa)) && Number.isFinite(Number(r.altitudeM)))
+    .map(r => ({ p: Number(r.pressureHpa), z: Number(r.altitudeM) }))
+    .sort((a, b) => b.p - a.p);
+  const altitudeAtP = (p) => {
+    if (!rowsByP.length) return null;
+    for (let i = 0; i < rowsByP.length - 1; i++) {
+      const a = rowsByP[i], b = rowsByP[i + 1];
+      if ((a.p >= p && p >= b.p) || (a.p <= p && p <= b.p)) {
+        const t = (p - a.p) / (b.p - a.p || 1);
+        return a.z + t * (b.z - a.z);
+      }
+    }
+    return rowsByP.reduce((best, r) => (Math.abs(r.p - p) < Math.abs(best.p - p) ? r : best), rowsByP[0]).z;
+  };
+
   let grid = '';
   for (const p of pressureLines) {
     const yy = y(p);
     grid += `<line x1="${m.l}" y1="${yy}" x2="${W - m.r}" y2="${yy}" stroke="rgba(255,255,255,0.14)"/>`;
     grid += `<text x="${m.l - 8}" y="${yy + 4}" fill="rgba(255,255,255,0.75)" font-size="11" text-anchor="end">${p}</text>`;
+    const alt = altitudeAtP(p);
+    if (Number.isFinite(alt)) {
+      grid += `<text x="${W - m.r + 6}" y="${yy + 4}" fill="rgba(255,255,255,0.75)" font-size="10" text-anchor="start">${Math.round(alt)}m</text>`;
+    }
   }
   for (let t = tMin; t <= tMax; t += 10) {
     const x1 = x(t, pBot), x2 = x(t, pTop);
@@ -1733,6 +1755,7 @@ function renderEmagramSvg(levels) {
       ${barbs}
       <text x="${W/2}" y="${H-2}" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="11">Skewed temperature lines (°C)</text>
       <text x="12" y="${H/2}" transform="rotate(-90 12 ${H/2})" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="11">Pressure (hPa)</text>
+      <text x="${W - m.r + 6}" y="${m.t+8}" text-anchor="start" fill="rgba(255,255,255,0.8)" font-size="10">Alt</text>
       <text x="${barbX}" y="${m.t+8}" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="10">Wind</text>
     </svg>
     <div style="display:flex;gap:14px;font-size:12px;margin-top:6px;align-items:center;flex-wrap:wrap">
@@ -1748,26 +1771,44 @@ function emagramCurrentStep() {
   return timesteps[currentTimeIndex] || null;
 }
 
+function emagramCacheKey({ lat, lon, model, zoom, time }) {
+  return `${Number(lat).toFixed(4)}|${Number(lon).toFixed(4)}|${model || ''}|z${zoom ?? ''}|${time || 'latest'}`;
+}
+
+function emagramCacheSet(key, value) {
+  if (emagramCache.has(key)) emagramCache.delete(key);
+  emagramCache.set(key, value);
+  if (emagramCache.size > EMAGRAM_CACHE_MAX) {
+    const oldest = emagramCache.keys().next().value;
+    emagramCache.delete(oldest);
+  }
+}
+
 function emagramNav(delta) {
   const nextIdx = Math.max(0, Math.min(timesteps.length - 1, currentTimeIndex + delta));
   if (nextIdx === currentTimeIndex) return;
   currentTimeIndex = nextIdx;
+  // In emagram mode keep map requests stable; only refresh sounding for step changes.
   updateTimeline();
-  loadSymbols();
-  loadOverlay();
-  loadWind();
 }
 
 async function openEmagramAt(lat, lon, time = 'latest', model = '') {
   if (!emagramOverlay || !emagramBody) return;
-  emagramState = { open: true, lat: Number(lat), lon: Number(lon), model: model || '' };
+  const fixedModel = model || emagramState.model || '';
+  const fixedZoom = (emagramState.zoom != null) ? emagramState.zoom : map.getZoom();
+  emagramState = { open: true, lat: Number(lat), lon: Number(lon), model: fixedModel, zoom: fixedZoom };
   emagramOverlay.style.display = 'flex';
   emagramBody.innerHTML = '<div style="opacity:.8">Loading profile…</div>';
   try {
-    const modelPart = model ? `&model=${encodeURIComponent(model)}` : '';
-    const res = await fetch(`/api/emagram_point?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&time=${encodeURIComponent(time || 'latest')}${modelPart}`);
-    if (!res.ok) await throwHttpError(res, 'API');
-    const d = await res.json();
+    const cacheKey = emagramCacheKey({ lat, lon, model: fixedModel, zoom: fixedZoom, time });
+    let d = emagramCache.get(cacheKey);
+    if (!d) {
+      const modelPart = fixedModel ? `&model=${encodeURIComponent(fixedModel)}` : '';
+      const res = await fetch(`/api/emagram_point?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&time=${encodeURIComponent(time || 'latest')}${modelPart}`);
+      if (!res.ok) await throwHttpError(res, 'API');
+      d = await res.json();
+      emagramCacheSet(cacheKey, d);
+    }
     const p = d.point || {};
     const step = emagramCurrentStep();
     if (emagramTitle) emagramTitle.textContent = `Emagram · ${d.validTime || d.run || ''}`;
