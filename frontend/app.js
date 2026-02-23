@@ -1562,7 +1562,7 @@ const meteogramOverlay = document.getElementById('meteogram-overlay');
 const meteogramClose = document.getElementById('meteogram-close');
 const meteogramTitle = document.getElementById('meteogram-title');
 const meteogramBody = document.getElementById('meteogram-body');
-let emagramState = { open: false, lat: null, lon: null, model: '', zoom: null };
+let emagramState = { open: false, lat: null, lon: null, model: '', zoom: null, loading: false, reqId: 0 };
 let meteogramState = { open: false, lat: null, lon: null, model: '' };
 const emagramCache = new Map();
 const meteogramCache = new Map();
@@ -1900,6 +1900,26 @@ async function openMeteogramAt(lat, lon, model = 'icon_d2') {
 
 window.openMeteogramAt = openMeteogramAt;
 
+
+function emagramSetLoadingUI(isLoading) {
+  const prevBtn = document.getElementById('emNavPrev');
+  const nextBtn = document.getElementById('emNavNext');
+  const st = document.getElementById('emNavStatus');
+  const atStart = currentTimeIndex <= 0;
+  const atEnd = currentTimeIndex >= (timesteps.length - 1);
+  if (prevBtn) {
+    prevBtn.disabled = isLoading || atStart;
+    prevBtn.style.opacity = (isLoading || atStart) ? '0.45' : '1';
+    prevBtn.style.cursor = (isLoading || atStart) ? 'default' : 'pointer';
+  }
+  if (nextBtn) {
+    nextBtn.disabled = isLoading || atEnd;
+    nextBtn.style.opacity = (isLoading || atEnd) ? '0.45' : '1';
+    nextBtn.style.cursor = (isLoading || atEnd) ? 'default' : 'pointer';
+  }
+  if (st) st.textContent = isLoading ? 'loading…' : '';
+}
+
 function emagramCacheKey({ lat, lon, model, zoom, time }) {
   return `${Number(lat).toFixed(4)}|${Number(lon).toFixed(4)}|${model || ''}|z${zoom ?? ''}|${time || 'latest'}`;
 }
@@ -1915,8 +1935,10 @@ function emagramCacheSet(key, value) {
 
 function emagramNav(delta) {
   const nextIdx = Math.max(0, Math.min(timesteps.length - 1, currentTimeIndex + delta));
-  if (nextIdx === currentTimeIndex) return;
+  if (nextIdx === currentTimeIndex || emagramState.loading) return;
   currentTimeIndex = nextIdx;
+  emagramState.loading = true;
+  emagramSetLoadingUI(true);
   // In emagram mode keep map requests stable; only refresh sounding for step changes.
   updateTimeline();
 }
@@ -1925,9 +1947,12 @@ async function openEmagramAt(lat, lon, time = 'latest', model = '') {
   if (!emagramOverlay || !emagramBody) return;
   const fixedModel = model || emagramState.model || '';
   const fixedZoom = (emagramState.zoom != null) ? emagramState.zoom : map.getZoom();
-  emagramState = { open: true, lat: Number(lat), lon: Number(lon), model: fixedModel, zoom: fixedZoom };
+  const hadContent = emagramState.open && emagramBody.innerHTML.trim().length > 0;
+  const reqId = (emagramState.reqId || 0) + 1;
+  emagramState = { open: true, lat: Number(lat), lon: Number(lon), model: fixedModel, zoom: fixedZoom, loading: true, reqId };
   emagramOverlay.style.display = 'flex';
-  emagramBody.innerHTML = '<div style="opacity:.8">Loading profile…</div>';
+  if (!hadContent) emagramBody.innerHTML = '<div style="opacity:.8">Loading profile…</div>';
+  else emagramSetLoadingUI(true);
   try {
     const cacheKey = emagramCacheKey({ lat, lon, model: fixedModel, zoom: fixedZoom, time });
     let d = emagramCache.get(cacheKey);
@@ -1938,18 +1963,30 @@ async function openEmagramAt(lat, lon, time = 'latest', model = '') {
       d = await res.json();
       emagramCacheSet(cacheKey, d);
     }
+    if (reqId !== emagramState.reqId) return;
     const p = d.point || {};
     const step = emagramCurrentStep();
+    const atStart = currentTimeIndex <= 0;
+    const atEnd = currentTimeIndex >= (timesteps.length - 1);
     if (emagramTitle) emagramTitle.textContent = `Emagram · ${d.validTime || d.run || ''}`;
     const nav = `<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
-      <button onclick="emagramNav(-1)" style="font-size:12px;padding:2px 8px">◀</button>
+      <button id="emNavPrev" onclick="emagramNav(-1)" ${atStart ? 'disabled' : ''} style="font-size:12px;padding:2px 8px;${atStart ? 'opacity:.45;cursor:default;' : ''}">◀</button>
       <div style="font-size:12px;opacity:.85;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${step?.validTime || d.validTime || time || 'latest'}</div>
-      <button onclick="emagramNav(1)" style="font-size:12px;padding:2px 8px">▶</button>
+      <span id="emNavStatus" style="font-size:11px;opacity:.75;min-width:62px;text-align:center"></span>
+      <button id="emNavNext" onclick="emagramNav(1)" ${atEnd ? 'disabled' : ''} style="font-size:12px;padding:2px 8px;${atEnd ? 'opacity:.45;cursor:default;' : ''}">▶</button>
     </div>`;
     const meta = `<div style="font-size:12px;opacity:.88;margin-bottom:8px">Point ${p.gridLat ?? lat}, ${p.gridLon ?? lon} · ${d.model || ''} · run ${d.run || ''} step ${d.step ?? ''}</div>`;
     emagramBody.innerHTML = nav + meta + renderEmagramSvg(d.levels || []);
+    emagramState.loading = false;
+    emagramSetLoadingUI(false);
   } catch (e) {
-    emagramBody.innerHTML = `<div style="color:#ff9f9f">Failed to load emagram: ${String(e.message || e)}</div>`;
+    if (!hadContent) emagramBody.innerHTML = `<div style="color:#ff9f9f">Failed to load emagram: ${String(e.message || e)}</div>`;
+    else {
+      const st = document.getElementById('emNavStatus');
+      if (st) st.textContent = 'error';
+    }
+    emagramState.loading = false;
+    emagramSetLoadingUI(false);
   }
 }
 
