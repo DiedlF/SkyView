@@ -678,8 +678,11 @@ async def api_symbols(
         logger.info("/api/symbols rid=%s served=cache zoom=%s count=%s totalMs=%.2f", rid, zoom, out_payload.get("count"), total_ms)
         return out_payload
 
+    # Ingest-only precompute policy for low zoom:
+    # If global precomputed payload is missing, do NOT compute full global domain on request.
+    # Fall back to normal request-scoped compute+cache for this bbox.
     if is_low_zoom_global:
-        lat_min, lon_min, lat_max, lon_max = LOW_ZOOM_GLOBAL_BBOX
+        symbols_cache_key = f"{model_used}|{run}|{step}|z{zoom}|{cache_bbox}"
 
     t_load0 = perf_counter()
     d = load_data(run, step, model_used, keys=symbol_keys)
@@ -1063,11 +1066,6 @@ async def api_symbols(
     }
     symbols_cache_set(symbols_cache_key, result)
     total_ms = (perf_counter() - t0) * 1000.0
-    if is_low_zoom_global:
-        _save_symbols_precomputed(model_used, run, step, zoom, result)
-        out_payload = _filter_symbols_to_bbox(result, req_lat_min, req_lon_min, req_lat_max, req_lon_max)
-        logger.info("/api/symbols rid=%s served=computed-global zoom=%s count=%s euCells=%s d2Cells=%s loadMs=%.2f gridMs=%.2f aggMs=%.2f totalMs=%.2f", rid, zoom, out_payload.get("count"), out_payload.get("diagnostics", {}).get("euCells"), out_payload.get("diagnostics", {}).get("d2Cells"), t_load_ms, t_grid_ms, t_agg_ms, total_ms)
-        return out_payload
     logger.info("/api/symbols rid=%s served=computed zoom=%s count=%s euCells=%s d2Cells=%s loadMs=%.2f gridMs=%.2f aggMs=%.2f totalMs=%.2f", rid, zoom, result.get("count"), result.get("diagnostics", {}).get("euCells"), result.get("diagnostics", {}).get("d2Cells"), t_load_ms, t_grid_ms, t_agg_ms, total_ms)
     return result
 
