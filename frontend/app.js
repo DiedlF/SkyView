@@ -1617,7 +1617,7 @@ function renderEmagramSvg(levels) {
   if (!rows.length) return '<div style="color:#ffb3b3">No profile data available for this point/time.</div>';
 
   const W = 620, H = 388;
-  const m = { l: 112, r: 120, t: 30, b: 46 };
+  const m = { l: 112, r: 120, t: 40, b: 36 };
   const plotRight = W - m.r;
   const axisAlt = m.l - 54;
   const iw = plotRight - m.l;
@@ -1669,7 +1669,7 @@ function renderEmagramSvg(levels) {
   for (let t = tMin; t <= tMax; t += 10) {
     const x1 = x(t, pBot), x2 = x(t, pTop);
     tempGrid += `<line x1="${x1}" y1="${y(pBot)}" x2="${x2}" y2="${y(pTop)}" stroke="rgba(255,255,255,0.12)"/>`;
-    grid += `<text x="${x1}" y="${H - 16}" fill="rgba(255,255,255,0.75)" font-size="11" text-anchor="middle">${t}</text>`;
+    grid += `<text x="${x1}" y="${H - 21}" fill="rgba(255,255,255,0.75)" font-size="11" text-anchor="middle">${t}</text>`;
   }
 
   const kappa = 0.286;
@@ -1747,9 +1747,9 @@ function renderEmagramSvg(levels) {
       </g>
       ${barbs}
       <text x="${(m.l + plotRight)/2}" y="${H-2}" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="11">Skewed temperature lines (°C)</text>
-      <text x="${m.l-40}" y="${m.t-16}" text-anchor="start" fill="rgba(255,255,255,0.9)" font-size="10">Pressure</text>
-      <text x="${axisAlt-28}" y="${m.t-16}" text-anchor="start" fill="rgba(255,255,255,0.9)" font-size="10">Altitude</text>
-      <text x="${barbX}" y="${m.t-16}" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="10">Wind</text>
+      <text x="${m.l-40}" y="${m.t-26}" text-anchor="start" fill="rgba(255,255,255,0.9)" font-size="10">Pressure</text>
+      <text x="${axisAlt-33}" y="${m.t-26}" text-anchor="start" fill="rgba(255,255,255,0.9)" font-size="10">Altitude</text>
+      <text x="${barbX}" y="${m.t-26}" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="10">Wind</text>
     </svg>
     <div style="display:flex;gap:14px;font-size:12px;margin-top:6px;align-items:center;flex-wrap:wrap">
       <span style="display:flex;align-items:center;gap:6px"><span style="width:14px;height:2px;background:#ff6b6b;display:inline-block"></span>T</span>
