@@ -1602,7 +1602,7 @@ function renderEmagramSvg(levels) {
   if (!rows.length) return '<div style="color:#ffb3b3">No profile data available for this point/time.</div>';
 
   const W = 600, H = 390;
-  const m = { l: 92, r: 120, t: 16, b: 34 };
+  const m = { l: 92, r: 120, t: 24, b: 34 };
   const plotRight = W - m.r;
   const axisP = m.l - 58;
   const axisZ = m.l - 18;
@@ -1639,10 +1639,11 @@ function renderEmagramSvg(levels) {
   };
 
   let grid = '';
+  let tempGrid = '';
   for (const p of pressureLines) {
     const yy = y(p);
     grid += `<line x1="${m.l}" y1="${yy}" x2="${plotRight}" y2="${yy}" stroke="rgba(255,255,255,0.14)"/>`;
-    grid += `<text x="${axisP - 6}" y="${yy + 4}" fill="rgba(255,255,255,0.80)" font-size="11" text-anchor="end">${p}</text>`;
+    grid += `<text x="${axisP - 6}" y="${yy + 4}" fill="rgba(255,255,255,0.80)" font-size="11" text-anchor="end">${p} hPa</text>`;
     const alt = altitudeAtP(p);
     if (Number.isFinite(alt)) {
       grid += `<text x="${axisZ - 6}" y="${yy + 4}" fill="rgba(255,255,255,0.80)" font-size="10" text-anchor="end">${Math.round(alt)}m</text>`;
@@ -1650,7 +1651,7 @@ function renderEmagramSvg(levels) {
   }
   for (let t = tMin; t <= tMax; t += 10) {
     const x1 = x(t, pBot), x2 = x(t, pTop);
-    grid += `<line x1="${x1}" y1="${y(pBot)}" x2="${x2}" y2="${y(pTop)}" stroke="rgba(255,255,255,0.12)"/>`;
+    tempGrid += `<line x1="${x1}" y1="${y(pBot)}" x2="${x2}" y2="${y(pTop)}" stroke="rgba(255,255,255,0.12)"/>`;
     grid += `<text x="${x1}" y="${H - 12}" fill="rgba(255,255,255,0.75)" font-size="11" text-anchor="middle">${t}</text>`;
   }
 
@@ -1722,6 +1723,7 @@ function renderEmagramSvg(levels) {
       <line x1="${m.l}" y1="${m.t}" x2="${m.l}" y2="${H - m.b}" stroke="rgba(255,255,255,0.45)"/>
       <line x1="${m.l}" y1="${H - m.b}" x2="${plotRight}" y2="${H - m.b}" stroke="rgba(255,255,255,0.5)"/>
       <g clip-path="url(#skewPlotClip)">
+        ${tempGrid}
         ${dryGrid}
         ${moistGrid}
         ${tPath ? `<path d="${tPath}" fill="none" stroke="#ff6b6b" stroke-width="2.2"/>` : ''}
@@ -1729,9 +1731,9 @@ function renderEmagramSvg(levels) {
       </g>
       ${barbs}
       <text x="${(m.l + plotRight)/2}" y="${H-2}" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="11">Skewed temperature lines (°C)</text>
-      <text x="${axisP-20}" y="${m.t+8}" text-anchor="start" fill="rgba(255,255,255,0.85)" font-size="10">P</text>
-      <text x="${axisZ-20}" y="${m.t+8}" text-anchor="start" fill="rgba(255,255,255,0.85)" font-size="10">Alt</text>
-      <text x="${barbX}" y="${m.t+8}" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="10">Wind</text>
+      <text x="${axisP-22}" y="${m.t-6}" text-anchor="start" fill="rgba(255,255,255,0.9)" font-size="10">Pressure</text>
+      <text x="${axisZ-18}" y="${m.t-6}" text-anchor="start" fill="rgba(255,255,255,0.9)" font-size="10">Altitude</text>
+      <text x="${barbX}" y="${m.t-6}" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="10">Wind</text>
     </svg>
     <div style="display:flex;gap:14px;font-size:12px;margin-top:6px;align-items:center;flex-wrap:wrap">
       <span style="display:flex;align-items:center;gap:6px"><span style="width:14px;height:2px;background:#ff6b6b;display:inline-block"></span>T</span>
