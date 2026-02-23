@@ -95,7 +95,7 @@ jobs:
             if ! crontab -l 2>/dev/null | grep -q 'skyview.*cron-ingest.sh'; then
               (
                 crontab -l 2>/dev/null
-                echo "*/30 * * * * cd /opt/skyview/backend && ./cron-ingest.sh >> /var/log/skyview-ingest.log 2>&1"
+                echo "*/5 * * * * cd /opt/skyview/backend && ./cron-ingest.sh >> /var/log/skyview-ingest.log 2>&1"
               ) | crontab -
               echo "[deploy] cron job registered (backend/cron-ingest.sh)"
             else
