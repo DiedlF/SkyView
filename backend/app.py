@@ -442,6 +442,8 @@ async def log_requests(request: Request, call_next):
 
 
 data_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+meteogram_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+METEOGRAM_CACHE_MAX_ITEMS = int(os.environ.get("SKYVIEW_METEOGRAM_CACHE_MAX_ITEMS", "128"))
 
 def _acquire_single_instance_or_exit(pid_file: str):
     """Simple PID-file guard to prevent accidental multi-process launches."""
@@ -1198,16 +1200,21 @@ async def api_meteogram_point(
     if not steps:
         raise HTTPException(404, "No timeline for model=icon_d2")
 
+    run_key = str(steps[0].get("run") or "")
+    cache_key = f"{m}|{run_key}|{round(float(lat),4)}|{round(float(lon),4)}"
+    cached = meteogram_cache.get(cache_key)
+    if cached is not None:
+        meteogram_cache.move_to_end(cache_key)
+        return cached
+
     level_keys = []
     for lev in EMAGRAM_D2_LEVELS_HPA:
         level_keys += [f"u_{lev}hpa", f"v_{lev}hpa"]
 
     needed_keys = [
-        "lat", "lon", "validTime", "ww", "cape_ml", "lpi_max", "ceiling",
-        "clcl", "clcm", "clch", "clct",
-        "u_10m", "v_10m", "vmax_10m",
-        "tot_prec", "rain_gsp", "rain_con", "snow_gsp", "snow_con", "grau_gsp",
-        "h_snow", "t_2m", "relhum_2m", "td_2m",
+        "lat", "lon", "validTime",
+        "tot_prec",
+        "h_snow", "t_2m", "td_2m",
     ] + level_keys
 
     out = []
@@ -1248,16 +1255,6 @@ async def api_meteogram_point(
                 return None
             return float(v) if np.isfinite(v) else None
 
-        u10 = g("u_10m")
-        v10 = g("v_10m")
-        wind_kt = (math.hypot(u10, v10) * 1.943844) if (u10 is not None and v10 is not None) else None
-        wind_dir = ((270.0 - math.degrees(math.atan2(v10, u10))) % 360.0) if (u10 is not None and v10 is not None) else None
-        gust_kt = (g("vmax_10m") * 1.943844) if g("vmax_10m") is not None else None
-
-        rain = (g("rain_gsp") or 0.0) + (g("rain_con") or 0.0)
-        snow = (g("snow_gsp") or 0.0) + (g("snow_con") or 0.0)
-        hail = g("grau_gsp")
-
         t2k = g("t_2m")
         tdk = g("td_2m")
         wind_levels = []
@@ -1276,25 +1273,10 @@ async def api_meteogram_point(
             "model": model_i,
             "run": run_i,
             "step": step_i,
-            "ww": g("ww"),
-            "capeMl": g("cape_ml"),
-            "lpi": g("lpi_max"),
-            "ceilingM": g("ceiling"),
-            "cloudLowPct": g("clcl"),
-            "cloudMidPct": g("clcm"),
-            "cloudHighPct": g("clch"),
-            "cloudTotalPct": g("clct"),
-            "wind10mKt": round(wind_kt, 1) if wind_kt is not None else None,
-            "windDir10mDeg": round(wind_dir, 1) if wind_dir is not None else None,
-            "gust10mKt": round(gust_kt, 1) if gust_kt is not None else None,
             "windLevels": wind_levels,
             "precipTotal": g("tot_prec"),
-            "rain": round(rain, 3),
-            "snow": round(snow, 3),
-            "hail": round(hail, 3) if hail is not None else None,
             "snowDepthM": g("h_snow"),
             "t2mC": round(t2k - 273.15, 2) if t2k is not None else None,
-            "relhum2mPct": g("relhum_2m"),
             "dewpoint2mC": round(tdk - 273.15, 2) if tdk is not None else None,
         })
 
@@ -1322,11 +1304,16 @@ async def api_meteogram_point(
           prev_step = int(step_i)
           prev_run = run_i
 
-    return {
+    payload = {
         "point": grid_point,
         "count": len(out),
         "series": out,
     }
+    meteogram_cache[cache_key] = payload
+    meteogram_cache.move_to_end(cache_key)
+    while len(meteogram_cache) > METEOGRAM_CACHE_MAX_ITEMS:
+        meteogram_cache.popitem(last=False)
+    return payload
 
 
 async def api_wind(
