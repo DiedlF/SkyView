@@ -1814,12 +1814,18 @@ function renderMeteogramSvg(series) {
     { key: 'precip', h: 110 },
     { key: 'temp', h: 85 },
   ];
+  const panelGap = 5;
   const totalH = panels.reduce((a, p) => a + p.h, 0);
-  const scaleY = (H - m.t - m.b) / totalH;
+  const scaleY = (H - m.t - m.b - panelGap * (panels.length - 1)) / totalH;
   const pxW = W - m.l - m.r;
 
   let y0 = m.t;
-  for (const p of panels) { p.y = y0; p.ph = p.h * scaleY; y0 += p.ph; }
+  for (let i = 0; i < panels.length; i++) {
+    const p = panels[i];
+    p.y = y0;
+    p.ph = p.h * scaleY;
+    y0 += p.ph + (i < panels.length - 1 ? panelGap : 0);
+  }
 
   const x = (idx) => m.l + (rows.length <= 1 ? 0 : (idx / (rows.length - 1)) * pxW);
   const v = (row, key) => Number(row[key]);
@@ -1907,6 +1913,18 @@ function renderMeteogramSvg(series) {
     }
   }
 
+  // Approx altitude reference lines in wind panel
+  const altRefs = [
+    { z: 0, p: 1000 },
+    { z: 3000, p: 700 },
+    { z: 5000, p: 540 },
+  ];
+  for (const a of altRefs) {
+    const yy = yWind(a.p);
+    svg += `<line x1="${m.l}" y1="${yy.toFixed(1)}" x2="${(m.l + 10)}" y2="${yy.toFixed(1)}" stroke="rgba(255,255,255,0.35)"/>`;
+    svg += `<text x="${m.l + 12}" y="${(yy + 3).toFixed(1)}" fill="rgba(255,255,255,0.62)" font-size="9" text-anchor="start">~${a.z}m</text>`;
+  }
+
   for (let i = 0; i < rows.length; i++) {
     const xx = x(i);
     const bw = Math.max(2, pxW / Math.max(rows.length, 24));
@@ -1916,9 +1934,12 @@ function renderMeteogramSvg(series) {
     if (hP > 0) svg += `<rect x="${(xx - bw/2).toFixed(1)}" y="${(yBase - hP).toFixed(1)}" width="${bw.toFixed(1)}" height="${hP.toFixed(1)}" fill="rgba(80,170,255,0.82)"/>`;
   }
 
+  const snowUseCm = snowMax < 1.0;
+  const snowUnit = snowUseCm ? 'cm' : 'm';
+  const snowTopLabel = snowUseCm ? (snowMax * 100).toFixed(0) : snowMax.toFixed(2);
   const snowPath = linePath('snowDepthM', pPre, 0, snowMax);
   if (snowPath) svg += `<path d="${snowPath}" fill="none" stroke="#ffffff" stroke-width="1.4"/>`;
-  svg += `<text x="${(W - m.r - 2)}" y="${(pPre.y + 12).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="end">Snow m</text>`;
+  svg += `<text x="${(W - m.r - 2)}" y="${(pPre.y + 12).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="end">${snowUseCm ? "Snow cm" : "Snow m"}</text>`;
 
   const tPath = linePath('t2mC', pTemp, tMin, tMax);
   if (tPath) svg += `<path d="${tPath}" fill="none" stroke="#ff9a66" stroke-width="1.8"/>`;
@@ -1936,20 +1957,20 @@ function renderMeteogramSvg(series) {
   // Precip axis (left): 0 .. precipMax
   svg += `<line x1="${m.l}" y1="${(pPre.y + pPre.ph).toFixed(1)}" x2="${(m.l-4)}" y2="${(pPre.y + pPre.ph).toFixed(1)}" stroke="rgba(255,255,255,0.65)"/>`;
   svg += `<line x1="${m.l}" y1="${pPre.y.toFixed(1)}" x2="${(m.l-4)}" y2="${pPre.y.toFixed(1)}" stroke="rgba(255,255,255,0.65)"/>`;
-  svg += `<text x="${m.l-6}" y="${(pPre.y + pPre.ph + 4).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="end">0</text>`;
-  svg += `<text x="${m.l-6}" y="${(pPre.y + 4).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="end">${precipMax.toFixed(1)}</text>`;
+  svg += `<text x="${m.l-6}" y="${(pPre.y + pPre.ph + 4).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="end">0 mm/h</text>`;
+  svg += `<text x="${m.l-6}" y="${(pPre.y + 4).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="end">${precipMax.toFixed(1)} mm/h</text>`;
 
-  // Snow axis (right): 0 .. snowMax
+  // Snow axis (right): 0 .. snowMax (cm when appropriate)
   svg += `<line x1="${W - m.r}" y1="${(pPre.y + pPre.ph).toFixed(1)}" x2="${(W - m.r + 4)}" y2="${(pPre.y + pPre.ph).toFixed(1)}" stroke="rgba(255,255,255,0.65)"/>`;
   svg += `<line x1="${W - m.r}" y1="${pPre.y.toFixed(1)}" x2="${(W - m.r + 4)}" y2="${pPre.y.toFixed(1)}" stroke="rgba(255,255,255,0.65)"/>`;
-  svg += `<text x="${W - m.r + 6}" y="${(pPre.y + pPre.ph + 4).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="start">0m</text>`;
-  svg += `<text x="${W - m.r + 6}" y="${(pPre.y + 4).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="start">${snowMax.toFixed(2)}m</text>`;
+  svg += `<text x="${W - m.r + 6}" y="${(pPre.y + pPre.ph + 4).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="start">0 ${snowUnit}</text>`;
+  svg += `<text x="${W - m.r + 6}" y="${(pPre.y + 4).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="start">${snowTopLabel} ${snowUnit}</text>`;
 
   // Temp axis (left): tMin .. tMax
   svg += `<line x1="${m.l}" y1="${(pTemp.y + pTemp.ph).toFixed(1)}" x2="${(m.l-4)}" y2="${(pTemp.y + pTemp.ph).toFixed(1)}" stroke="rgba(255,255,255,0.65)"/>`;
   svg += `<line x1="${m.l}" y1="${pTemp.y.toFixed(1)}" x2="${(m.l-4)}" y2="${pTemp.y.toFixed(1)}" stroke="rgba(255,255,255,0.65)"/>`;
-  svg += `<text x="${m.l-6}" y="${(pTemp.y + pTemp.ph + 4).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="end">${tMin.toFixed(0)}°</text>`;
-  svg += `<text x="${m.l-6}" y="${(pTemp.y + 4).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="end">${tMax.toFixed(0)}°</text>`;
+  svg += `<text x="${m.l-6}" y="${(pTemp.y + pTemp.ph + 4).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="end">${tMin.toFixed(0)} °C</text>`;
+  svg += `<text x="${m.l-6}" y="${(pTemp.y + 4).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="end">${tMax.toFixed(0)} °C</text>`;
 
   svg += `</svg>`;
   return svg;
@@ -1971,9 +1992,12 @@ async function openMeteogramAt(lat, lon, model = 'icon_d2') {
       meteogramCacheSet(key, data);
     }
     const p = data.point || {};
-    if (meteogramTitle) meteogramTitle.textContent = `Meteogram · ${data.count || 0} steps`;
-    const meta = `<div style="font-size:12px;opacity:.88;margin-bottom:8px">Point ${p.gridLat ?? lat}, ${p.gridLon ?? lon} · ${data.series?.[0]?.run || ''}…</div>`;
-    meteogramBody.innerHTML = meta + renderMeteogramSvg(data.series || []);
+    const modelUsed = data.series?.[0]?.model || (model || 'icon_d2');
+    const runUsed = data.series?.[0]?.run || '-';
+    const glat = (p.gridLat ?? lat);
+    const glon = (p.gridLon ?? lon);
+    if (meteogramTitle) meteogramTitle.textContent = `Meteogram · ${glat}, ${glon} · ${String(modelUsed).toUpperCase().replace('_','-')} · Run ${runUsed}`;
+    meteogramBody.innerHTML = renderMeteogramSvg(data.series || []);
   } catch (e) {
     meteogramBody.innerHTML = `<div style="color:#ff9f9f">Failed to load meteogram: ${String(e.message || e)}</div>`;
   }
