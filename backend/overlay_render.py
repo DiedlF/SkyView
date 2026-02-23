@@ -242,6 +242,7 @@ OVERLAY_CONFIGS = {
     "wstar": {"var": "wstar", "cmap": colormap_wstar, "computed": True},
     "climb_rate": {"var": "climb_rate", "cmap": colormap_climb_rate, "computed": True},
     "lcl": {"var": "lcl", "cmap": colormap_lcl, "computed": True},
+    "h_snow": {"var": "h_snow", "cmap": colormap_clouds},
     "reachable": {"var": "reachable", "cmap": colormap_reachable, "computed": True},
 }
 
@@ -360,6 +361,15 @@ def colorize_layer_vectorized(layer: str, sampled: np.ndarray, valid: np.ndarray
         if np.any(m):
             t = np.clip(v / 5.0, 0.0, 1.0)
             set_rgba(m, 50 + 205 * t, 200 - 80 * t, 50 * (1 - t), 100 + 130 * t)
+        return rgba
+
+
+    if layer == "h_snow":
+        m = valid & (v > 0.0)
+        if np.any(m):
+            # meters; 0 stays transparent
+            t = np.clip(v / 1.0, 0.0, 1.0)
+            set_rgba(m, 220 - 120 * t, 235 - 85 * t, 255 - 15 * t, 70 + 150 * t)
         return rgba
 
     if layer == "lcl":

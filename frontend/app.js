@@ -467,7 +467,8 @@ const LEGEND_CONFIGS = {
   lpi: { title: 'LPI', gradient: 'linear-gradient(to right, rgb(70,190,80), rgb(160,150,60), rgb(255,70,40))', labels: ['0', '20+'] },
   thermals: { title: 'CAPE_ml', gradient: 'linear-gradient(to right, rgb(50,180,50), rgb(150,150,50), rgb(220,100,30), rgb(255,50,50))', labels: ['50 J/kg', '1000+ J/kg'] },
   climb_rate: { title: 'Climb Rate', gradient: 'linear-gradient(to right, rgb(50,200,50), rgb(180,200,50), rgb(220,150,30), rgb(255,50,50))', labels: ['0 m/s', '5 m/s'] },
-  lcl: { title: 'Cloud Base (LCL) MSL', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '5000m MSL'] }
+  lcl: { title: 'Cloud Base (LCL) MSL', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '5000m MSL'] },
+  h_snow: { title: 'Snow depth', gradient: 'linear-gradient(to right, rgba(255,255,255,0), rgb(220,235,255), rgb(160,200,255), rgb(100,150,240))', labels: ['0', '100+ cm'] }
 };
 
 // Initialize map
@@ -706,6 +707,7 @@ const OVERLAY_META = {
   thermals: { label: 'CAPE_ml', unit: 'J/kg', decimals: 1 },
   climb_rate: { label: 'Climb', unit: 'm/s', decimals: 1 },
   lcl: { label: 'Cloud base (LCL)', unit: 'm MSL', integer: true },
+  h_snow: { label: 'Snow depth', unit: 'm', decimals: 2 },
 };
 
 function formatOverlayValue(key, value) {
@@ -1808,7 +1810,7 @@ function renderMeteogramSvg(series) {
   if (!rows.length) return '<div style="color:#ffb3b3">No meteogram data.</div>';
 
   const W = 760, H = 520;
-  const m = { l: 48, r: 18, t: 18, b: 44 };
+  const m = { l: 48, r: 40, t: 18, b: 44 };
   const panels = [
     { key: 'wind', h: 175 },
     { key: 'precip', h: 110 },
@@ -1923,7 +1925,7 @@ function renderMeteogramSvg(series) {
   for (const a of altRefs) {
     const yy = yWind(a.p);
     svg += `<line x1="${m.l}" y1="${yy.toFixed(1)}" x2="${W - m.r}" y2="${yy.toFixed(1)}" stroke="rgba(255,255,255,0.20)" stroke-dasharray="3 3"/>`;
-    svg += `<text x="${m.l + 4}" y="${(yy - 3).toFixed(1)}" fill="rgba(255,255,255,0.62)" font-size="9" text-anchor="start">~${a.z}m</text>`;
+    svg += `<text x="6" y="${(yy - 3).toFixed(1)}" fill="rgba(255,255,255,0.62)" font-size="9" text-anchor="start">~${a.z}m</text>`;
   }
 
   for (let i = 0; i < rows.length; i++) {
@@ -1940,7 +1942,6 @@ function renderMeteogramSvg(series) {
   const snowTopLabel = snowUseCm ? (snowMax * 100).toFixed(0) : snowMax.toFixed(2);
   const snowPath = linePath('snowDepthM', pPre, 0, snowMax);
   if (snowPath) svg += `<path d="${snowPath}" fill="none" stroke="#ffffff" stroke-width="1.4"/>`;
-  svg += `<text x="${(W - m.r - 2)}" y="${(pPre.y + 12).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="end">${snowUseCm ? "Snow cm" : "Snow m"}</text>`;
 
   const tPath = linePath('t2mC', pTemp, tMin, tMax);
   if (tPath) svg += `<path d="${tPath}" fill="none" stroke="#ff9a66" stroke-width="1.8"/>`;
@@ -1951,7 +1952,7 @@ function renderMeteogramSvg(series) {
     svg += `<line x1="${m.l}" y1="${yZero.toFixed(1)}" x2="${W - m.r}" y2="${yZero.toFixed(1)}" stroke="rgba(255,255,255,0.35)" stroke-dasharray="4 3"/>`;
   }
 
-  svg += `<text x="6" y="${(pWind.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Wind</text>`;
+  svg += `<text x="6" y="${(pWind.y + 10).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Wind</text>`;
   svg += `<text x="6" y="${(pPre.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Precip</text>`;
   svg += `<text x="${W - m.r - 2}" y="${(pPre.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10" text-anchor="end">Snow</text>`;
   svg += `<text x="6" y="${(pTemp.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Temp</text>`;
