@@ -1813,7 +1813,7 @@ function renderMeteogramSvg(series) {
     { key: 'wind', h: 110 },
     { key: 'cloud', h: 95 },
     { key: 'precip', h: 95 },
-    { key: 'conv', h: 72 },
+    { key: 'temp', h: 72 },
   ];
   const totalH = panels.reduce((a, p) => a + p.h, 0);
   const scaleY = (H - m.t - m.b) / totalH;
@@ -1840,10 +1840,15 @@ function renderMeteogramSvg(series) {
   const cloudsMax = 100;
   const precipVals = rows.map(r => v(r, 'precipRateTotal')).filter(Number.isFinite);
   const precipMax = Math.max(1, ...(precipVals.length ? precipVals : [0]));
-  const convVals = rows.flatMap(r => [v(r, 'capeMl'), v(r, 'lpi')]).filter(Number.isFinite);
-  const convMax = Math.max(10, ...(convVals.length ? convVals : [0]));
+  const temps = rows.flatMap(r => [v(r, 't2mC'), v(r, 'dewpoint2mC')]).filter(Number.isFinite);
+  let tMin = Math.floor((Math.min(...(temps.length?temps:[-10])) - 2) / 5) * 5;
+  let tMax = Math.ceil((Math.max(...(temps.length?temps:[20])) + 2) / 5) * 5;
+  if (!(Number.isFinite(tMin) && Number.isFinite(tMax)) || tMax <= tMin) { tMin = -20; tMax = 30; }
 
-  const pWind = panels[0], pCloud = panels[1], pPre = panels[2], pConv = panels[3];
+  const snowVals = rows.map(r => v(r, 'snowDepthM')).filter(Number.isFinite);
+  const snowMax = Math.max(0.05, ...(snowVals.length ? snowVals : [0]));
+
+  const pWind = panels[0], pCloud = panels[1], pPre = panels[2], pTemp = panels[3];
 
   let svg = `<svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="Meteogram">`;
   svg += `<rect x="0" y="0" width="${W}" height="${H}" fill="#151b2d" rx="8"/>`;
@@ -1867,12 +1872,15 @@ function renderMeteogramSvg(series) {
     const dd = String(dt.getUTCDate()).padStart(2,'0');
     const mm = String(dt.getUTCMonth()+1).padStart(2,'0');
     const day = wd[dt.getUTCDay()];
-    const isMajor = (hh % 6 === 0) || i === 0 || i === rows.length - 1;
-    const tickLen = isMajor ? 8 : 4;
+    const isMidnight = hh === 0;
+    const isMajorHour = (hh % 6 === 0);
+    const tickLen = isMidnight ? 11 : (isMajorHour ? 8 : 4);
     svg += `<line x1="${xx}" y1="${H - m.b}" x2="${xx}" y2="${H - m.b + tickLen}" stroke="rgba(255,255,255,0.55)"/>`;
-    if (isMajor) {
-      svg += `<text x="${xx}" y="${H - m.b + 18}" fill="rgba(255,255,255,0.78)" font-size="10" text-anchor="middle">${day} ${dd}.${mm}.</text>`;
+    if (isMajorHour || i === 0 || i === rows.length - 1) {
       svg += `<text x="${xx}" y="${H - m.b + 30}" fill="rgba(255,255,255,0.72)" font-size="10" text-anchor="middle">${String(hh).padStart(2,'0')}Z</text>`;
+    }
+    if (hh === 12) {
+      svg += `<text x="${xx}" y="${H - m.b + 18}" fill="rgba(255,255,255,0.78)" font-size="10" text-anchor="middle">${day} ${dd}.${mm}.</text>`;
     }
   }
 
@@ -1905,15 +1913,19 @@ function renderMeteogramSvg(series) {
     if (hP > 0) svg += `<rect x="${(xx - bw/2).toFixed(1)}" y="${(yBase - hP).toFixed(1)}" width="${bw.toFixed(1)}" height="${hP.toFixed(1)}" fill="rgba(80,170,255,0.82)"/>`;
   }
 
-  const capePath = linePath('capeMl', pConv, 0, convMax);
-  if (capePath) svg += `<path d="${capePath}" fill="none" stroke="#ffb347" stroke-width="1.8"/>`;
-  const lpiPath = linePath('lpi', pConv, 0, convMax);
-  if (lpiPath) svg += `<path d="${lpiPath}" fill="none" stroke="#ff6b6b" stroke-width="1.5"/>`;
+  const snowPath = linePath('snowDepthM', pPre, 0, snowMax);
+  if (snowPath) svg += `<path d="${snowPath}" fill="none" stroke="#ffffff" stroke-width="1.4"/>`;
+  svg += `<text x="${(W - m.r - 2)}" y="${(pPre.y + 12).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="end">Snow m</text>`;
+
+  const tPath = linePath('t2mC', pTemp, tMin, tMax);
+  if (tPath) svg += `<path d="${tPath}" fill="none" stroke="#ff9a66" stroke-width="1.8"/>`;
+  const tdPath = linePath('dewpoint2mC', pTemp, tMin, tMax);
+  if (tdPath) svg += `<path d="${tdPath}" fill="none" stroke="#7cc3ff" stroke-width="1.6"/>`;
 
   svg += `<text x="6" y="${(pWind.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Wind kt</text>`;
   svg += `<text x="6" y="${(pCloud.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Cloud %</text>`;
   svg += `<text x="6" y="${(pPre.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Precip mm/h</text>`;
-  svg += `<text x="6" y="${(pConv.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">CAPE/LPI</text>`;
+  svg += `<text x="6" y="${(pTemp.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">T2m/Td2m °C</text>`;
 
   svg += `</svg>`;
   return svg;

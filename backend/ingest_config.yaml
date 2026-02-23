@@ -42,6 +42,7 @@ profiles:
       - clct
       - clct_mod
       - mh
+      - t_2m
       - td_2m
       - relhum_2m
       # Wind + gusts
@@ -83,6 +84,7 @@ groups:
   surface_weather:
     enabled: true
     variables:
+      - t_2m
       - td_2m
       - tmax_2m
       - tmin_2m

@@ -1203,7 +1203,7 @@ async def api_meteogram_point(
         "clcl", "clcm", "clch", "clct",
         "u_10m", "v_10m", "vmax_10m",
         "tot_prec", "rain_gsp", "rain_con", "snow_gsp", "snow_con", "grau_gsp",
-        "h_snow", "relhum_2m", "td_2m",
+        "h_snow", "t_2m", "relhum_2m", "td_2m",
     ]
 
     out = []
@@ -1254,6 +1254,7 @@ async def api_meteogram_point(
         snow = (g("snow_gsp") or 0.0) + (g("snow_con") or 0.0)
         hail = g("grau_gsp")
 
+        t2k = g("t_2m")
         tdk = g("td_2m")
         out.append({
             "validTime": d.get("validTime") or s.get("validTime"),
@@ -1276,6 +1277,7 @@ async def api_meteogram_point(
             "snow": round(snow, 3),
             "hail": round(hail, 3) if hail is not None else None,
             "snowDepthM": g("h_snow"),
+            "t2mC": round(t2k - 273.15, 2) if t2k is not None else None,
             "relhum2mPct": g("relhum_2m"),
             "dewpoint2mC": round(tdk - 273.15, 2) if tdk is not None else None,
         })
