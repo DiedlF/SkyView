@@ -1878,7 +1878,7 @@ function renderMeteogramSvg(series) {
   }
 
   // Wind panel: small barbs for each timestep x pressure level
-  const levels = [1000, 975, 950, 850, 700, 600, 500, 400, 300, 250, 200];
+  const levels = [1000, 975, 950, 850, 700, 600, 500, 400, 300, 200];
   const yWind = (lev) => pWind.y + ((1000 - lev) / (1000 - 200)) * pWind.ph;
   const mkBarb = (xx, yy, speedKt = 0, dirDeg = 0) => {
     if (!(Number.isFinite(speedKt) && Number.isFinite(dirDeg))) return '';
@@ -1929,9 +1929,27 @@ function renderMeteogramSvg(series) {
     svg += `<line x1="${m.l}" y1="${yZero.toFixed(1)}" x2="${W - m.r}" y2="${yZero.toFixed(1)}" stroke="rgba(255,255,255,0.35)" stroke-dasharray="4 3"/>`;
   }
 
-  svg += `<text x="6" y="${(pWind.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Wind barbs (200–1000 hPa)</text>`;
-  svg += `<text x="6" y="${(pPre.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Precip mm/h</text>`;
-  svg += `<text x="6" y="${(pTemp.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">T2m/Td2m °C</text>`;
+  svg += `<text x="6" y="${(pWind.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Wind</text>`;
+  svg += `<text x="6" y="${(pPre.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Precip/Snow</text>`;
+  svg += `<text x="6" y="${(pTemp.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Temp</text>`;
+
+  // Precip axis (left): 0 .. precipMax
+  svg += `<line x1="${m.l}" y1="${(pPre.y + pPre.ph).toFixed(1)}" x2="${(m.l-4)}" y2="${(pPre.y + pPre.ph).toFixed(1)}" stroke="rgba(255,255,255,0.65)"/>`;
+  svg += `<line x1="${m.l}" y1="${pPre.y.toFixed(1)}" x2="${(m.l-4)}" y2="${pPre.y.toFixed(1)}" stroke="rgba(255,255,255,0.65)"/>`;
+  svg += `<text x="${m.l-6}" y="${(pPre.y + pPre.ph + 4).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="end">0</text>`;
+  svg += `<text x="${m.l-6}" y="${(pPre.y + 4).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="end">${precipMax.toFixed(1)}</text>`;
+
+  // Snow axis (right): 0 .. snowMax
+  svg += `<line x1="${W - m.r}" y1="${(pPre.y + pPre.ph).toFixed(1)}" x2="${(W - m.r + 4)}" y2="${(pPre.y + pPre.ph).toFixed(1)}" stroke="rgba(255,255,255,0.65)"/>`;
+  svg += `<line x1="${W - m.r}" y1="${pPre.y.toFixed(1)}" x2="${(W - m.r + 4)}" y2="${pPre.y.toFixed(1)}" stroke="rgba(255,255,255,0.65)"/>`;
+  svg += `<text x="${W - m.r + 6}" y="${(pPre.y + pPre.ph + 4).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="start">0m</text>`;
+  svg += `<text x="${W - m.r + 6}" y="${(pPre.y + 4).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="start">${snowMax.toFixed(2)}m</text>`;
+
+  // Temp axis (left): tMin .. tMax
+  svg += `<line x1="${m.l}" y1="${(pTemp.y + pTemp.ph).toFixed(1)}" x2="${(m.l-4)}" y2="${(pTemp.y + pTemp.ph).toFixed(1)}" stroke="rgba(255,255,255,0.65)"/>`;
+  svg += `<line x1="${m.l}" y1="${pTemp.y.toFixed(1)}" x2="${(m.l-4)}" y2="${pTemp.y.toFixed(1)}" stroke="rgba(255,255,255,0.65)"/>`;
+  svg += `<text x="${m.l-6}" y="${(pTemp.y + pTemp.ph + 4).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="end">${tMin.toFixed(0)}°</text>`;
+  svg += `<text x="${m.l-6}" y="${(pTemp.y + 4).toFixed(1)}" fill="rgba(255,255,255,0.78)" font-size="9" text-anchor="end">${tMax.toFixed(0)}°</text>`;
 
   svg += `</svg>`;
   return svg;

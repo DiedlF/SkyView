@@ -46,8 +46,8 @@ profiles:
       - td_2m
       - relhum_2m
       # Wind + gusts
-      - u_10m
-      - v_10m
+      - u_10m_av
+      - v_10m_av
       - vmax_10m
       # Accumulated precipitation components (needed for precip-rate precompute)
       - tot_prec
@@ -91,8 +91,8 @@ groups:
       - relhum_2m
       - pmsl
       - ps
-      - u_10m
-      - v_10m
+      - u_10m_av
+      - v_10m_av
       - vmax_10m
       - tot_prec
       - prr_gsp
@@ -133,7 +133,7 @@ static_variables:
 pressure_levels:
   variables: [u, v, t, fi, relhum]
   # D2-supported pressure levels for emagram core (temperature + geopotential + relhum)
-  levels: [1000, 975, 950, 850, 700, 600, 500, 400, 300, 250, 200]
+  levels: [1000, 975, 950, 850, 700, 600, 500, 400, 300, 200]
 
 # Variables that may not exist in ICON-EU (will be skipped gracefully)
 d2_only_variables:

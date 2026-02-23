@@ -119,7 +119,7 @@ FRONTEND_DIR = os.path.join(SCRIPT_DIR, "..", "frontend")
 PID_FILE = os.path.join(SCRIPT_DIR, "logs", "skyview.pid")
 LOW_ZOOM_GLOBAL_CACHE_MAX_ZOOM = 9
 LOW_ZOOM_GLOBAL_BBOX = (30.0, -30.0, 72.0, 45.0)
-EMAGRAM_D2_LEVELS_HPA = [1000, 975, 950, 850, 700, 600, 500, 400, 300, 250, 200]
+EMAGRAM_D2_LEVELS_HPA = [1000, 975, 950, 850, 700, 600, 500, 400, 300, 200]
 G0 = 9.80665
 low_zoom_symbols_cache_metrics = {
     "hits": 0,
@@ -1339,13 +1339,19 @@ async def api_wind(
     # Select wind variables based on level
     gust_mode = (level == "gust10m")
     if level == "10m" or gust_mode:
-        u_key, v_key = "u_10m", "v_10m"
+        u_key, v_key = "u_10m_av", "v_10m_av"
     else:
         u_key, v_key = f"u_{level}hpa", f"v_{level}hpa"
 
     run, step, model_used = resolve_time_with_cache_context(time, model)
     wind_keys = [u_key, v_key] + (["vmax_10m"] if gust_mode else [])
+    # Backward-compat fallback for runs ingested before u/v_10m_av switch.
+    if level == "10m" or gust_mode:
+        wind_keys += ["u_10m", "v_10m"]
     d = load_data(run, step, model_used, keys=wind_keys)
+    if (level == "10m" or gust_mode) and ((u_key not in d) or (v_key not in d)):
+        u_key = "u_10m"
+        v_key = "v_10m"
 
     lat = d["lat"]
     lon = d["lon"]
