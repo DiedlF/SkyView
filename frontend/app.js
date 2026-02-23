@@ -1513,6 +1513,10 @@ function updateTimeline() {
   updateValidTime();
   // Delay date strip update to let scroll settle
   setTimeout(updateDateStrip, 100);
+  if (emagramState.open && Number.isFinite(emagramState.lat) && Number.isFinite(emagramState.lon)) {
+    const step = timesteps[currentTimeIndex] || null;
+    openEmagramAt(emagramState.lat, emagramState.lon, step?.validTime || 'latest', step?.model || emagramState.model || '');
+  }
 }
 
 function stepForward() {
@@ -1578,6 +1582,7 @@ const emagramOverlay = document.getElementById('emagram-overlay');
 const emagramClose = document.getElementById('emagram-close');
 const emagramTitle = document.getElementById('emagram-title');
 const emagramBody = document.getElementById('emagram-body');
+let emagramState = { open: false, lat: null, lon: null, model: '' };
 const langSelect = document.getElementById('lang-select');
 
 function openFeedback() {
@@ -1610,6 +1615,7 @@ function closeHelp() {
 }
 
 function closeEmagram() {
+  emagramState.open = false;
   if (emagramOverlay) emagramOverlay.style.display = 'none';
 }
 
@@ -1648,6 +1654,34 @@ function renderEmagramSvg(levels) {
     const x1 = x(t, pBot), x2 = x(t, pTop);
     grid += `<line x1="${x1}" y1="${y(pBot)}" x2="${x2}" y2="${y(pTop)}" stroke="rgba(255,255,255,0.12)"/>`;
     grid += `<text x="${x1}" y="${H - 12}" fill="rgba(255,255,255,0.75)" font-size="11" text-anchor="middle">${t}</text>`;
+  }
+
+  // Dry adiabats (theta lines): T(K) = theta * (p/1000)^kappa
+  const kappa = 0.286;
+  const dryThetas = [260, 270, 280, 290, 300, 310, 320, 330, 340];
+  let dryGrid = '';
+  for (const th of dryThetas) {
+    const pts = [];
+    for (let p = pBot; p >= pTop; p -= 25) {
+      const tK = th * Math.pow(p / 1000.0, kappa);
+      const tC = tK - 273.15;
+      if (tC < tMin - 20 || tC > tMax + 20) continue;
+      pts.push(`${x(tC, p).toFixed(1)},${y(p).toFixed(1)}`);
+    }
+    if (pts.length > 1) dryGrid += `<path d="M${pts.join(' L')}" fill="none" stroke="rgba(255,170,70,0.20)" stroke-width="1"/>`;
+  }
+
+  // Moist adiabats (visual approximation for guidance)
+  const moistStarts = [-10, 0, 10, 20, 30];
+  let moistGrid = '';
+  for (const t0 of moistStarts) {
+    const pts = [];
+    for (let p = pBot; p >= pTop; p -= 25) {
+      const frac = (1000 - p) / 800; // 0 at 1000 hPa, ~1 at 200 hPa
+      const tC = t0 - (24 * frac) - (8 * frac * frac); // gentler than dry lapse
+      pts.push(`${x(tC, p).toFixed(1)},${y(p).toFixed(1)}`);
+    }
+    if (pts.length > 1) moistGrid += `<path d="M${pts.join(' L')}" fill="none" stroke="rgba(90,200,255,0.20)" stroke-width="1"/>`;
   }
 
   const toPath = (key) => rows
@@ -1690,6 +1724,8 @@ function renderEmagramSvg(levels) {
     <svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="Skew-T profile">
       <rect x="0" y="0" width="${W}" height="${H}" fill="#151b2d" rx="8"/>
       ${grid}
+      ${dryGrid}
+      ${moistGrid}
       <line x1="${m.l}" y1="${m.t}" x2="${m.l}" y2="${H - m.b}" stroke="rgba(255,255,255,0.5)"/>
       <line x1="${m.l}" y1="${H - m.b}" x2="${W - m.r}" y2="${H - m.b}" stroke="rgba(255,255,255,0.5)"/>
       ${tPath ? `<path d="${tPath}" fill="none" stroke="#ff6b6b" stroke-width="2.2"/>` : ''}
@@ -1702,12 +1738,29 @@ function renderEmagramSvg(levels) {
     <div style="display:flex;gap:14px;font-size:12px;margin-top:6px;align-items:center;flex-wrap:wrap">
       <span style="display:flex;align-items:center;gap:6px"><span style="width:14px;height:2px;background:#ff6b6b;display:inline-block"></span>T</span>
       <span style="display:flex;align-items:center;gap:6px"><span style="width:14px;height:2px;background:#69b1ff;display:inline-block"></span>Td</span>
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:14px;height:2px;background:rgba(255,170,70,0.65);display:inline-block"></span>dry adiabat</span>
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:14px;height:2px;background:rgba(90,200,255,0.65);display:inline-block"></span>moist adiabat (approx)</span>
       <span style="opacity:.75">barbs in kt</span>
     </div>`;
 }
 
+function emagramCurrentStep() {
+  return timesteps[currentTimeIndex] || null;
+}
+
+function emagramNav(delta) {
+  const nextIdx = Math.max(0, Math.min(timesteps.length - 1, currentTimeIndex + delta));
+  if (nextIdx === currentTimeIndex) return;
+  currentTimeIndex = nextIdx;
+  updateTimeline();
+  loadSymbols();
+  loadOverlay();
+  loadWind();
+}
+
 async function openEmagramAt(lat, lon, time = 'latest', model = '') {
   if (!emagramOverlay || !emagramBody) return;
+  emagramState = { open: true, lat: Number(lat), lon: Number(lon), model: model || '' };
   emagramOverlay.style.display = 'flex';
   emagramBody.innerHTML = '<div style="opacity:.8">Loading profile…</div>';
   try {
@@ -1716,15 +1769,22 @@ async function openEmagramAt(lat, lon, time = 'latest', model = '') {
     if (!res.ok) await throwHttpError(res, 'API');
     const d = await res.json();
     const p = d.point || {};
+    const step = emagramCurrentStep();
     if (emagramTitle) emagramTitle.textContent = `Emagram · ${d.validTime || d.run || ''}`;
+    const nav = `<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+      <button onclick="emagramNav(-1)" style="font-size:12px;padding:2px 8px">◀</button>
+      <div style="font-size:12px;opacity:.85;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${step?.validTime || d.validTime || time || 'latest'}</div>
+      <button onclick="emagramNav(1)" style="font-size:12px;padding:2px 8px">▶</button>
+    </div>`;
     const meta = `<div style="font-size:12px;opacity:.88;margin-bottom:8px">Point ${p.gridLat ?? lat}, ${p.gridLon ?? lon} · ${d.model || ''} · run ${d.run || ''} step ${d.step ?? ''}</div>`;
-    emagramBody.innerHTML = meta + renderEmagramSvg(d.levels || []);
+    emagramBody.innerHTML = nav + meta + renderEmagramSvg(d.levels || []);
   } catch (e) {
     emagramBody.innerHTML = `<div style="color:#ff9f9f">Failed to load emagram: ${String(e.message || e)}</div>`;
   }
 }
 
 window.openEmagramAt = openEmagramAt;
+window.emagramNav = emagramNav;
 
 async function submitFeedback() {
   const text = feedbackText.value.trim();
