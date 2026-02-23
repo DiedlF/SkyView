@@ -25,7 +25,7 @@ POINT_KEYS = [
     "tp_rate", "rain_rate", "snow_rate", "hail_rate",
     # Boundary layer / atmosphere
     "mh", "ashfl_s", "relhum_2m",
-    "t_2m", "td_2m",
+    "t_2m", "td_2m", "h_snow",
     "t_950hpa", "t_850hpa", "t_700hpa", "t_500hpa", "t_300hpa",
     # Wind
     "u_10m_av", "v_10m_av", "u_10m", "v_10m", "vmax_10m",
@@ -133,7 +133,7 @@ def build_overlay_values_from_raw(
         ov["clouds_total_mod"] = round(v, 1)
 
     # Scalars
-    for k in ("mh", "ashfl_s", "relhum_2m"):
+    for k in ("mh", "ashfl_s", "relhum_2m", "h_snow"):
         if values.get(k) is not None:
             ov[k] = round(float(values[k]), 1)
     if values.get("t_2m") is not None and values.get("td_2m") is not None:
@@ -248,7 +248,7 @@ def build_overlay_values(
     if cape is not None:
         ov["thermals"] = round(cape, 1)
 
-    for key in ("mh", "ashfl_s", "relhum_2m"):
+    for key in ("mh", "ashfl_s", "relhum_2m", "h_snow"):
         v = _safe_get(d, key, i0, j0)
         if v is not None:
             ov[key] = round(v, 1)
