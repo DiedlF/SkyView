@@ -618,7 +618,10 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
     # Ensure downstream APIs still get a deterministic field.
     if model == "icon-eu" and ("lpi_max" in variables) and ("lpi_max" not in arrays):
         arrays["lpi_max"] = np.zeros((len(lat_1d), len(lon_1d)), dtype=np.float32)
-        logger.warning(f"Step {step:03d}: lpi_max missing on EU source — filled with zeros")
+        if _eu_lpi_max_expected_for_step(step):
+            logger.warning(f"Step {step:03d}: lpi_max missing on EU source for expected step — filled with zeros")
+        else:
+            logger.info(f"Step {step:03d}: lpi_max not scheduled on EU source cadence — filled with zeros")
 
     # ── Static variables (hsurf etc.) — cached per run ───────────────────────
     for svar in static_vars:
@@ -788,6 +791,24 @@ def _precip_prev_step_and_dt(model: str, step: int) -> tuple[int | None, float]:
     if step >= 2:
         return step - 1, 1.0
     return None, 1.0
+
+
+def _eu_lpi_max_expected_for_step(step: int) -> bool:
+    """ICON-EU lpi_con_max availability pattern (mapped to lpi_max).
+
+    Observed DWD cadence:
+      - 0..48: hourly
+      - 51..72: 3-hourly
+      - 78..120: 6-hourly
+    Ingest uses forecast steps starting at 1.
+    """
+    if 1 <= step <= 48:
+        return True
+    if 51 <= step <= 72 and (step % 3 == 0):
+        return True
+    if 78 <= step <= 120 and (step % 6 == 0):
+        return True
+    return False
 
 
 def precompute_precip_rates_for_run(model: str, run: str):

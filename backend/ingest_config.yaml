@@ -136,8 +136,9 @@ static_variables:
   - hsurf
 
 pressure_levels:
-  variables: [u, v, t]
-  levels: [950, 850, 700, 500, 300]
+  variables: [u, v, t, fi]
+  # D2-supported pressure levels for emagram core (temperature + geopotential)
+  levels: [1000, 975, 950, 850, 700, 600, 500, 400, 300, 250, 200]
 
 # Variables that may not exist in ICON-EU (will be skipped gracefully)
 d2_only_variables:

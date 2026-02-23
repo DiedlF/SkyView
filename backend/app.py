@@ -119,6 +119,8 @@ FRONTEND_DIR = os.path.join(SCRIPT_DIR, "..", "frontend")
 PID_FILE = os.path.join(SCRIPT_DIR, "logs", "skyview.pid")
 LOW_ZOOM_GLOBAL_CACHE_MAX_ZOOM = 9
 LOW_ZOOM_GLOBAL_BBOX = (30.0, -30.0, 72.0, 45.0)
+EMAGRAM_D2_LEVELS_HPA = [1000, 975, 950, 850, 700, 600, 500, 400, 300, 250, 200]
+G0 = 9.80665
 low_zoom_symbols_cache_metrics = {
     "hits": 0,
     "misses": 0,
@@ -1077,6 +1079,72 @@ async def api_symbols(
     total_ms = (perf_counter() - t0) * 1000.0
     logger.info("/api/symbols rid=%s served=computed zoom=%s count=%s euCells=%s d2Cells=%s loadMs=%.2f gridMs=%.2f aggMs=%.2f totalMs=%.2f", rid, zoom, result.get("count"), result.get("diagnostics", {}).get("euCells"), result.get("diagnostics", {}).get("d2Cells"), t_load_ms, t_grid_ms, t_agg_ms, total_ms)
     return result
+
+
+async def api_emagram_point(
+    lat: float = Query(..., ge=-90, le=90),
+    lon: float = Query(..., ge=-180, le=180),
+    time: str = Query("latest"),
+    model: Optional[str] = Query("icon_d2"),
+):
+    """Vertical emagram core profile (ICON-D2): T + altitude from geopotential."""
+    requested_model = model or "icon_d2"
+    if requested_model not in ("icon_d2", "icon-d2"):
+        raise HTTPException(400, "api_emagram_point currently supports model=icon_d2 only")
+
+    run, step, model_used = resolve_time_with_cache_context(time, "icon_d2")
+
+    t_keys = [f"t_{lev}hpa" for lev in EMAGRAM_D2_LEVELS_HPA]
+    fi_keys = [f"fi_{lev}hpa" for lev in EMAGRAM_D2_LEVELS_HPA]
+    keys = t_keys + fi_keys
+    d = load_data(run, step, model_used, keys=keys)
+
+    lat_arr = d["lat"]
+    lon_arr = d["lon"]
+    if len(lat_arr) == 0 or len(lon_arr) == 0:
+        raise HTTPException(404, "No grid coordinates available")
+
+    i = int(np.argmin(np.abs(lat_arr - lat)))
+    j = int(np.argmin(np.abs(lon_arr - lon)))
+
+    levels = []
+    for lev in EMAGRAM_D2_LEVELS_HPA:
+        t_key = f"t_{lev}hpa"
+        fi_key = f"fi_{lev}hpa"
+        t_val = d[t_key][i, j] if t_key in d else np.nan
+        fi_val = d[fi_key][i, j] if fi_key in d else np.nan
+        if not np.isfinite(t_val) and not np.isfinite(fi_val):
+            continue
+
+        temp_c = (float(t_val) - 273.15) if np.isfinite(t_val) else None
+        alt_m = (float(fi_val) / G0) if np.isfinite(fi_val) else None
+
+        levels.append({
+            "pressureHpa": lev,
+            "temperatureC": round(temp_c, 2) if temp_c is not None else None,
+            "geopotential": round(float(fi_val), 2) if np.isfinite(fi_val) else None,
+            "altitudeM": round(alt_m, 1) if alt_m is not None else None,
+        })
+
+    # Sort for plotting by altitude (fallback to pressure desc if altitude missing)
+    levels.sort(key=lambda x: (x["altitudeM"] is None, x["altitudeM"] if x["altitudeM"] is not None else -x["pressureHpa"]))
+
+    return {
+        "model": model_used,
+        "run": run,
+        "step": step,
+        "validTime": d.get("validTime"),
+        "point": {
+            "requestedLat": round(float(lat), 5),
+            "requestedLon": round(float(lon), 5),
+            "gridLat": round(float(lat_arr[i]), 5),
+            "gridLon": round(float(lon_arr[j]), 5),
+            "i": i,
+            "j": j,
+        },
+        "levels": levels,
+        "count": len(levels),
+    }
 
 
 async def api_wind(
@@ -2440,6 +2508,7 @@ async def api_overlay_tile(
 app.include_router(build_weather_router(
     api_symbols=api_symbols,
     api_wind=api_wind,
+    api_emagram_point=api_emagram_point,
 ))
 app.include_router(build_overlay_router(
     api_overlay=api_overlay,
