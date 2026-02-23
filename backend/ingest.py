@@ -51,7 +51,7 @@ CONFIG_PATH = os.path.join(SCRIPT_DIR, "ingest_config.yaml")
 # Each worker downloads + bz2-decompresses one variable simultaneously.
 # DWD OpenData is the real bottleneck; 6 workers saturates it without overloading
 # either side. Reduce (e.g. SKYVIEW_INGEST_WORKERS=3) if you see HTTP 429s.
-INGEST_WORKERS = int(os.environ.get("SKYVIEW_INGEST_WORKERS", "6"))
+INGEST_WORKERS = int(os.environ.get("SKYVIEW_INGEST_WORKERS", "1"))
 
 
 def _symbol_code_map() -> dict[str, int]:
@@ -134,7 +134,6 @@ def _precompute_symbol_native_fields(arrays: dict, step: int | None = None, mode
     arrays["cb_hm"] = cb_hm
     arrays["ww_rank"] = ww_rank
     msg = f"symbol precompute ok for {ctx}: wrote sym_code/cb_hm/ww_rank"
-    logger.info(msg)
     return True, msg
 
 
@@ -688,6 +687,13 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
     return True, curr_acc
 
 
+def _availability_probe_target(cfg: dict, variables: list[str]) -> tuple[int, str]:
+    """Use latest expected step and a late-published variable (prefer mh) for run-availability checks."""
+    probe_step = int(cfg["steps"][-1])
+    probe_var = "mh" if "mh" in variables else (variables[0] if variables else "t_2m")
+    return probe_step, probe_var
+
+
 def check_new_data_available(run, model="icon-d2", config=None, profile_name="full"):
     """Quick check: is new run available AND not yet downloaded?"""
     cfg = MODEL_CONFIG[model]
@@ -700,11 +706,10 @@ def check_new_data_available(run, model="icon-d2", config=None, profile_name="fu
     else:
         has_local = False
 
-    # Quick HEAD check on DWD for first timestep
-    first_step = cfg["steps"][0]
+    # Quick HEAD check on DWD for latest expected timestep.
     active_vars = get_active_variables(config, profile_name=profile_name) if config else []
-    test_var = active_vars[0] if active_vars else "t_2m"
-    test_url = build_url(run, first_step, test_var, model, config=config, profile_name=profile_name)
+    probe_step, probe_var = _availability_probe_target(cfg, active_vars)
+    test_url = build_url(run, probe_step, probe_var, model, config=config, profile_name=profile_name)
     r = subprocess.run(["curl", "-sfI", test_url], capture_output=True, timeout=10)
     available_dwd = (r.returncode == 0)
 
@@ -1093,10 +1098,9 @@ def main():
     else:
         logger.info("  Region: full grid (no crop)")
 
-    # Check if run data is available
-    first_step = steps[0]
-    test_var = variables[0] if variables else "t_2m"
-    test_url = build_url(run, first_step, test_var, model, config=config, profile_name=profile_name)
+    # Check if run data is available (latest expected step; prefer late var 'mh').
+    probe_step, probe_var = _availability_probe_target(cfg, variables)
+    test_url = build_url(run, probe_step, probe_var, model, config=config, profile_name=profile_name)
     r = subprocess.run(["curl", "-sfI", test_url], capture_output=True, timeout=15)
     if r.returncode != 0:
         logger.warning(f"Run {run} not available yet on DWD")

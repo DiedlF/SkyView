@@ -140,7 +140,14 @@ def get_cloud_base(ceiling, hbas_sc):
     """Cloud base in hectometers. -1 if invalid."""
     mask_valid = np.isfinite(ceiling) & (ceiling > 0) & (ceiling < CEILING_VALID_MAX_METERS)
     base = np.where(mask_valid, ceiling, hbas_sc)
-    base_hm = np.floor(np.maximum(base, 0) / 100).astype(np.int16)
-    base_hm[~np.isfinite(base)] = -1
+
+    # Avoid RuntimeWarning from casting NaN/inf to int16.
+    base_hm = np.full(base.shape, -1, dtype=np.int16)
+    finite = np.isfinite(base)
+    if np.any(finite):
+        vals = np.floor(np.maximum(base[finite], 0) / 100)
+        vals = np.clip(vals, 0, 32767).astype(np.int16)
+        base_hm[finite] = vals
+
     base_hm[base_hm > 150] = -1
     return base_hm
