@@ -661,21 +661,30 @@ async def api_symbols(
         else f"{model_used}|{run}|{step}|z{zoom}|{cache_bbox}"
     )
     cached_symbols = symbols_cache_get(symbols_cache_key)
+    served_from = None
+    cache_load_ms = 0.0
     if is_low_zoom_global:
         if cached_symbols is not None:
             low_zoom_symbols_cache_metrics["hits"] += 1
+            served_from = "cache-memory"
         else:
             low_zoom_symbols_cache_metrics["misses"] += 1
+            t_disk0 = perf_counter()
             cached_symbols = _load_symbols_precomputed(model_used, run, step, zoom)
+            cache_load_ms = (perf_counter() - t_disk0) * 1000.0
             if cached_symbols is not None:
                 low_zoom_symbols_cache_metrics["diskHits"] += 1
                 symbols_cache_set(symbols_cache_key, cached_symbols)
+                served_from = "cache-disk"
             else:
                 low_zoom_symbols_cache_metrics["diskMisses"] += 1
+    elif cached_symbols is not None:
+        served_from = "cache-memory"
+
     if cached_symbols is not None:
         out_payload = _filter_symbols_to_bbox(cached_symbols, lat_min, lon_min, lat_max, lon_max) if is_low_zoom_global else cached_symbols
         total_ms = (perf_counter() - t0) * 1000.0
-        logger.info("/api/symbols rid=%s served=cache zoom=%s count=%s totalMs=%.2f", rid, zoom, out_payload.get("count"), total_ms)
+        logger.info("/api/symbols rid=%s served=%s zoom=%s count=%s cacheLoadMs=%.2f totalMs=%.2f", rid, served_from or "cache-memory", zoom, out_payload.get("count"), cache_load_ms, total_ms)
         return out_payload
 
     # Ingest-only precompute policy for low zoom:
