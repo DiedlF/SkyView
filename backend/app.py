@@ -1184,18 +1184,19 @@ async def api_emagram_point(
 async def api_meteogram_point(
     lat: float = Query(..., ge=-90, le=90),
     lon: float = Query(..., ge=-180, le=180),
-    model: Optional[str] = Query(None),
+    model: Optional[str] = Query("icon_d2"),
 ):
     merged = get_merged_timeline()
     if not merged or not merged.get("steps"):
         raise HTTPException(404, "No timeline available")
 
     steps = merged.get("steps", [])
-    if model in ("icon_d2", "icon-d2", "icon_eu", "icon-eu"):
-        m = model.replace("-", "_")
-        steps = [s for s in steps if s.get("model") == m]
-        if not steps:
-            raise HTTPException(404, f"No timeline for model={m}")
+    m = (model or "icon_d2").replace("-", "_")
+    if m != "icon_d2":
+        raise HTTPException(400, "api_meteogram_point currently supports model=icon_d2 only")
+    steps = [s for s in steps if s.get("model") == "icon_d2"]
+    if not steps:
+        raise HTTPException(404, "No timeline for model=icon_d2")
 
     needed_keys = [
         "lat", "lon", "validTime", "ww", "cape_ml", "lpi_max", "ceiling",

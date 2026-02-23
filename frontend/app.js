@@ -791,7 +791,7 @@ async function loadPoint(lat, lon, time, model, windLvl = '10m', zoom = null) {
 
     const btns = `<div style="margin-top:8px;display:flex;gap:6px;align-items:center">`
       + `<button onclick="openEmagramAt(${Number(lat).toFixed(5)},${Number(lon).toFixed(5)},'${String(time || 'latest').replace(/'/g, "&#39;")}','${String(model || '').replace(/'/g, "&#39;")}')" style="font-size:11px;padding:2px 6px;line-height:1.1;">Skew-T</button>`
-      + `<button onclick="openMeteogramAt(${Number(lat).toFixed(5)},${Number(lon).toFixed(5)},'${String(model || '').replace(/'/g, "&#39;")}')" style="font-size:11px;padding:2px 6px;line-height:1.1;">Meteogram</button>`
+      + `<button onclick="openMeteogramAt(${Number(lat).toFixed(5)},${Number(lon).toFixed(5)},'icon_d2')" style="font-size:11px;padding:2px 6px;line-height:1.1;">Meteogram</button>`
       + `</div>`;
     L.popup({ maxWidth: 280 })
       .setLatLng([lat, lon])
@@ -1873,7 +1873,7 @@ function renderMeteogramSvg(series) {
   return svg;
 }
 
-async function openMeteogramAt(lat, lon, model = '') {
+async function openMeteogramAt(lat, lon, model = 'icon_d2') {
   if (!meteogramOverlay || !meteogramBody) return;
   const key = `${Number(lat).toFixed(4)}|${Number(lon).toFixed(4)}|${model || ''}`;
   meteogramState = { open: true, lat: Number(lat), lon: Number(lon), model: model || '' };

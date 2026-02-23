@@ -44,10 +44,10 @@ if [ $? -eq 0 ]; then
     "$PYTHON_BIN" ingest.py --model icon-d2 --profile "$INGEST_PROFILE" --steps all
 fi
 
-# Check and ingest ICON-EU (6.5km, 120h, cropped to D2 bounds)
-"$PYTHON_BIN" ingest.py --model icon-eu --profile "$INGEST_PROFILE" --check-only 2>/dev/null
-if [ $? -eq 0 ]; then
-    "$PYTHON_BIN" ingest.py --model icon-eu --profile "$INGEST_PROFILE" --steps all
-fi
+# ICON-EU ingest disabled for now (meteogram focus on ICON-D2)
+# "$PYTHON_BIN" ingest.py --model icon-eu --profile "$INGEST_PROFILE" --check-only 2>/dev/null
+# if [ $? -eq 0 ]; then
+#     "$PYTHON_BIN" ingest.py --model icon-eu --profile "$INGEST_PROFILE" --steps all
+# fi
 
 # Lock automatically removed by trap on exit
