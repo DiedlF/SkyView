@@ -1198,13 +1198,17 @@ async def api_meteogram_point(
     if not steps:
         raise HTTPException(404, "No timeline for model=icon_d2")
 
+    level_keys = []
+    for lev in EMAGRAM_D2_LEVELS_HPA:
+        level_keys += [f"u_{lev}hpa", f"v_{lev}hpa"]
+
     needed_keys = [
         "lat", "lon", "validTime", "ww", "cape_ml", "lpi_max", "ceiling",
         "clcl", "clcm", "clch", "clct",
         "u_10m", "v_10m", "vmax_10m",
         "tot_prec", "rain_gsp", "rain_con", "snow_gsp", "snow_con", "grau_gsp",
         "h_snow", "t_2m", "relhum_2m", "td_2m",
-    ]
+    ] + level_keys
 
     out = []
     grid_point = None
@@ -1256,6 +1260,17 @@ async def api_meteogram_point(
 
         t2k = g("t_2m")
         tdk = g("td_2m")
+        wind_levels = []
+        for lev in EMAGRAM_D2_LEVELS_HPA:
+            uu = g(f"u_{lev}hpa")
+            vv = g(f"v_{lev}hpa")
+            if uu is None or vv is None:
+                wind_levels.append({"pressureHpa": lev, "speedKt": None, "dirDeg": None})
+                continue
+            sp = math.hypot(uu, vv) * 1.943844
+            dr = (270.0 - math.degrees(math.atan2(vv, uu))) % 360.0
+            wind_levels.append({"pressureHpa": lev, "speedKt": round(sp, 1), "dirDeg": round(dr, 1)})
+
         out.append({
             "validTime": d.get("validTime") or s.get("validTime"),
             "model": model_i,
@@ -1272,6 +1287,7 @@ async def api_meteogram_point(
             "wind10mKt": round(wind_kt, 1) if wind_kt is not None else None,
             "windDir10mDeg": round(wind_dir, 1) if wind_dir is not None else None,
             "gust10mKt": round(gust_kt, 1) if gust_kt is not None else None,
+            "windLevels": wind_levels,
             "precipTotal": g("tot_prec"),
             "rain": round(rain, 3),
             "snow": round(snow, 3),
