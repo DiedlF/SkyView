@@ -1808,7 +1808,7 @@ function renderMeteogramSvg(series) {
   if (!rows.length) return '<div style="color:#ffb3b3">No meteogram data.</div>';
 
   const W = 760, H = 420;
-  const m = { l: 48, r: 18, t: 18, b: 30 };
+  const m = { l: 48, r: 18, t: 18, b: 44 };
   const panels = [
     { key: 'wind', h: 110 },
     { key: 'cloud', h: 95 },
@@ -1838,7 +1838,7 @@ function renderMeteogramSvg(series) {
   const winds = rows.map(r => v(r, 'wind10mKt')).filter(Number.isFinite);
   const windMax = Math.max(20, ...(winds.length ? winds : [0]));
   const cloudsMax = 100;
-  const precipVals = rows.flatMap(r => [v(r, 'precipTotal'), v(r, 'rain'), v(r, 'snow')]).filter(Number.isFinite);
+  const precipVals = rows.map(r => v(r, 'precipRateTotal')).filter(Number.isFinite);
   const precipMax = Math.max(1, ...(precipVals.length ? precipVals : [0]));
   const convVals = rows.flatMap(r => [v(r, 'capeMl'), v(r, 'lpi')]).filter(Number.isFinite);
   const convMax = Math.max(10, ...(convVals.length ? convVals : [0]));
@@ -1856,6 +1856,24 @@ function renderMeteogramSvg(series) {
   for (let i = 0; i < rows.length; i += Math.max(1, Math.floor(rows.length / 10))) {
     const xx = x(i);
     svg += `<line x1="${xx}" y1="${m.t}" x2="${xx}" y2="${H - m.b}" stroke="rgba(255,255,255,0.08)"/>`;
+  }
+
+  const wd = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  for (let i = 0; i < rows.length; i++) {
+    const xx = x(i);
+    const dt = new Date(rows[i].validTime);
+    if (Number.isNaN(dt.getTime())) continue;
+    const hh = dt.getUTCHours();
+    const dd = String(dt.getUTCDate()).padStart(2,'0');
+    const mm = String(dt.getUTCMonth()+1).padStart(2,'0');
+    const day = wd[dt.getUTCDay()];
+    const isMajor = (hh % 6 === 0) || i === 0 || i === rows.length - 1;
+    const tickLen = isMajor ? 8 : 4;
+    svg += `<line x1="${xx}" y1="${H - m.b}" x2="${xx}" y2="${H - m.b + tickLen}" stroke="rgba(255,255,255,0.55)"/>`;
+    if (isMajor) {
+      svg += `<text x="${xx}" y="${H - m.b + 18}" fill="rgba(255,255,255,0.78)" font-size="10" text-anchor="middle">${day} ${dd}.${mm}.</text>`;
+      svg += `<text x="${xx}" y="${H - m.b + 30}" fill="rgba(255,255,255,0.72)" font-size="10" text-anchor="middle">${String(hh).padStart(2,'0')}Z</text>`;
+    }
   }
 
   const windPath = linePath('wind10mKt', pWind, 0, windMax);
@@ -1881,13 +1899,10 @@ function renderMeteogramSvg(series) {
   for (let i = 0; i < rows.length; i++) {
     const xx = x(i);
     const bw = Math.max(2, pxW / Math.max(rows.length, 24));
-    const r = Math.max(0, v(rows[i], 'rain') || 0);
-    const s = Math.max(0, v(rows[i], 'snow') || 0);
-    const hR = (r / precipMax) * pPre.ph;
-    const hS = (s / precipMax) * pPre.ph;
+    const pr = Math.max(0, v(rows[i], 'precipRateTotal') || 0);
+    const hP = (pr / precipMax) * pPre.ph;
     const yBase = pPre.y + pPre.ph;
-    if (hR > 0) svg += `<rect x="${(xx - bw/2).toFixed(1)}" y="${(yBase - hR).toFixed(1)}" width="${bw.toFixed(1)}" height="${hR.toFixed(1)}" fill="rgba(80,170,255,0.80)"/>`;
-    if (hS > 0) svg += `<rect x="${(xx - bw/2).toFixed(1)}" y="${(yBase - hS).toFixed(1)}" width="${bw.toFixed(1)}" height="${hS.toFixed(1)}" fill="rgba(220,180,255,0.75)"/>`;
+    if (hP > 0) svg += `<rect x="${(xx - bw/2).toFixed(1)}" y="${(yBase - hP).toFixed(1)}" width="${bw.toFixed(1)}" height="${hP.toFixed(1)}" fill="rgba(80,170,255,0.82)"/>`;
   }
 
   const capePath = linePath('capeMl', pConv, 0, convMax);

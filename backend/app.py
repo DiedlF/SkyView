@@ -1284,6 +1284,26 @@ async def api_meteogram_point(
         raise HTTPException(404, "No meteogram data available")
 
     out.sort(key=lambda r: r.get("validTime") or "")
+
+    prev_tot = None
+    prev_step = None
+    prev_run = None
+    for r in out:
+      tot = r.get("precipTotal")
+      step_i = r.get("step")
+      run_i = r.get("run")
+      rate = None
+      if tot is not None and prev_tot is not None and prev_step is not None and run_i == prev_run:
+          dt_h = max(1, int(step_i) - int(prev_step))
+          delta = float(tot) - float(prev_tot)
+          if np.isfinite(delta):
+              rate = max(0.0, delta / float(dt_h))
+      r["precipRateTotal"] = round(rate, 3) if rate is not None else None
+      if tot is not None:
+          prev_tot = float(tot)
+          prev_step = int(step_i)
+          prev_run = run_i
+
     return {
         "point": grid_point,
         "count": len(out),
