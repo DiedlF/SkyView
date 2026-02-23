@@ -1807,14 +1807,14 @@ function renderMeteogramSvg(series) {
   const rows = (series || []).filter(r => r && r.validTime);
   if (!rows.length) return '<div style="color:#ffb3b3">No meteogram data.</div>';
 
-  const W = 760, H = 430;
+  const W = 760, H = 520;
   const m = { l: 48, r: 18, t: 18, b: 44 };
   const panels = [
     { key: 'wind', h: 175 },
     { key: 'precip', h: 110 },
     { key: 'temp', h: 85 },
   ];
-  const panelGap = 5;
+  const panelGap = 15;
   const totalH = panels.reduce((a, p) => a + p.h, 0);
   const scaleY = (H - m.t - m.b - panelGap * (panels.length - 1)) / totalH;
   const pxW = W - m.l - m.r;
@@ -1885,7 +1885,7 @@ function renderMeteogramSvg(series) {
 
   // Wind panel: small barbs for each timestep x pressure level
   const levels = [1000, 975, 950, 850, 700, 600, 500, 400, 300, 200];
-  const yWind = (lev) => pWind.y + ((1000 - lev) / (1000 - 200)) * pWind.ph;
+  const yWind = (lev) => pWind.y + ((lev - 200) / (1000 - 200)) * pWind.ph;
   const mkBarb = (xx, yy, speedKt = 0, dirDeg = 0) => {
     if (!(Number.isFinite(speedKt) && Number.isFinite(dirDeg))) return '';
     let s = Math.max(0, Math.round(speedKt / 5) * 5);
@@ -1913,16 +1913,17 @@ function renderMeteogramSvg(series) {
     }
   }
 
-  // Approx altitude reference lines in wind panel
+  // Approx altitude reference lines in wind panel (reversed orientation)
   const altRefs = [
     { z: 0, p: 1000 },
     { z: 3000, p: 700 },
     { z: 5000, p: 540 },
+    { z: 10000, p: 260 },
   ];
   for (const a of altRefs) {
     const yy = yWind(a.p);
-    svg += `<line x1="${m.l}" y1="${yy.toFixed(1)}" x2="${(m.l + 10)}" y2="${yy.toFixed(1)}" stroke="rgba(255,255,255,0.35)"/>`;
-    svg += `<text x="${m.l + 12}" y="${(yy + 3).toFixed(1)}" fill="rgba(255,255,255,0.62)" font-size="9" text-anchor="start">~${a.z}m</text>`;
+    svg += `<line x1="${m.l}" y1="${yy.toFixed(1)}" x2="${W - m.r}" y2="${yy.toFixed(1)}" stroke="rgba(255,255,255,0.20)" stroke-dasharray="3 3"/>`;
+    svg += `<text x="${m.l + 4}" y="${(yy - 3).toFixed(1)}" fill="rgba(255,255,255,0.62)" font-size="9" text-anchor="start">~${a.z}m</text>`;
   }
 
   for (let i = 0; i < rows.length; i++) {
@@ -1951,7 +1952,8 @@ function renderMeteogramSvg(series) {
   }
 
   svg += `<text x="6" y="${(pWind.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Wind</text>`;
-  svg += `<text x="6" y="${(pPre.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Precip/Snow</text>`;
+  svg += `<text x="6" y="${(pPre.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Precip</text>`;
+  svg += `<text x="${W - m.r - 2}" y="${(pPre.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10" text-anchor="end">Snow</text>`;
   svg += `<text x="6" y="${(pTemp.y + 14).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Temp</text>`;
 
   // Precip axis (left): 0 .. precipMax
