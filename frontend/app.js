@@ -1616,11 +1616,10 @@ function renderEmagramSvg(levels) {
 
   if (!rows.length) return '<div style="color:#ffb3b3">No profile data available for this point/time.</div>';
 
-  const W = 600, H = 390;
-  const m = { l: 92, r: 120, t: 24, b: 34 };
+  const W = 620, H = 400;
+  const m = { l: 112, r: 120, t: 28, b: 42 };
   const plotRight = W - m.r;
-  const axisP = m.l - 58;
-  const axisZ = m.l - 18;
+  const axisAlt = m.l - 44;
   const iw = plotRight - m.l;
   const ih = H - m.t - m.b;
   const pTop = 200;
@@ -1658,10 +1657,13 @@ function renderEmagramSvg(levels) {
   for (const p of pressureLines) {
     const yy = y(p);
     grid += `<line x1="${m.l}" y1="${yy}" x2="${plotRight}" y2="${yy}" stroke="rgba(255,255,255,0.14)"/>`;
-    grid += `<text x="${axisP - 6}" y="${yy + 4}" fill="rgba(255,255,255,0.80)" font-size="11" text-anchor="end">${p} hPa</text>`;
+    // Pressure labels on the plot border axis
+    grid += `<text x="${m.l - 6}" y="${yy + 4}" fill="rgba(255,255,255,0.80)" font-size="11" text-anchor="end">${p} hPa</text>`;
+    // Altitude axis tick + label on dedicated left line
+    grid += `<line x1="${axisAlt - 4}" y1="${yy}" x2="${axisAlt}" y2="${yy}" stroke="rgba(255,255,255,0.65)"/>`;
     const alt = altitudeAtP(p);
     if (Number.isFinite(alt)) {
-      grid += `<text x="${axisZ - 6}" y="${yy + 4}" fill="rgba(255,255,255,0.80)" font-size="10" text-anchor="end">${Math.round(alt)}m</text>`;
+      grid += `<text x="${axisAlt - 8}" y="${yy + 4}" fill="rgba(255,255,255,0.80)" font-size="10" text-anchor="end">${Math.round(alt)}m</text>`;
     }
   }
   for (let t = tMin; t <= tMax; t += 10) {
@@ -1733,9 +1735,8 @@ function renderEmagramSvg(levels) {
       <defs>
         <clipPath id="skewPlotClip"><rect x="${m.l}" y="${m.t}" width="${plotRight - m.l}" height="${H - m.t - m.b}" /></clipPath>
       </defs>
-      <line x1="${axisP}" y1="${m.t}" x2="${axisP}" y2="${H - m.b}" stroke="rgba(255,255,255,0.55)"/>
-      <line x1="${axisZ}" y1="${m.t}" x2="${axisZ}" y2="${H - m.b}" stroke="rgba(255,255,255,0.55)"/>
-      <line x1="${m.l}" y1="${m.t}" x2="${m.l}" y2="${H - m.b}" stroke="rgba(255,255,255,0.45)"/>
+      <line x1="${axisAlt}" y1="${m.t}" x2="${axisAlt}" y2="${H - m.b}" stroke="rgba(255,255,255,0.55)"/>
+      <line x1="${m.l}" y1="${m.t}" x2="${m.l}" y2="${H - m.b}" stroke="rgba(255,255,255,0.50)"/>
       <line x1="${m.l}" y1="${H - m.b}" x2="${plotRight}" y2="${H - m.b}" stroke="rgba(255,255,255,0.5)"/>
       <g clip-path="url(#skewPlotClip)">
         ${tempGrid}
@@ -1745,10 +1746,10 @@ function renderEmagramSvg(levels) {
         ${tdPath ? `<path d="${tdPath}" fill="none" stroke="#69b1ff" stroke-width="2.2"/>` : ''}
       </g>
       ${barbs}
-      <text x="${(m.l + plotRight)/2}" y="${H-2}" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="11">Skewed temperature lines (°C)</text>
-      <text x="${axisP-22}" y="${m.t-6}" text-anchor="start" fill="rgba(255,255,255,0.9)" font-size="10">Pressure</text>
-      <text x="${axisZ-18}" y="${m.t-6}" text-anchor="start" fill="rgba(255,255,255,0.9)" font-size="10">Altitude</text>
-      <text x="${barbX}" y="${m.t-6}" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="10">Wind</text>
+      <text x="${(m.l + plotRight)/2}" y="${H-10}" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="11">Skewed temperature lines (°C)</text>
+      <text x="${m.l-40}" y="${m.t-12}" text-anchor="start" fill="rgba(255,255,255,0.9)" font-size="10">Pressure</text>
+      <text x="${axisAlt-28}" y="${m.t-12}" text-anchor="start" fill="rgba(255,255,255,0.9)" font-size="10">Altitude</text>
+      <text x="${barbX}" y="${m.t-12}" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="10">Wind</text>
     </svg>
     <div style="display:flex;gap:14px;font-size:12px;margin-top:6px;align-items:center;flex-wrap:wrap">
       <span style="display:flex;align-items:center;gap:6px"><span style="width:14px;height:2px;background:#ff6b6b;display:inline-block"></span>T</span>
