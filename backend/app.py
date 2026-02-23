@@ -1096,7 +1096,8 @@ async def api_emagram_point(
 
     t_keys = [f"t_{lev}hpa" for lev in EMAGRAM_D2_LEVELS_HPA]
     fi_keys = [f"fi_{lev}hpa" for lev in EMAGRAM_D2_LEVELS_HPA]
-    keys = t_keys + fi_keys
+    rh_keys = [f"relhum_{lev}hpa" for lev in EMAGRAM_D2_LEVELS_HPA]
+    keys = t_keys + fi_keys + rh_keys
     d = load_data(run, step, model_used, keys=keys)
 
     lat_arr = d["lat"]
@@ -1107,21 +1108,38 @@ async def api_emagram_point(
     i = int(np.argmin(np.abs(lat_arr - lat)))
     j = int(np.argmin(np.abs(lon_arr - lon)))
 
+    def _dewpoint_c(temp_c: float, rh_pct: float) -> Optional[float]:
+        # Magnus approximation over water.
+        if not np.isfinite(temp_c) or not np.isfinite(rh_pct):
+            return None
+        rh = max(1e-4, min(100.0, float(rh_pct)))
+        a = 17.625
+        b = 243.04
+        gamma = math.log(rh / 100.0) + (a * float(temp_c)) / (b + float(temp_c))
+        td = (b * gamma) / (a - gamma)
+        return float(td) if np.isfinite(td) else None
+
     levels = []
     for lev in EMAGRAM_D2_LEVELS_HPA:
         t_key = f"t_{lev}hpa"
         fi_key = f"fi_{lev}hpa"
+        rh_key = f"relhum_{lev}hpa"
         t_val = d[t_key][i, j] if t_key in d else np.nan
         fi_val = d[fi_key][i, j] if fi_key in d else np.nan
-        if not np.isfinite(t_val) and not np.isfinite(fi_val):
+        rh_val = d[rh_key][i, j] if rh_key in d else np.nan
+        if not np.isfinite(t_val) and not np.isfinite(fi_val) and not np.isfinite(rh_val):
             continue
 
         temp_c = (float(t_val) - 273.15) if np.isfinite(t_val) else None
         alt_m = (float(fi_val) / G0) if np.isfinite(fi_val) else None
+        rh_pct = float(rh_val) if np.isfinite(rh_val) else None
+        dew_c = _dewpoint_c(temp_c, rh_pct) if (temp_c is not None and rh_pct is not None) else None
 
         levels.append({
             "pressureHpa": lev,
             "temperatureC": round(temp_c, 2) if temp_c is not None else None,
+            "dewpointC": round(dew_c, 2) if dew_c is not None else None,
+            "relativeHumidityPct": round(rh_pct, 1) if rh_pct is not None else None,
             "geopotential": round(float(fi_val), 2) if np.isfinite(fi_val) else None,
             "altitudeM": round(alt_m, 1) if alt_m is not None else None,
         })

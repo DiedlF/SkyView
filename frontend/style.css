@@ -759,7 +759,8 @@ body {
 }
 
 /* Help overlay (prototype explanation panel) */
-#help-overlay {
+#help-overlay,
+#emagram-overlay {
   position: fixed;
   top: 0;
   left: 0;
@@ -773,7 +774,8 @@ body {
   padding: 16px;
 }
 
-#help-modal {
+#help-modal,
+#emagram-modal {
   background: #1e2337;
   border-radius: 12px;
   width: 100%;
@@ -794,7 +796,8 @@ body {
   font-size: 15px;
 }
 
-#help-close {
+#help-close,
+#emagram-close {
   background: none;
   border: none;
   color: rgba(255,255,255,0.6);
@@ -804,7 +807,8 @@ body {
   border-radius: 4px;
 }
 
-#help-close:hover {
+#help-close:hover,
+#emagram-close:hover {
   color: white;
   background: rgba(255,255,255,0.1);
 }

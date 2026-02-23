@@ -306,9 +306,9 @@ async function queryEmagram(){
     let html=kvTable(meta);
     if((data.levels||[]).length){
       html+='<h3 style="margin:10px 0 6px">Levels</h3>';
-      html+='<table><tr><th>hPa</th><th>Alt (m)</th><th>Temp (°C)</th><th>Geopotential</th></tr>';
+      html+='<table><tr><th>hPa</th><th>Alt (m)</th><th>Temp (°C)</th><th>Dew (°C)</th><th>RH (%)</th><th>Geopotential</th></tr>';
       for(const l of data.levels){
-        html+=`<tr><td>${esc(l.pressureHpa)}</td><td>${esc(l.altitudeM??'-')}</td><td>${esc(l.temperatureC??'-')}</td><td>${esc(l.geopotential??'-')}</td></tr>`;
+        html+=`<tr><td>${esc(l.pressureHpa)}</td><td>${esc(l.altitudeM??'-')}</td><td>${esc(l.temperatureC??'-')}</td><td>${esc(l.dewpointC??'-')}</td><td>${esc(l.relativeHumidityPct??'-')}</td><td>${esc(l.geopotential??'-')}</td></tr>`;
       }
       html+='</table>';
     }

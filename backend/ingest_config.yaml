@@ -57,6 +57,7 @@ profiles:
       - snow_gsp
       - snow_con
       - grau_gsp
+      - h_snow
       # Helpful aviation context still used in point/overlay summaries
       - vis
       - hzerocl
@@ -136,8 +137,8 @@ static_variables:
   - hsurf
 
 pressure_levels:
-  variables: [u, v, t, fi]
-  # D2-supported pressure levels for emagram core (temperature + geopotential)
+  variables: [u, v, t, fi, relhum]
+  # D2-supported pressure levels for emagram core (temperature + geopotential + relhum)
   levels: [1000, 975, 950, 850, 700, 600, 500, 400, 300, 250, 200]
 
 # Variables that may not exist in ICON-EU (will be skipped gracefully)

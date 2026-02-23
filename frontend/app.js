@@ -803,9 +803,10 @@ async function loadPoint(lat, lon, time, model, windLvl = '10m', zoom = null) {
       }
     }
 
-    L.popup({ maxWidth: 200 })
+    const emagramBtn = `<div style="margin-top:8px"><button onclick="openEmagramAt(${Number(lat).toFixed(5)},${Number(lon).toFixed(5)},'${String(time || 'latest').replace(/'/g, "&#39;")}','${String(model || '').replace(/'/g, "&#39;")}')" style="font-size:12px;padding:4px 7px;">Emagram</button></div>`;
+    L.popup({ maxWidth: 260 })
       .setLatLng([lat, lon])
-      .setContent(lines.join('<br/>'))
+      .setContent(lines.join('<br/>') + emagramBtn)
       .openOn(map);
   } catch (e) {
     console.error('Error loading point:', e);
@@ -1573,6 +1574,10 @@ const feedbackContext = document.getElementById('feedback-context');
 const helpBtn = document.getElementById('help-btn');
 const helpOverlay = document.getElementById('help-overlay');
 const helpClose = document.getElementById('help-close');
+const emagramOverlay = document.getElementById('emagram-overlay');
+const emagramClose = document.getElementById('emagram-close');
+const emagramTitle = document.getElementById('emagram-title');
+const emagramBody = document.getElementById('emagram-body');
 const langSelect = document.getElementById('lang-select');
 
 function openFeedback() {
@@ -1603,6 +1608,89 @@ function openHelp() {
 function closeHelp() {
   helpOverlay.style.display = 'none';
 }
+
+function closeEmagram() {
+  if (emagramOverlay) emagramOverlay.style.display = 'none';
+}
+
+function renderEmagramSvg(levels) {
+  const rows = (levels || [])
+    .filter(l => Number.isFinite(Number(l.altitudeM)) && (Number.isFinite(Number(l.temperatureC)) || Number.isFinite(Number(l.dewpointC))))
+    .sort((a, b) => Number(a.altitudeM) - Number(b.altitudeM));
+
+  if (!rows.length) return '<div style="color:#ffb3b3">No profile data available for this point/time.</div>';
+
+  const W = 520, H = 360;
+  const m = { l: 54, r: 16, t: 16, b: 34 };
+  const iw = W - m.l - m.r;
+  const ih = H - m.t - m.b;
+
+  const temps = rows.flatMap(r => [Number(r.temperatureC), Number(r.dewpointC)]).filter(Number.isFinite);
+  let tMin = Math.floor((Math.min(...temps) - 4) / 5) * 5;
+  let tMax = Math.ceil((Math.max(...temps) + 4) / 5) * 5;
+  if (!(Number.isFinite(tMin) && Number.isFinite(tMax)) || tMax <= tMin) { tMin = -40; tMax = 30; }
+  const zMax = Math.max(...rows.map(r => Number(r.altitudeM)), 1000);
+
+  const x = (t) => m.l + ((t - tMin) / (tMax - tMin)) * iw;
+  const y = (z) => m.t + (1 - (z / zMax)) * ih;
+
+  let grid = '';
+  for (let t = tMin; t <= tMax; t += 5) {
+    const xx = x(t);
+    grid += `<line x1="${xx}" y1="${m.t}" x2="${xx}" y2="${H - m.b}" stroke="rgba(255,255,255,0.12)"/>`;
+    if (t % 10 === 0) grid += `<text x="${xx}" y="${H - 12}" fill="rgba(255,255,255,0.75)" font-size="11" text-anchor="middle">${t}</text>`;
+  }
+  const zStep = zMax > 7000 ? 1000 : 500;
+  for (let z = 0; z <= zMax; z += zStep) {
+    const yy = y(z);
+    grid += `<line x1="${m.l}" y1="${yy}" x2="${W - m.r}" y2="${yy}" stroke="rgba(255,255,255,0.12)"/>`;
+    grid += `<text x="${m.l - 8}" y="${yy + 4}" fill="rgba(255,255,255,0.75)" font-size="11" text-anchor="end">${Math.round(z)}</text>`;
+  }
+
+  const toPath = (key) => rows
+    .filter(r => Number.isFinite(Number(r[key])))
+    .map((r, i) => `${i ? 'L' : 'M'}${x(Number(r[key])).toFixed(1)},${y(Number(r.altitudeM)).toFixed(1)}`)
+    .join(' ');
+
+  const tPath = toPath('temperatureC');
+  const tdPath = toPath('dewpointC');
+
+  return `
+    <svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="Emagram profile">
+      <rect x="0" y="0" width="${W}" height="${H}" fill="#151b2d" rx="8"/>
+      ${grid}
+      <line x1="${m.l}" y1="${m.t}" x2="${m.l}" y2="${H - m.b}" stroke="rgba(255,255,255,0.5)"/>
+      <line x1="${m.l}" y1="${H - m.b}" x2="${W - m.r}" y2="${H - m.b}" stroke="rgba(255,255,255,0.5)"/>
+      ${tPath ? `<path d="${tPath}" fill="none" stroke="#ff6b6b" stroke-width="2.2"/>` : ''}
+      ${tdPath ? `<path d="${tdPath}" fill="none" stroke="#69b1ff" stroke-width="2.2"/>` : ''}
+      <text x="${W/2}" y="${H-2}" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="11">Temperature / Dewpoint (°C)</text>
+      <text x="14" y="${H/2}" transform="rotate(-90 14 ${H/2})" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="11">Altitude (m)</text>
+    </svg>
+    <div style="display:flex;gap:14px;font-size:12px;margin-top:6px;align-items:center;flex-wrap:wrap">
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:14px;height:2px;background:#ff6b6b;display:inline-block"></span>T</span>
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:14px;height:2px;background:#69b1ff;display:inline-block"></span>Td</span>
+    </div>`;
+}
+
+async function openEmagramAt(lat, lon, time = 'latest', model = '') {
+  if (!emagramOverlay || !emagramBody) return;
+  emagramOverlay.style.display = 'flex';
+  emagramBody.innerHTML = '<div style="opacity:.8">Loading profile…</div>';
+  try {
+    const modelPart = model ? `&model=${encodeURIComponent(model)}` : '';
+    const res = await fetch(`/api/emagram_point?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&time=${encodeURIComponent(time || 'latest')}${modelPart}`);
+    if (!res.ok) await throwHttpError(res, 'API');
+    const d = await res.json();
+    const p = d.point || {};
+    if (emagramTitle) emagramTitle.textContent = `Emagram · ${d.validTime || d.run || ''}`;
+    const meta = `<div style="font-size:12px;opacity:.88;margin-bottom:8px">Point ${p.gridLat ?? lat}, ${p.gridLon ?? lon} · ${d.model || ''} · run ${d.run || ''} step ${d.step ?? ''}</div>`;
+    emagramBody.innerHTML = meta + renderEmagramSvg(d.levels || []);
+  } catch (e) {
+    emagramBody.innerHTML = `<div style="color:#ff9f9f">Failed to load emagram: ${String(e.message || e)}</div>`;
+  }
+}
+
+window.openEmagramAt = openEmagramAt;
 
 async function submitFeedback() {
   const text = feedbackText.value.trim();
@@ -1671,6 +1759,12 @@ if (helpClose) helpClose.addEventListener('click', closeHelp);
 if (helpOverlay) {
   helpOverlay.addEventListener('click', (e) => {
     if (e.target === helpOverlay) closeHelp();
+  });
+}
+if (emagramClose) emagramClose.addEventListener('click', closeEmagram);
+if (emagramOverlay) {
+  emagramOverlay.addEventListener('click', (e) => {
+    if (e.target === emagramOverlay) closeEmagram();
   });
 }
 if (langSelect) {

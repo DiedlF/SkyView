@@ -51,7 +51,7 @@ CONFIG_PATH = os.path.join(SCRIPT_DIR, "ingest_config.yaml")
 # Each worker downloads + bz2-decompresses one variable simultaneously.
 # DWD OpenData is the real bottleneck; 6 workers saturates it without overloading
 # either side. Reduce (e.g. SKYVIEW_INGEST_WORKERS=3) if you see HTTP 429s.
-INGEST_WORKERS = int(os.environ.get("SKYVIEW_INGEST_WORKERS", "1"))
+INGEST_WORKERS = int(os.environ.get("SKYVIEW_INGEST_WORKERS", "6"))
 
 
 def _symbol_code_map() -> dict[str, int]:
