@@ -28,7 +28,7 @@ POINT_KEYS = [
     "t_2m", "td_2m", "h_snow",
     "t_950hpa", "t_850hpa", "t_700hpa", "t_500hpa", "t_300hpa",
     # Wind
-    "u_10m_av", "v_10m_av", "u_10m", "v_10m", "vmax_10m",
+    "u_10m", "v_10m", "vmax_10m",
     "u_850hpa", "v_850hpa",
     "u_700hpa", "v_700hpa",
     "u_500hpa", "v_500hpa",
@@ -168,12 +168,8 @@ def build_overlay_values_from_raw(
 
     # Wind
     gust_mode = (wind_level == "gust10m")
-    if (wind_level == "10m" or gust_mode):
-        uk = "u_10m_av" if values.get("u_10m_av") is not None else "u_10m"
-        vk = "v_10m_av" if values.get("v_10m_av") is not None else "v_10m"
-    else:
-        uk = f"u_{wind_level}hpa"
-        vk = f"v_{wind_level}hpa"
+    uk = "u_10m" if (wind_level == "10m" or gust_mode) else f"u_{wind_level}hpa"
+    vk = "v_10m" if (wind_level == "10m" or gust_mode) else f"v_{wind_level}hpa"
     if values.get(uk) is not None and values.get(vk) is not None:
         u = float(values[uk])
         v = float(values[vk])
@@ -347,12 +343,8 @@ def build_overlay_values(
 
     # ── Wind (cell-averaged to match map barb display) ────────────────────────
     gust_mode = (wind_level == "gust10m")
-    if (wind_level == "10m" or gust_mode):
-        u_key = "u_10m_av" if "u_10m_av" in d else "u_10m"
-        v_key = "v_10m_av" if "v_10m_av" in d else "v_10m"
-    else:
-        u_key = f"u_{wind_level}hpa"
-        v_key = f"v_{wind_level}hpa"
+    u_key = "u_10m" if (wind_level == "10m" or gust_mode) else f"u_{wind_level}hpa"
+    v_key = "v_10m" if (wind_level == "10m" or gust_mode) else f"v_{wind_level}hpa"
 
     if u_key in d and v_key in d:
         # Determine aggregation cell: match the symbol/barb grid shown on the map

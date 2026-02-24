@@ -1372,19 +1372,13 @@ async def api_wind(
     # Select wind variables based on level
     gust_mode = (level == "gust10m")
     if level == "10m" or gust_mode:
-        u_key, v_key = "u_10m_av", "v_10m_av"
+        u_key, v_key = "u_10m", "v_10m"
     else:
         u_key, v_key = f"u_{level}hpa", f"v_{level}hpa"
 
     run, step, model_used = resolve_time_with_cache_context(time, model)
     wind_keys = [u_key, v_key] + (["vmax_10m"] if gust_mode else [])
-    # Backward-compat fallback for runs ingested before u/v_10m_av switch.
-    if level == "10m" or gust_mode:
-        wind_keys += ["u_10m", "v_10m"]
     d = load_data(run, step, model_used, keys=wind_keys)
-    if (level == "10m" or gust_mode) and ((u_key not in d) or (v_key not in d)):
-        u_key = "u_10m"
-        v_key = "v_10m"
 
     lat = d["lat"]
     lon = d["lon"]

@@ -46,8 +46,8 @@ profiles:
       - td_2m
       - relhum_2m
       # Wind + gusts
-      - u_10m_av
-      - v_10m_av
+      - u_10m
+      - v_10m
       - vmax_10m
       # Accumulated precipitation components (needed for precip-rate precompute)
       - tot_prec
@@ -91,8 +91,8 @@ groups:
       - relhum_2m
       - pmsl
       - ps
-      - u_10m_av
-      - v_10m_av
+      - u_10m
+      - v_10m
       - vmax_10m
       - tot_prec
       - prr_gsp
