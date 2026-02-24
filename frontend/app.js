@@ -445,6 +445,32 @@ async function throwHttpError(res, context = 'request') {
   throw err;
 }
 
+async function fetchNdjson(url, onEvent) {
+  const res = await fetch(url);
+  if (!res.ok) await throwHttpError(res, 'API');
+  if (!res.body) return null;
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, idx).trim();
+      buf = buf.slice(idx + 1);
+      if (!line) continue;
+      let evt = null;
+      try { evt = JSON.parse(line); } catch { continue; }
+      if (onEvent) onEvent(evt);
+      if (evt && evt.type === 'done') return evt.data;
+      if (evt && evt.type === 'error') throw new Error(evt.detail || 'stream error');
+    }
+  }
+  return null;
+}
+
 // Legend definitions for each effective backend overlay layer
 const LEGEND_CONFIGS = {
   total_precip: { title: 'Precipitation: Total', gradient: 'linear-gradient(to right, rgb(150,255,255), rgb(100,200,255), rgb(50,150,255), rgb(0,100,255))', labels: ['0.1 mm/h', '5+ mm/h'] },
@@ -1996,9 +2022,13 @@ async function openMeteogramAt(lat, lon, model = 'icon_d2') {
     let data = meteogramCache.get(key);
     if (!data) {
       const modelPart = model ? `&model=${encodeURIComponent(model)}` : '';
-      const res = await fetch(`/api/meteogram_point?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}${modelPart}`);
-      if (!res.ok) await throwHttpError(res, 'API');
-      data = await res.json();
+      const url = `/api/meteogram_point?stream=1&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}${modelPart}`;
+      data = await fetchNdjson(url, (evt) => {
+        if (!meteogramBody) return;
+        if (evt?.type === 'progress' || evt?.type === 'heartbeat') {
+          meteogramBody.innerHTML = '<div style="opacity:.8">Loading meteogram…</div>';
+        }
+      });
       meteogramCacheSet(key, data);
     }
     const p = data.point || {};
@@ -2078,9 +2108,13 @@ async function openEmagramAt(lat, lon, time = 'latest', model = '') {
     let d = emagramCache.get(cacheKey);
     if (!d) {
       const modelPart = fixedModel ? `&model=${encodeURIComponent(fixedModel)}` : '';
-      const res = await fetch(`/api/emagram_point?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&time=${encodeURIComponent(time || 'latest')}${modelPart}`);
-      if (!res.ok) await throwHttpError(res, 'API');
-      d = await res.json();
+      const url = `/api/emagram_point?stream=1&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&time=${encodeURIComponent(time || 'latest')}${modelPart}`;
+      d = await fetchNdjson(url, (evt) => {
+        const st = document.getElementById('emNavStatus');
+        if (!st) return;
+        if (evt?.type === 'progress') st.textContent = evt.message || 'loading…';
+        if (evt?.type === 'heartbeat') st.textContent = 'loading…';
+      });
       emagramCacheSet(cacheKey, d);
     }
     if (reqId !== emagramState.reqId) return;

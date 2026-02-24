@@ -57,7 +57,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response, JSONResponse
+from fastapi.responses import FileResponse, Response, JSONResponse, StreamingResponse
+from starlette.concurrency import run_in_threadpool
 import threading
 
 # Add backend dir to path for classify import
@@ -1088,8 +1089,24 @@ async def api_emagram_point(
     lon: float = Query(..., ge=-180, le=180),
     time: str = Query("latest"),
     model: Optional[str] = Query("icon_d2"),
+    stream: bool = Query(False),
+    _internal: bool = False,
 ):
     """Vertical emagram core profile (ICON-D2): T + altitude from geopotential."""
+    if stream and not _internal:
+        async def _gen():
+            yield json.dumps({"type": "progress", "message": "starting emagram"}) + "\n"
+            task = asyncio.create_task(run_in_threadpool(lambda: asyncio.run(api_emagram_point(lat=lat, lon=lon, time=time, model=model, stream=False, _internal=True))))
+            while not task.done():
+                yield json.dumps({"type": "heartbeat", "message": "working"}) + "\n"
+                await asyncio.sleep(1.0)
+            try:
+                payload = await task
+                yield json.dumps({"type": "done", "data": payload}) + "\n"
+            except Exception as e:
+                yield json.dumps({"type": "error", "detail": str(e)}) + "\n"
+        return StreamingResponse(_gen(), media_type="application/x-ndjson")
+
     requested_model = model or "icon_d2"
     if requested_model not in ("icon_d2", "icon-d2"):
         raise HTTPException(400, "api_emagram_point currently supports model=icon_d2 only")
@@ -1187,7 +1204,23 @@ async def api_meteogram_point(
     lat: float = Query(..., ge=-90, le=90),
     lon: float = Query(..., ge=-180, le=180),
     model: Optional[str] = Query("icon_d2"),
+    stream: bool = Query(False),
+    _internal: bool = False,
 ):
+    if stream and not _internal:
+        async def _gen():
+            yield json.dumps({"type": "progress", "message": "starting meteogram"}) + "\n"
+            task = asyncio.create_task(run_in_threadpool(lambda: asyncio.run(api_meteogram_point(lat=lat, lon=lon, model=model, stream=False, _internal=True))))
+            while not task.done():
+                yield json.dumps({"type": "heartbeat", "message": "working"}) + "\n"
+                await asyncio.sleep(1.0)
+            try:
+                payload = await task
+                yield json.dumps({"type": "done", "data": payload}) + "\n"
+            except Exception as e:
+                yield json.dumps({"type": "error", "detail": str(e)}) + "\n"
+        return StreamingResponse(_gen(), media_type="application/x-ndjson")
+
     merged = get_merged_timeline()
     if not merged or not merged.get("steps"):
         raise HTTPException(404, "No timeline available")
