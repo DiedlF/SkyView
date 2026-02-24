@@ -68,6 +68,14 @@ def load_step_data(
             arrays["validTime"] = valid_dt.isoformat() + "Z"
             arrays["_run"] = run
             arrays["_step"] = step
+            if "lat" in arrays and "lon" in arrays:
+                try:
+                    arrays["_latMin"] = float(np.min(arrays["lat"]))
+                    arrays["_latMax"] = float(np.max(arrays["lat"]))
+                    arrays["_lonMin"] = float(np.min(arrays["lon"]))
+                    arrays["_lonMax"] = float(np.max(arrays["lon"]))
+                except Exception:
+                    pass
 
             if len(cache) >= cache_max_items:
                 evicted_key, _ = cache.popitem(last=False)
@@ -119,6 +127,14 @@ def load_step_data(
         arrays["validTime"] = valid_dt.isoformat() + "Z"
         arrays["_run"] = run
         arrays["_step"] = step
+        if "lat" in arrays and "lon" in arrays:
+            try:
+                arrays["_latMin"] = float(np.min(arrays["lat"]))
+                arrays["_latMax"] = float(np.max(arrays["lat"]))
+                arrays["_lonMin"] = float(np.min(arrays["lon"]))
+                arrays["_lonMax"] = float(np.max(arrays["lon"]))
+            except Exception:
+                pass
 
         if len(cache) >= cache_max_items:
             evicted_key, _ = cache.popitem(last=False)

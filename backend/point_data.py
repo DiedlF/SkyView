@@ -17,6 +17,12 @@ logger = logging.getLogger(__name__)
 
 # All NPZ keys consumed by a full point query.
 # Pass this to load_data(keys=POINT_KEYS) to avoid loading unused variables.
+POINT_KEYS_MINIMAL = [
+    # Core weather / cloud
+    "ww", "ceiling", "clcl", "clcm", "clch", "clct",
+    "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hsurf",
+]
+
 POINT_KEYS = [
     # Core weather / cloud
     "ww", "ceiling", "clcl", "clcm", "clch", "clct", "clct_mod",
@@ -350,12 +356,23 @@ def build_overlay_values(
         # Determine aggregation cell: match the symbol/barb grid shown on the map
         if zoom is not None:
             cell_size = CELL_SIZES_BY_ZOOM.get(int(zoom), 0.25)
-            anchor_lat = float(lat_arr.min())
-            anchor_lon = float(lon_arr.min())
+            anchor_lat = float(lat_arr[0])
+            anchor_lon = float(lon_arr[0])
             lat_lo = anchor_lat + math.floor((lat - anchor_lat) / cell_size) * cell_size
             lon_lo = anchor_lon + math.floor((lon - anchor_lon) / cell_size) * cell_size
-            wli = np.where((lat_arr >= lat_lo) & (lat_arr < lat_lo + cell_size))[0]
-            wlo = np.where((lon_arr >= lon_lo) & (lon_arr < lon_lo + cell_size))[0]
+
+            li0 = int(np.searchsorted(lat_arr, lat_lo, side="left"))
+            li1 = int(np.searchsorted(lat_arr, lat_lo + cell_size, side="left"))
+            lo0 = int(np.searchsorted(lon_arr, lon_lo, side="left"))
+            lo1 = int(np.searchsorted(lon_arr, lon_lo + cell_size, side="left"))
+
+            li0 = max(0, min(li0, len(lat_arr)))
+            li1 = max(li0, min(li1, len(lat_arr)))
+            lo0 = max(0, min(lo0, len(lon_arr)))
+            lo1 = max(lo0, min(lo1, len(lon_arr)))
+
+            wli = np.arange(li0, li1, dtype=int)
+            wlo = np.arange(lo0, lo1, dtype=int)
             if len(wli) == 0 or len(wlo) == 0:
                 wli, wlo = li, lo
         else:

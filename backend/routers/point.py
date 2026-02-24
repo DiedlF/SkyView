@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from typing import Optional
+import time
+from collections import OrderedDict
 
 import numpy as np
 from fastapi import APIRouter, Query
@@ -11,6 +13,7 @@ def build_point_router(
     resolve_time_with_cache_context,
     load_data,
     POINT_KEYS,
+    POINT_KEYS_MINIMAL,
     _resolve_eu_time_strict,
     _load_eu_data_strict,
     rotate_caches_for_context,
@@ -22,6 +25,9 @@ def build_point_router(
     _set_fallback_current,
 ):
     router = APIRouter()
+    point_cache = OrderedDict()
+    POINT_CACHE_TTL_SECONDS = 90.0
+    POINT_CACHE_MAX_ITEMS = 2000
 
     @router.get("/api/point")
     async def api_point(
@@ -31,19 +37,52 @@ def build_point_router(
         model: Optional[str] = Query(None),
         wind_level: str = Query("10m"),
         zoom: Optional[int] = Query(None, ge=5, le=12),
+        include_overlay: bool = Query(True),
     ):
         # Selective key loading: only fetch variables actually needed for a point query.
         run, step, model_used = resolve_time_with_cache_context(time, model)
-        d = load_data(run, step, model_used, keys=POINT_KEYS)
+        req_keys = POINT_KEYS if include_overlay else POINT_KEYS_MINIMAL
+        d = load_data(run, step, model_used, keys=req_keys)
         fallback_decision = "primary_model_only"
 
+        cache_key = (
+            model_used,
+            run,
+            int(step),
+            round(float(lat), 4),
+            round(float(lon), 4),
+            str(wind_level),
+            int(zoom) if zoom is not None else None,
+            bool(include_overlay),
+        )
+        now = time.time()
+        cached = point_cache.get(cache_key)
+        if cached is not None:
+            payload, ts = cached
+            if (now - ts) <= POINT_CACHE_TTL_SECONDS:
+                point_cache.move_to_end(cache_key)
+                return payload
+            point_cache.pop(cache_key, None)
+
         # EU fallback outside D2 domain or when D2 has no signal at the queried point.
+        def _nearest_idx(arr: np.ndarray, value: float) -> int:
+            pos = int(np.searchsorted(arr, value, side="left"))
+            if pos <= 0:
+                return 0
+            if pos >= len(arr):
+                return len(arr) - 1
+            return pos - 1 if abs(value - float(arr[pos - 1])) <= abs(float(arr[pos]) - value) else pos
+
         if model_used == "icon_d2":
             lat_d2 = d["lat"]
             lon_d2 = d["lon"]
-            in_d2_domain = (float(np.min(lat_d2)) <= lat <= float(np.max(lat_d2))) and (float(np.min(lon_d2)) <= lon <= float(np.max(lon_d2)))
-            li_d2 = int(np.argmin(np.abs(lat_d2 - lat)))
-            lo_d2 = int(np.argmin(np.abs(lon_d2 - lon)))
+            lat_min = float(d.get("_latMin", np.min(lat_d2)))
+            lat_max = float(d.get("_latMax", np.max(lat_d2)))
+            lon_min = float(d.get("_lonMin", np.min(lon_d2)))
+            lon_max = float(d.get("_lonMax", np.max(lon_d2)))
+            in_d2_domain = (lat_min <= lat <= lat_max) and (lon_min <= lon <= lon_max)
+            li_d2 = _nearest_idx(lat_d2, lat)
+            lo_d2 = _nearest_idx(lon_d2, lon)
             d2_has_signal = any(
                 np.isfinite(float(d[k][li_d2, lo_d2]))
                 for k in ("ww", "ceiling", "cape_ml", "hbas_sc")
@@ -51,7 +90,7 @@ def build_point_router(
             )
             if (not in_d2_domain) or (not d2_has_signal):
                 trigger = "outside_d2_domain" if (not in_d2_domain) else "d2_missing_signal"
-                eu_fb_point = _load_eu_data_strict(time, POINT_KEYS)
+                eu_fb_point = _load_eu_data_strict(time, req_keys)
                 if eu_fb_point is not None and not eu_fb_point.get("missing"):
                     run_eu, step_eu, model_eu = eu_fb_point["run"], eu_fb_point["step"], eu_fb_point["model"]
                     rotate_caches_for_context(f"{model_eu}|{run_eu}|{step_eu}")
@@ -67,8 +106,8 @@ def build_point_router(
         # Nearest grid point — computed once, reused throughout.
         lat_arr = d["lat"]
         lon_arr = d["lon"]
-        li0 = int(np.argmin(np.abs(lat_arr - lat)))
-        lo0 = int(np.argmin(np.abs(lon_arr - lon)))
+        li0 = _nearest_idx(lat_arr, lat)
+        lo0 = _nearest_idx(lon_arr, lon)
         li = np.array([li0], dtype=int)
         lo = np.array([lo0], dtype=int)
 
@@ -130,22 +169,25 @@ def build_point_router(
             result["cloudBaseHm"] = None
 
         # Overlay values (active overlay info shown in click popup)
-        overlay_values = build_overlay_values(
-            d=d,
-            li=li,
-            lo=lo,
-            ww_max=ww_max,
-            ceil_cell=ceil_cell,
-            wind_level=wind_level,
-            zoom=zoom,
-            lat=lat,
-            lon=lon,
-            lat_arr=lat_arr,
-            lon_arr=lon_arr,
-            model_used=model_used,
-            step=step,
-        )
-        result["overlay_values"] = overlay_values
+        if include_overlay:
+            overlay_values = build_overlay_values(
+                d=d,
+                li=li,
+                lo=lo,
+                ww_max=ww_max,
+                ceil_cell=ceil_cell,
+                wind_level=wind_level,
+                zoom=zoom,
+                lat=lat,
+                lon=lon,
+                lat_arr=lat_arr,
+                lon_arr=lon_arr,
+                model_used=model_used,
+                step=step,
+            )
+            result["overlay_values"] = overlay_values
+        else:
+            result["overlay_values"] = None
 
         # Explorer/Skyview contract convergence: raw values dict
         result["values"] = {k: result.get(k) for k in [
@@ -174,6 +216,11 @@ def build_point_router(
             source_model=model_used,
             detail={"requestedTime": time},
         )
+
+        point_cache[cache_key] = (result, now)
+        point_cache.move_to_end(cache_key)
+        while len(point_cache) > POINT_CACHE_MAX_ITEMS:
+            point_cache.popitem(last=False)
 
         return result
 

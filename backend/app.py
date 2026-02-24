@@ -73,7 +73,7 @@ from overlay_data import (
 )
 from weather_codes import ww_to_symbol
 from symbol_logic import aggregate_symbol_cell
-from point_data import build_overlay_values, POINT_KEYS
+from point_data import build_overlay_values, POINT_KEYS, POINT_KEYS_MINIMAL
 from classify import classify_point as classify_point_core
 from time_contract import get_available_runs as tc_get_available_runs, get_merged_timeline as tc_get_merged_timeline, resolve_time as tc_resolve_time
 from grid_utils import bbox_indices as _bbox_indices, slice_array as _slice_array
@@ -2484,6 +2484,7 @@ app.include_router(build_point_router(
     resolve_time_with_cache_context=resolve_time_with_cache_context,
     load_data=load_data,
     POINT_KEYS=POINT_KEYS,
+    POINT_KEYS_MINIMAL=POINT_KEYS_MINIMAL,
     _resolve_eu_time_strict=_resolve_eu_time_strict,
     _load_eu_data_strict=_load_eu_data_strict,
     rotate_caches_for_context=rotate_caches_for_context,
