@@ -3366,15 +3366,27 @@ async def api_admin_overview_metrics():
     usage30 = get_usage_stats(USAGE_STATS_FILE, days=30)
     markers = get_marker_stats(MARKERS_FILE)
 
+    phase_recent = list(overlay_phase_recent)
+    def _phase_pct(field: str, pct: float):
+        return _pct([float(r.get(field, 0.0)) for r in phase_recent], pct)
+
     return {
         "reliability": {
             "globalErrors": dict(api_error_counters),
             "topFailingEndpoints": top_failing,
             "ingestFailureStreak": streak,
+            "fallback": dict(app_state.fallback_stats),
         },
         "performance": {
             "endpointLatency": endpoint_perf[:20],
             "overlayPhaseSeries": overlay_phase_series,
+            "overlayPhaseP95": {
+                "loadMs": _phase_pct("loadMs", 0.95),
+                "sourceMs": _phase_pct("sourceMs", 0.95),
+                "colorizeMs": _phase_pct("colorizeMs", 0.95),
+                "encodeMs": _phase_pct("encodeMs", 0.95),
+                "totalMs": _phase_pct("totalMs", 0.95),
+            },
             "cacheEfficiencyByLayer": cache_efficiency_by_layer,
         },
         "capacity": {

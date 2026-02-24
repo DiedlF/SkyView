@@ -45,4 +45,14 @@ PRECIP_RATE_FIELD_BY_LAYER_VAR: dict[str, str] = {
     "hail_amount": "hail_rate",
 }
 
-DATA_CACHE_MAX_ITEMS: int = int(os.environ.get('SKYVIEW_DATA_CACHE_MAX_ITEMS', '8'))
+DATA_CACHE_MAX_ITEMS: int = int(os.environ.get('SKYVIEW_DATA_CACHE_MAX_ITEMS', '24'))
+
+# Low-zoom global symbols settings (also used by routers)
+LOW_ZOOM_GLOBAL_CACHE_MAX_ZOOM: int = 9
+LOW_ZOOM_GLOBAL_BBOX: tuple[float, float, float, float] = (30.0, -30.0, 72.0, 45.0)
+
+# Emagram pressure levels (D2)
+EMAGRAM_D2_LEVELS_HPA: list[int] = [1000, 975, 950, 850, 700, 600, 500, 400, 300, 200]
+
+# Standard gravity (m/s²)
+G0: float = 9.80665

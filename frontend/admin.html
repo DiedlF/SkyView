@@ -238,11 +238,15 @@ function renderKpis(s,storage){
   const d2Fresh=toNum(storage?.models?.icon_d2?.freshnessMinutesSinceFullIngest);
   const euFresh=toNum(storage?.models?.icon_eu?.freshnessMinutesSinceFullIngest);
 
+  const deskFill=toNum(s?.cache?.tile?.desktopFillRatio);
+  const mobFill=toNum(s?.cache?.tile?.mobileFillRatio);
   const cards=[
     ['Freshness', freshness==null?'-':`${freshness.toFixed(1)} min`, 'freshness', freshness],
     ['Tile p95', p95==null?'-':`${Math.round(p95)} ms`, 'p95', p95],
     ['Tile p50', p50==null?'-':`${Math.round(p50)} ms`, 'p50', p50],
     ['Cache hit rate', hitRate==null?'-':`${(hitRate*100).toFixed(1)}%`, 'hitRate', hitRate*100],
+    ['Tile fill desktop', deskFill==null?'-':`${(deskFill*100).toFixed(1)}%`, 'deskFill', deskFill*100],
+    ['Tile fill mobile', mobFill==null?'-':`${(mobFill*100).toFixed(1)}%`, 'mobFill', mobFill*100],
     ['D2 full ingest age', d2Fresh==null?'-':`${d2Fresh.toFixed(1)} min`, 'd2Fresh', d2Fresh],
     ['EU full ingest age', euFresh==null?'-':`${euFresh.toFixed(1)} min`, 'euFresh', euFresh],
   ];
@@ -309,6 +313,11 @@ function renderOverviewMetrics(data){
     ['HTTP 4xx', rel?.globalErrors?.['4xx']],
     ['HTTP 5xx', rel?.globalErrors?.['5xx']],
     ['Ingest failure streak', rel?.ingestFailureStreak],
+    ['EU resolve attempts', rel?.fallback?.euResolveAttempts],
+    ['EU resolve success', rel?.fallback?.euResolveSuccess],
+    ['Symbols blended', rel?.fallback?.symbolsBlended],
+    ['Wind blended', rel?.fallback?.windBlended],
+    ['Overlay tile fallback', rel?.fallback?.overlayTileFallback],
   ])}</div>`;
   html += `<div>${kvTable([
     ['CPU %', sh.cpuPercent],['Memory %', sh.memoryPercent],['Memory used', fmt(sh.memoryUsedBytes)],['Memory total', fmt(sh.memoryTotalBytes)],
@@ -330,6 +339,14 @@ function renderOverviewMetrics(data){
     html += '<h3>Cache efficiency by layer</h3><table><tr><th>Layer</th><th>Req</th><th>Hit rate</th><th>p95</th></tr>'+
       layers.map(r=>`<tr><td>${esc(r.layer)}</td><td>${esc(r.requests)}</td><td>${esc(r.hitRate==null?'-':(r.hitRate*100).toFixed(1)+'%')}</td><td>${esc(r.p95Ms?Math.round(r.p95Ms):'-')} ms</td></tr>`).join('')+'</table>';
   }
+
+  html += `<h3>Overlay phase p95</h3>${kvTable([
+    ['Load p95', perf?.overlayPhaseP95?.loadMs==null?'-':`${Math.round(perf.overlayPhaseP95.loadMs)} ms`],
+    ['Source p95', perf?.overlayPhaseP95?.sourceMs==null?'-':`${Math.round(perf.overlayPhaseP95.sourceMs)} ms`],
+    ['Colorize p95', perf?.overlayPhaseP95?.colorizeMs==null?'-':`${Math.round(perf.overlayPhaseP95.colorizeMs)} ms`],
+    ['Encode p95', perf?.overlayPhaseP95?.encodeMs==null?'-':`${Math.round(perf.overlayPhaseP95.encodeMs)} ms`],
+    ['Total p95', perf?.overlayPhaseP95?.totalMs==null?'-':`${Math.round(perf.overlayPhaseP95.totalMs)} ms`],
+  ])}`;
 
   html += '<h3>Capacity + Product</h3>';
   html += `<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px">`;
