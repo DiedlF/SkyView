@@ -288,6 +288,23 @@ app.add_middleware(
 
 api_error_counters = {"4xx": 0, "5xx": 0}
 
+# Admin overview telemetry (in-process rolling windows)
+REQUEST_METRICS_WINDOW = int(os.environ.get("SKYVIEW_REQUEST_METRICS_WINDOW", "400"))
+request_metrics: Dict[str, Dict[str, Any]] = {}
+overlay_layer_metrics: Dict[str, Dict[str, Any]] = {}
+feature_usage_counters: Dict[str, int] = {
+    "page": 0,
+    "overlay_tile": 0,
+    "symbols": 0,
+    "point": 0,
+    "meteogram": 0,
+    "emagram": 0,
+    "other_api": 0,
+}
+capacity_samples = deque(maxlen=288)  # ~24h at 5min cadence
+_last_capacity_sample_mono = 0.0
+_cpu_sample_prev: Optional[tuple[int, int]] = None
+
 # Consolidated runtime state (PR3)
 app_state = AppState(
     fallback_stats={
@@ -351,6 +368,140 @@ def _set_fallback_current(endpoint: str, decision: str, source_model: Optional[s
         "detail": detail or {},
     }
 
+
+def _classify_feature(path: str) -> str:
+    if path in ("/", "/index.html"):
+        return "page"
+    if path == "/api/overlay_tile":
+        return "overlay_tile"
+    if path == "/api/symbols":
+        return "symbols"
+    if path == "/api/point":
+        return "point"
+    if path == "/api/meteogram_point":
+        return "meteogram"
+    if path == "/api/emagram_point":
+        return "emagram"
+    if path.startswith("/api/"):
+        return "other_api"
+    return "other_api"
+
+
+def _record_request_metric(path: str, status_code: int, duration_ms: float) -> None:
+    m = request_metrics.setdefault(path, {
+        "count": 0,
+        "errors4xx": 0,
+        "errors5xx": 0,
+        "slowOver1s": 0,
+        "slowOver2s": 0,
+        "latencyMs": deque(maxlen=REQUEST_METRICS_WINDOW),
+        "lastSeen": None,
+    })
+    m["count"] += 1
+    if 400 <= status_code < 500:
+        m["errors4xx"] += 1
+    elif status_code >= 500:
+        m["errors5xx"] += 1
+    if duration_ms > 1000:
+        m["slowOver1s"] += 1
+    if duration_ms > 2000:
+        m["slowOver2s"] += 1
+    m["latencyMs"].append(float(duration_ms))
+    m["lastSeen"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _read_server_health() -> Dict[str, Any]:
+    global _cpu_sample_prev
+    cpu_percent = None
+    try:
+        with open("/proc/stat", "r", encoding="utf-8") as f:
+            line = f.readline().strip()
+        parts = [int(x) for x in line.split()[1:]]
+        total = sum(parts)
+        idle = parts[3] + (parts[4] if len(parts) > 4 else 0)
+        if _cpu_sample_prev is not None:
+            p_total, p_idle = _cpu_sample_prev
+            dt, di = total - p_total, idle - p_idle
+            if dt > 0:
+                cpu_percent = max(0.0, min(100.0, (1.0 - (di / dt)) * 100.0))
+        _cpu_sample_prev = (total, idle)
+    except Exception:
+        pass
+
+    mem_total = mem_available = None
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8") as f:
+            info = {}
+            for ln in f:
+                if ":" in ln:
+                    k, v = ln.split(":", 1)
+                    info[k.strip()] = int(v.strip().split()[0]) * 1024
+        mem_total = info.get("MemTotal")
+        mem_available = info.get("MemAvailable")
+    except Exception:
+        pass
+
+    mem_used = (mem_total - mem_available) if (mem_total is not None and mem_available is not None) else None
+    mem_pct = ((mem_used / mem_total) * 100.0) if (mem_used is not None and mem_total) else None
+
+    load1 = load5 = load15 = None
+    try:
+        load1, load5, load15 = os.getloadavg()
+    except Exception:
+        pass
+
+    uptime_s = None
+    try:
+        with open("/proc/uptime", "r", encoding="utf-8") as f:
+            uptime_s = float(f.readline().split()[0])
+    except Exception:
+        pass
+
+    return {
+        "cpuPercent": round(cpu_percent, 1) if cpu_percent is not None else None,
+        "memoryUsedBytes": int(mem_used) if mem_used is not None else None,
+        "memoryTotalBytes": int(mem_total) if mem_total is not None else None,
+        "memoryPercent": round(mem_pct, 1) if mem_pct is not None else None,
+        "loadAvg1m": round(load1, 2) if load1 is not None else None,
+        "loadAvg5m": round(load5, 2) if load5 is not None else None,
+        "loadAvg15m": round(load15, 2) if load15 is not None else None,
+        "uptimeSeconds": int(uptime_s) if uptime_s is not None else None,
+    }
+
+
+def _sample_capacity(total_bytes: int, est_tile_bytes: int) -> None:
+    global _last_capacity_sample_mono
+    now_m = time.monotonic()
+    if (now_m - _last_capacity_sample_mono) < 300 and capacity_samples:
+        return
+    _last_capacity_sample_mono = now_m
+    capacity_samples.append({
+        "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "totalBytes": int(total_bytes),
+        "estTileBytes": int(est_tile_bytes),
+    })
+
+
+def _record_overlay_layer_metric(layer: str, cache_hit: bool, total_ms: float) -> None:
+    row = overlay_layer_metrics.setdefault(layer, {
+        "requests": 0,
+        "hits": 0,
+        "misses": 0,
+        "slowOver1s": 0,
+        "slowOver2s": 0,
+        "latencyMs": deque(maxlen=REQUEST_METRICS_WINDOW),
+    })
+    row["requests"] += 1
+    if cache_hit:
+        row["hits"] += 1
+    else:
+        row["misses"] += 1
+    if total_ms > 1000:
+        row["slowOver1s"] += 1
+    if total_ms > 2000:
+        row["slowOver2s"] += 1
+    row["latencyMs"].append(float(total_ms))
+
 EU_STRICT_MAX_DELTA_HOURS = EU_STRICT_MAX_DELTA_HOURS_DEFAULT
 EU_STRICT_MAX_DELTA_HOURS_3H = float(os.environ.get("SKYVIEW_EU_STRICT_MAX_DELTA_HOURS_3H", "1.6"))
 
@@ -406,6 +557,10 @@ async def log_requests(request: Request, call_next):
         api_error_counters["4xx"] += 1
     elif response.status_code >= 500:
         api_error_counters["5xx"] += 1
+
+    _record_request_metric(request.url.path, response.status_code, duration_ms)
+    feat = _classify_feature(request.url.path)
+    feature_usage_counters[feat] = feature_usage_counters.get(feat, 0) + 1
 
     # Skip logging routine polling endpoints to reduce noise
     skip_paths = ['/api/timesteps', '/api/models']
@@ -2577,6 +2732,7 @@ async def api_overlay_tile(
     if cached is not None:
         total_ms = (perf_counter() - t0) * 1000.0
         perf_record(total_ms, True)
+        _record_overlay_layer_metric(layer, True, total_ms)
         overlay_phase_record(
             layer=layer,
             cache_hit=True,
@@ -2621,6 +2777,7 @@ async def api_overlay_tile(
             tile_cache_set(client_class, cache_key, png)
             total_ms = (perf_counter() - t0) * 1000.0
             perf_record(total_ms, False)
+            _record_overlay_layer_metric(layer, False, total_ms)
             overlay_phase_record(
                 layer=layer,
                 cache_hit=False,
@@ -2706,6 +2863,7 @@ async def api_overlay_tile(
     tile_cache_set(client_class, cache_key, png)
     total_ms = (perf_counter() - t0) * 1000.0
     perf_record(total_ms, False)
+    _record_overlay_layer_metric(layer, False, total_ms)
     overlay_phase_record(
         layer=layer,
         cache_hit=False,
@@ -3094,6 +3252,152 @@ async def api_admin_logs(
     return await asyncio.to_thread(_collect_logs_payload)
 
 
+def _pct(values: List[float], p: float) -> Optional[float]:
+    if not values:
+        return None
+    xs = sorted(float(v) for v in values)
+    if len(xs) == 1:
+        return xs[0]
+    rank = (len(xs) - 1) * float(p)
+    lo = int(rank)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = rank - lo
+    return xs[lo] * (1.0 - frac) + xs[hi] * frac
+
+
+async def api_admin_overview_metrics():
+    """Extended admin metrics: reliability, endpoint perf, capacity, product usage and server health."""
+    storage = await api_admin_storage()
+    status = await api_status()
+
+    # Reliability: endpoint error counters + top failing endpoints
+    endpoint_rows = []
+    for path, m in request_metrics.items():
+        total = int(m.get("count", 0))
+        e4 = int(m.get("errors4xx", 0))
+        e5 = int(m.get("errors5xx", 0))
+        endpoint_rows.append({
+            "path": path,
+            "requests": total,
+            "errors4xx": e4,
+            "errors5xx": e5,
+            "errorTotal": e4 + e5,
+            "lastSeen": m.get("lastSeen"),
+        })
+    top_failing = sorted(endpoint_rows, key=lambda r: (r["errorTotal"], r["errors5xx"]), reverse=True)[:10]
+
+    # Ingest failure streak: consecutive latest runs with incomplete coverage
+    streak = 0
+    expected_steps = {"icon_d2": 48, "icon_eu": 92}
+    for mk, mdir in (("icon_d2", "icon-d2"), ("icon_eu", "icon-eu")):
+        runs = (storage.get("models", {}).get(mk, {}) or {}).get("runs", []) or []
+        for r in runs:
+            npz = int(r.get("npzFiles") or 0)
+            if npz >= expected_steps[mk]:
+                break
+            streak += 1
+
+    # Performance: per-endpoint latencies and slow buckets
+    endpoint_perf = []
+    for path, m in request_metrics.items():
+        lats = list(m.get("latencyMs", []))
+        endpoint_perf.append({
+            "path": path,
+            "requests": int(m.get("count", 0)),
+            "p50Ms": _pct(lats, 0.5),
+            "p95Ms": _pct(lats, 0.95),
+            "p99Ms": _pct(lats, 0.99),
+            "slowOver1s": int(m.get("slowOver1s", 0)),
+            "slowOver2s": int(m.get("slowOver2s", 0)),
+        })
+    endpoint_perf.sort(key=lambda r: r["requests"], reverse=True)
+
+    overlay_phase_series = [{
+        "ts": datetime.fromtimestamp(float(r.get("ts", time.time())), tz=timezone.utc).isoformat().replace("+00:00", "Z"),
+        "loadMs": r.get("loadMs"),
+        "sourceMs": r.get("sourceMs"),
+        "colorizeMs": r.get("colorizeMs"),
+        "encodeMs": r.get("encodeMs"),
+        "totalMs": r.get("totalMs"),
+        "layer": r.get("layer"),
+    } for r in list(overlay_phase_recent)[-120:]]
+
+    cache_efficiency_by_layer = []
+    for layer, m in overlay_layer_metrics.items():
+        req = int(m.get("requests", 0))
+        hit = int(m.get("hits", 0))
+        lats = list(m.get("latencyMs", []))
+        cache_efficiency_by_layer.append({
+            "layer": layer,
+            "requests": req,
+            "hitRate": (hit / req) if req else None,
+            "p95Ms": _pct(lats, 0.95),
+        })
+    cache_efficiency_by_layer.sort(key=lambda r: r["requests"], reverse=True)
+
+    # Capacity trends
+    total_bytes = int(storage.get("totalBytes") or 0)
+    est_tile_bytes = int((((status.get("cache") or {}).get("server") or {}).get("estTileBytes") or 0))
+    _sample_capacity(total_bytes, est_tile_bytes)
+
+    disk_growth_per_day = None
+    cache_growth_per_day = None
+    if len(capacity_samples) >= 2:
+        first, last = capacity_samples[0], capacity_samples[-1]
+        try:
+            t0 = datetime.fromisoformat(str(first["ts"]).replace("Z", "+00:00"))
+            t1 = datetime.fromisoformat(str(last["ts"]).replace("Z", "+00:00"))
+            ddays = max((t1 - t0).total_seconds() / 86400.0, 0.0001)
+            disk_growth_per_day = (int(last["totalBytes"]) - int(first["totalBytes"])) / ddays
+            cache_growth_per_day = (int(last["estTileBytes"]) - int(first["estTileBytes"])) / ddays
+        except Exception:
+            pass
+
+    # Product usage
+    total_feature = sum(int(v) for v in feature_usage_counters.values())
+    feature_split = []
+    for k, v in feature_usage_counters.items():
+        n = int(v)
+        feature_split.append({"feature": k, "count": n, "share": (n / total_feature) if total_feature else None})
+    feature_split.sort(key=lambda r: r["count"], reverse=True)
+
+    usage7 = get_usage_stats(USAGE_STATS_FILE, days=7)
+    usage30 = get_usage_stats(USAGE_STATS_FILE, days=30)
+    markers = get_marker_stats(MARKERS_FILE)
+
+    return {
+        "reliability": {
+            "globalErrors": dict(api_error_counters),
+            "topFailingEndpoints": top_failing,
+            "ingestFailureStreak": streak,
+        },
+        "performance": {
+            "endpointLatency": endpoint_perf[:20],
+            "overlayPhaseSeries": overlay_phase_series,
+            "cacheEfficiencyByLayer": cache_efficiency_by_layer,
+        },
+        "capacity": {
+            "totalBytes": total_bytes,
+            "estTileBytes": est_tile_bytes,
+            "diskGrowthBytesPerDay": disk_growth_per_day,
+            "cacheGrowthBytesPerDay": cache_growth_per_day,
+            "sampleCount": len(capacity_samples),
+        },
+        "product": {
+            "featureUsageSplit": feature_split,
+            "usage7dVisits": usage7.get("totalVisits", 0),
+            "usage30dVisits": usage30.get("totalVisits", 0),
+            "usage7dUnique": usage7.get("estimatedUniqueVisitors", 0),
+            "usage30dUnique": usage30.get("estimatedUniqueVisitors", 0),
+            "markerActive24h": markers.get("activeLast24h", 0),
+            "markerActive7d": markers.get("activeLast7d", 0),
+            "markerActive30d": markers.get("activeLast30d", 0),
+        },
+        "serverHealth": _read_server_health(),
+        "updatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+
+
 async def admin_view():
     """Simple Skyview admin/status dashboard page."""
     p = os.path.join(FRONTEND_DIR, "admin.html")
@@ -3122,6 +3426,7 @@ app.include_router(build_admin_router(
     api_perf_stats=api_perf_stats,
     api_admin_storage=api_admin_storage,
     api_admin_logs=api_admin_logs,
+    api_admin_overview_metrics=api_admin_overview_metrics,
     admin_view=admin_view,
 ))
 

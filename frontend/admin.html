@@ -126,6 +126,11 @@
     </section>
 
     <section class="card span-all">
+      <h2>Advanced metrics</h2>
+      <div id="overviewMetrics">Loading…</div>
+    </section>
+
+    <section class="card span-all">
       <h2>Logs</h2>
       <div class="toolbar" id="logsSummary"></div>
       <div class="toolbar">
@@ -163,6 +168,7 @@ let _statusCache=null;
 let _storageCache=null;
 let _prevKpi={};
 let _feedbackLast=[];
+let _overviewCache=null;
 let _refreshEvery=120;
 let _refreshLeft=_refreshEvery;
 
@@ -284,6 +290,71 @@ function renderUsage(storage){
   ]);
 }
 
+function renderOverviewMetrics(data){
+  const rel=data?.reliability||{};
+  const perf=data?.performance||{};
+  const cap=data?.capacity||{};
+  const prod=data?.product||{};
+  const sh=data?.serverHealth||{};
+
+  const relTop=(rel.topFailingEndpoints||[]).slice(0,8);
+  const ep=(perf.endpointLatency||[]).slice(0,10);
+  const layers=(perf.cacheEfficiencyByLayer||[]).slice(0,8);
+  const features=(prod.featureUsageSplit||[]).slice(0,8);
+
+  let html='';
+  html += '<h3>Reliability + Server health</h3>';
+  html += '<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px">';
+  html += `<div>${kvTable([
+    ['HTTP 4xx', rel?.globalErrors?.['4xx']],
+    ['HTTP 5xx', rel?.globalErrors?.['5xx']],
+    ['Ingest failure streak', rel?.ingestFailureStreak],
+  ])}</div>`;
+  html += `<div>${kvTable([
+    ['CPU %', sh.cpuPercent],['Memory %', sh.memoryPercent],['Memory used', fmt(sh.memoryUsedBytes)],['Memory total', fmt(sh.memoryTotalBytes)],
+    ['Load 1m', sh.loadAvg1m],['Load 5m', sh.loadAvg5m],['Uptime (s)', sh.uptimeSeconds],
+  ])}</div>`;
+  html += '</div>';
+
+  if(relTop.length){
+    html += '<h3>Top failing endpoints</h3><table><tr><th>Path</th><th>Req</th><th>4xx</th><th>5xx</th><th>Total</th><th>Last seen</th></tr>'+
+      relTop.map(r=>`<tr><td>${esc(r.path)}</td><td>${esc(r.requests)}</td><td>${esc(r.errors4xx)}</td><td>${esc(r.errors5xx)}</td><td>${esc(r.errorTotal)}</td><td>${esc(r.lastSeen||'-')}</td></tr>`).join('')+'</table>';
+  }
+
+  if(ep.length){
+    html += '<h3>Endpoint latency / slow buckets</h3><table><tr><th>Path</th><th>Req</th><th>p50</th><th>p95</th><th>p99</th><th>>1s</th><th>>2s</th></tr>'+
+      ep.map(r=>`<tr><td>${esc(r.path)}</td><td>${esc(r.requests)}</td><td>${esc(r.p50Ms?Math.round(r.p50Ms):'-')} ms</td><td>${esc(r.p95Ms?Math.round(r.p95Ms):'-')} ms</td><td>${esc(r.p99Ms?Math.round(r.p99Ms):'-')} ms</td><td>${esc(r.slowOver1s)}</td><td>${esc(r.slowOver2s)}</td></tr>`).join('')+'</table>';
+  }
+
+  if(layers.length){
+    html += '<h3>Cache efficiency by layer</h3><table><tr><th>Layer</th><th>Req</th><th>Hit rate</th><th>p95</th></tr>'+
+      layers.map(r=>`<tr><td>${esc(r.layer)}</td><td>${esc(r.requests)}</td><td>${esc(r.hitRate==null?'-':(r.hitRate*100).toFixed(1)+'%')}</td><td>${esc(r.p95Ms?Math.round(r.p95Ms):'-')} ms</td></tr>`).join('')+'</table>';
+  }
+
+  html += '<h3>Capacity + Product</h3>';
+  html += `<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px">`;
+  html += `<div>${kvTable([
+    ['Total bytes', fmt(cap.totalBytes)],['Est tile cache', fmt(cap.estTileBytes)],['Disk growth/day', cap.diskGrowthBytesPerDay==null?'-':fmt(cap.diskGrowthBytesPerDay)],['Cache growth/day', cap.cacheGrowthBytesPerDay==null?'-':fmt(cap.cacheGrowthBytesPerDay)],['Samples', cap.sampleCount],
+  ])}</div>`;
+  html += `<div>${kvTable([
+    ['Visits 7d', prod.usage7dVisits],['Visits 30d', prod.usage30dVisits],['Unique 7d', prod.usage7dUnique],['Unique 30d', prod.usage30dUnique],['Marker active 24h', prod.markerActive24h],['Marker active 7d', prod.markerActive7d],
+  ])}</div>`;
+  html += '</div>';
+
+  if(features.length){
+    html += '<h3>Feature usage split</h3><table><tr><th>Feature</th><th>Count</th><th>Share</th></tr>'+
+      features.map(r=>`<tr><td>${esc(r.feature)}</td><td>${esc(r.count)}</td><td>${esc(r.share==null?'-':(r.share*100).toFixed(1)+'%')}</td></tr>`).join('')+'</table>';
+  }
+
+  document.getElementById('overviewMetrics').innerHTML=html;
+}
+
+async function loadOverview(){
+  const d=await j('/api/admin/overview_metrics');
+  _overviewCache=d;
+  renderOverviewMetrics(d);
+}
+
 async function setStatus(id,status){
   await j(`/api/feedback/${id}`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({status})});
   await loadFeedback();
@@ -376,7 +447,7 @@ async function loadCore(){
 }
 
 async function loadAll(){
-  await Promise.all([loadCore(), loadFeedback(), loadLogs()]);
+  await Promise.all([loadCore(), loadFeedback(), loadLogs(), loadOverview()]);
   document.getElementById('lastUpdated').textContent = new Date().toLocaleString();
   _refreshLeft=_refreshEvery;
 }
