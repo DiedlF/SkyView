@@ -4,6 +4,7 @@ Keep meteorological thresholds and frequently reused config in one place.
 """
 
 from __future__ import annotations
+import os
 
 # Grid aggregation cell sizes by map zoom
 CELL_SIZES_BY_ZOOM: dict[int, float] = {
@@ -44,4 +45,4 @@ PRECIP_RATE_FIELD_BY_LAYER_VAR: dict[str, str] = {
     "hail_amount": "hail_rate",
 }
 
-DATA_CACHE_MAX_ITEMS: int = 24
+DATA_CACHE_MAX_ITEMS: int = int(os.environ.get('SKYVIEW_DATA_CACHE_MAX_ITEMS', '8'))

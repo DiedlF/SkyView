@@ -7,6 +7,13 @@ Type=simple
 User=root
 WorkingDirectory=/opt/skyview
 Environment=PYTHONPATH=/opt/skyview/backend
+# 4GB VPS memory-conservative profile
+Environment=SKYVIEW_DATA_CACHE_MAX_ITEMS=8
+Environment=SKYVIEW_METEOGRAM_CACHE_MAX_ITEMS=16
+Environment=SKYVIEW_TILE_CACHE_MAX_DESKTOP=700
+Environment=SKYVIEW_TILE_CACHE_MAX_MOBILE=350
+Environment=SKYVIEW_COMPUTED_CACHE_MAX_ITEMS=64
+Environment=SKYVIEW_SYMBOLS_CACHE_MAX_ITEMS=128
 ExecStart=/opt/skyview/venv/bin/python /opt/skyview/backend/app.py
 Restart=always
 RestartSec=5

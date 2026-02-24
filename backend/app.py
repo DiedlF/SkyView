@@ -444,7 +444,7 @@ async def log_requests(request: Request, call_next):
 
 data_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
 meteogram_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
-METEOGRAM_CACHE_MAX_ITEMS = int(os.environ.get("SKYVIEW_METEOGRAM_CACHE_MAX_ITEMS", "128"))
+METEOGRAM_CACHE_MAX_ITEMS = int(os.environ.get("SKYVIEW_METEOGRAM_CACHE_MAX_ITEMS", "16"))
 
 def _acquire_single_instance_or_exit(pid_file: str):
     """Simple PID-file guard to prevent accidental multi-process launches."""
@@ -2390,6 +2390,17 @@ async def api_status():
         "maxZoom": LOW_ZOOM_GLOBAL_CACHE_MAX_ZOOM,
         "metrics": low_zoom_symbols_cache_metrics,
         "hitRate": (low_zoom_symbols_cache_metrics["hits"] / lz_total) if lz_total else None,
+    }
+
+    # Cache visibility for low-memory VPS sizing (rough in-process estimate).
+    tile_desktop_bytes = sum(len(v[0]) for v in tile_cache_desktop.values()) if tile_cache_desktop else 0
+    tile_mobile_bytes = sum(len(v[0]) for v in tile_cache_mobile.values()) if tile_cache_mobile else 0
+    payload.setdefault("cache", {})["server"] = {
+        "npzDataItems": len(data_cache),
+        "npzDataMax": DATA_CACHE_MAX_ITEMS,
+        "meteogramItems": len(meteogram_cache),
+        "meteogramMax": METEOGRAM_CACHE_MAX_ITEMS,
+        "estTileBytes": tile_desktop_bytes + tile_mobile_bytes,
     }
 
     return payload

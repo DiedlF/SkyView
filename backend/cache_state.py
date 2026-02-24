@@ -9,8 +9,8 @@ from collections import OrderedDict, deque
 from typing import Callable, Any
 
 # Overlay tile cache (desktop/mobile split, LRU + TTL)
-TILE_CACHE_MAX_ITEMS_DESKTOP = int(os.environ.get('SKYVIEW_TILE_CACHE_MAX_DESKTOP', '1400'))
-TILE_CACHE_MAX_ITEMS_MOBILE = int(os.environ.get('SKYVIEW_TILE_CACHE_MAX_MOBILE', '700'))
+TILE_CACHE_MAX_ITEMS_DESKTOP = int(os.environ.get('SKYVIEW_TILE_CACHE_MAX_DESKTOP', '700'))
+TILE_CACHE_MAX_ITEMS_MOBILE = int(os.environ.get('SKYVIEW_TILE_CACHE_MAX_MOBILE', '350'))
 TILE_CACHE_TTL_SECONDS = int(os.environ.get('SKYVIEW_TILE_CACHE_TTL_SECONDS', '900'))
 
 tile_cache_desktop = OrderedDict()  # key -> (png_bytes, ts)
@@ -41,7 +41,7 @@ overlay_phase_totals = {
 
 # Computed full-field cache (for expensive derived layers used by tile endpoint)
 # Slightly larger default improves warmup retention under layer/time churn.
-COMPUTED_CACHE_MAX_ITEMS = int(os.environ.get('SKYVIEW_COMPUTED_CACHE_MAX_ITEMS', '192'))
+COMPUTED_CACHE_MAX_ITEMS = int(os.environ.get('SKYVIEW_COMPUTED_CACHE_MAX_ITEMS', '64'))
 COMPUTED_CACHE_TTL_SECONDS = int(os.environ.get('SKYVIEW_COMPUTED_CACHE_TTL_SECONDS', '2400'))
 computed_field_cache = OrderedDict()  # key -> (np.ndarray, ts)
 computed_field_metrics = {
@@ -56,7 +56,7 @@ _computed_inflight = {}  # key -> threading.Event
 _computed_inflight_lock = threading.Lock()
 
 # Symbols response cache (JSON payload cache for pan/zoom repeats)
-SYMBOLS_CACHE_MAX_ITEMS = 256
+SYMBOLS_CACHE_MAX_ITEMS = int(os.environ.get('SKYVIEW_SYMBOLS_CACHE_MAX_ITEMS', '128'))
 SYMBOLS_CACHE_TTL_SECONDS = 60
 symbols_cache = OrderedDict()  # key -> (payload_dict, ts)
 symbols_cache_metrics = {"hits": 0, "misses": 0, "evictions": 0, "expired": 0}
