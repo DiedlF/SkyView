@@ -5,66 +5,118 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Skyview Admin</title>
   <style>
-    body{font-family:Inter,system-ui,sans-serif;margin:0;background:#0f172a;color:#e2e8f0}
-    .wrap{max-width:1280px;margin:0 auto;padding:20px}
-    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px}
-    .card{background:#111827;border:1px solid #243041;border-radius:12px;padding:14px}
-    h1{margin:0 0 8px}.muted{color:#94a3b8;font-size:13px}
-    table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:6px 4px;border-bottom:1px solid #243041;text-align:left;vertical-align:top}
-    pre{background:#0b1220;border:1px solid #243041;border-radius:8px;padding:10px;max-height:300px;overflow:auto;font-size:12px}
-    button,input,select{background:#0b1220;color:#e2e8f0;border:1px solid #334155;border-radius:8px;padding:6px 8px}
-    button{cursor:pointer;background:#2563eb;border-color:#2563eb;color:#fff}
+    :root{
+      --bg:#0f172a;--card:#111827;--line:#243041;--muted:#94a3b8;--text:#e2e8f0;
+      --ok:#16a34a;--warn:#f59e0b;--crit:#ef4444;--info:#2563eb;
+    }
+    body{font-family:Inter,system-ui,sans-serif;margin:0;background:var(--bg);color:var(--text)}
+    .wrap{max-width:1400px;margin:0 auto;padding:20px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
+    .span-all{grid-column:1/-1}
+    h1{margin:0 0 8px}
+    h2{margin:0 0 8px;font-size:18px}
+    h3{margin:10px 0 6px}
+    .muted{color:var(--muted);font-size:13px}
+    table{width:100%;border-collapse:collapse;font-size:13px}
+    td,th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+    pre{background:#0b1220;border:1px solid var(--line);border-radius:8px;padding:10px;max-height:320px;overflow:auto;font-size:12px}
+    button,input,select{background:#0b1220;color:var(--text);border:1px solid #334155;border-radius:8px;padding:6px 8px}
+    button{cursor:pointer;background:var(--info);border-color:var(--info);color:#fff}
     .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
     .tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;border:1px solid #334155}
     .new{background:#1e293b}.triaged{background:#3b2f13}.resolved{background:#113422}
+
+    .health-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+    .health-chip{border:1px solid var(--line);border-radius:10px;padding:10px;background:#0b1220}
+    .health-title{font-size:12px;color:var(--muted)}
+    .health-state{font-size:15px;font-weight:700;margin-top:4px}
+    .state-ok{color:var(--ok)} .state-warn{color:var(--warn)} .state-crit{color:var(--crit)}
+
+    .kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+    .kpi{background:#0b1220;border:1px solid var(--line);border-radius:10px;padding:10px}
+    .kpi .label{font-size:12px;color:var(--muted)}
+    .kpi .value{font-size:22px;font-weight:700;line-height:1.2}
+    .delta{font-size:12px}
+    .up{color:#fca5a5}.down{color:#86efac}.flat{color:var(--muted)}
+
+    .timeline{display:grid;gap:10px}
+    .timeline-row{border:1px solid var(--line);border-radius:10px;padding:10px;background:#0b1220}
+    .timeline-head{display:flex;justify-content:space-between;gap:8px;align-items:center}
+    .timeline-track{margin-top:8px;height:8px;border-radius:999px;background:#1f2937;position:relative;overflow:hidden}
+    .timeline-fill{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,#2563eb,#38bdf8)}
+
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid #334155;font-size:11px}
+    .pill-ok{background:#113422;border-color:#166534}
+    .pill-warn{background:#3b2f13;border-color:#a16207}
+    .pill-crit{background:#3a1b1b;border-color:#b91c1c}
   </style>
 </head>
 <body>
 <div class="wrap">
   <h1>Skyview Admin / Status</h1>
-  <div class="muted">Operational dashboard with ingest timings, storage, feedback workflow, logs and usage.</div>
-  <p><button id="refresh">Refresh</button></p>
+  <div class="toolbar">
+    <button id="refresh">Refresh</button>
+    <span class="muted">Last updated: <span id="lastUpdated">-</span></span>
+    <span class="muted">Auto refresh in <span id="refreshCountdown">120</span>s</span>
+  </div>
 
   <div class="grid">
-    <section class="card"><h2>Status widgets</h2><div id="statusWidgets">Loading…</div></section>
-    <section class="card"><h2>Storage / ingest</h2><div id="storage">Loading…</div></section>
-    <section class="card"><h2>Markers + usage</h2><div id="usage">Loading…</div></section>
-
-    <section class="card" style="grid-column:1/-1">
-      <h2>Emagram debug</h2>
-      <div class="toolbar">
-        <label style="font-size:13px">Lat <input id="emLat" type="number" step="0.01" value="47.5" style="width:90px"></label>
-        <label style="font-size:13px">Lon <input id="emLon" type="number" step="0.01" value="11.0" style="width:90px"></label>
-        <label style="font-size:13px">Time <input id="emTime" value="latest" style="width:110px"></label>
-        <label style="font-size:13px">Model
-          <select id="emModel">
-            <option value="icon_d2">icon_d2</option>
-          </select>
-        </label>
-        <button id="emQuery">Query</button>
-      </div>
-      <div id="emResult"></div>
+    <section class="card span-all">
+      <h2>System health</h2>
+      <div class="health-row" id="healthRow">Loading…</div>
     </section>
 
+    <section class="card span-all">
+      <h2>Now (KPI)</h2>
+      <div class="kpi-grid" id="kpis">Loading…</div>
+    </section>
 
+    <section class="card">
+      <h2>Pipeline</h2>
+      <div id="pipeline">Loading…</div>
+    </section>
 
-    <section class="card" style="grid-column:1/-1">
+    <section class="card">
+      <h2>Users</h2>
+      <div id="usage">Loading…</div>
+    </section>
+
+    <section class="card">
+      <h2>Storage</h2>
+      <div id="storage">Loading…</div>
+    </section>
+
+    <section class="card span-all">
       <h2>Meteogram debug</h2>
       <div class="toolbar">
         <label style="font-size:13px">Lat <input id="mgLat" type="number" step="0.01" value="47.5" style="width:90px"></label>
         <label style="font-size:13px">Lon <input id="mgLon" type="number" step="0.01" value="11.0" style="width:90px"></label>
         <label style="font-size:13px">Model
-          <select id="mgModel">
-            <option value="icon_d2" selected>icon_d2</option>
-          </select>
+          <select id="mgModel"><option value="icon_d2" selected>icon_d2</option></select>
         </label>
         <button id="mgQuery">Query</button>
       </div>
       <div id="mgResult"></div>
     </section>
 
-    <section class="card" style="grid-column:1/-1">
-      <h2>Feedback inbox</h2>
+    <section class="card span-all">
+      <h2>Emagram debug</h2>
+      <div class="toolbar">
+        <label style="font-size:13px">Lat <input id="emLat" type="number" step="0.01" value="47.5" style="width:90px"></label>
+        <label style="font-size:13px">Lon <input id="emLon" type="number" step="0.01" value="11.0" style="width:90px"></label>
+        <label style="font-size:13px">Time <input id="emTime" value="latest" style="width:110px"></label>
+        <label style="font-size:13px">Model
+          <select id="emModel"><option value="icon_d2">icon_d2</option></select>
+        </label>
+        <button id="emQuery">Query</button>
+      </div>
+      <div id="emResult"></div>
+    </section>
+
+    <section class="card span-all">
+      <h2>Incidents / Feedback inbox</h2>
+      <div class="toolbar" id="feedbackSummary"></div>
       <div class="toolbar">
         <select id="fbStatus"><option value="">all statuses</option><option>new</option><option>triaged</option><option>resolved</option></select>
         <input id="fbSearch" placeholder="search feedback" style="min-width:260px">
@@ -73,8 +125,9 @@
       <div id="feedback">Loading…</div>
     </section>
 
-    <section class="card" style="grid-column:1/-1">
+    <section class="card span-all">
       <h2>Logs</h2>
+      <div class="toolbar" id="logsSummary"></div>
       <div class="toolbar">
         <select id="logSource">
           <option value="all">all sources</option>
@@ -98,101 +151,137 @@
 <script>
 const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const fmt=n=>!Number.isFinite(n)?'-':(()=>{const u=['B','KB','MB','GB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return n.toFixed(i?1:0)+' '+u[i]})();
-const pct=n=>Number.isFinite(n)?`${(n*100).toFixed(1)}%`:'-';
-const cleanTs=v=>{const s=String(v??''); return s.replace(/\.\d+(?=Z|$)/g,'');};
+const cleanTs=v=>String(v??'').replace(/\.\d+(?=Z|$)/g,'');
 const tidy=v=>Number.isFinite(v)?Math.round(v):(typeof v==='string'?cleanTs(v):v);
-function hitRateBadge(rate){
-  if(!Number.isFinite(rate)) return '<span class="tag">-</span>';
-  const p=(rate*100).toFixed(1)+'%';
-  let bg='#3b2f13', bd='#a16207';
-  if(rate>=0.85){bg='#113422'; bd='#16a34a';}
-  else if(rate<0.6){bg='#3a1b1b'; bd='#dc2626';}
-  return `<span class="tag" style="background:${bg};border-color:${bd};font-weight:600">${p}</span>`;
-}
-async function j(url,opt){const r=await fetch(url,opt);if(!r.ok)throw new Error(url+': '+r.status);return r.json();}
+const j=async(url,opt)=>{const r=await fetch(url,opt); if(!r.ok) throw new Error(url+': '+r.status); return r.json();};
+const toNum=v=>Number.isFinite(Number(v))?Number(v):null;
+const minsSince=iso=>{try{return (Date.now()-new Date(iso).getTime())/60000;}catch{return null;}};
+
 const state={fbStatus:'',fbSearch:'',logLevel:'all',logSource:'all',logFilter:'',logFile:'all',logNewest:true};
 let _logsCache=[];
+let _statusCache=null;
+let _storageCache=null;
+let _prevKpi={};
+let _feedbackLast=[];
+let _refreshEvery=120;
+let _refreshLeft=_refreshEvery;
 
-function kvTable(rows){return '<table>'+rows.map(([k,v])=>`<tr><th>${esc(k)}</th><td>${(v&&typeof v==='object'&&v.html)?v.html:esc(tidy(v))}</td></tr>`).join('')+'</table>'}
-
-async function loadStatus(){
-  const s=await j('/api/status');
-  const d2=s?.ingestHealth?.models?.icon_d2||{}, eu=s?.ingestHealth?.models?.icon_eu||{};
-  const fep = s?.fallback?.endpoints || {};
-  const lz = s?.symbolsLowZoomCache || {};
-  const lzm = lz?.metrics || {};
-  const rows=[
-    ['Server time', s.serverTime],
-    ['Freshness (since full ingest)', s?.ingest?.freshnessMinutes],
-    ['Latest full ingest at', s?.ingest?.latestFullIngestedAt],
-    ['Overlay tile p95 total(ms)', s?.perf?.overlayTilePhases?.recentWindow?.p95?.totalMs],
-    ['Overlay tile p50 total(ms)', s?.perf?.overlayTilePhases?.recentWindow?.p50?.totalMs],
-    ['Tile cache hitRate', s?.cache?.tile?.hitRate],
-    ['Symbols cache items', s?.cache?.symbols?.items],
-    ['Low-zoom cache maxZoom', lz?.maxZoom],
-    ['Low-zoom memory hitRate', {html: hitRateBadge(lz?.hitRate)}],
-    ['Low-zoom memory hits', lzm?.hits],
-    ['Low-zoom memory misses', lzm?.misses],
-    ['Low-zoom disk hits', lzm?.diskHits],
-    ['Low-zoom disk misses', lzm?.diskMisses],
-    ['Fallback snapshot updated', s?.fallback?.updatedAt],
-    ['Symbols decision (current)', fep?.symbols?.decision],
-    ['Point decision (current)', fep?.point?.decision],
-    ['Wind decision (current)', fep?.wind?.decision],
-    ['Overlay decision (current)', fep?.overlay?.decision],
-  ];
-  document.getElementById('statusWidgets').innerHTML = kvTable(rows);
+function kvTable(rows){
+  return '<table>'+rows.map(([k,v])=>`<tr><th>${esc(k)}</th><td>${(v&&typeof v==='object'&&v.html)?v.html:esc(tidy(v))}</td></tr>`).join('')+'</table>';
+}
+function badgeState(s){
+  const c=s==='OK'?'pill-ok':s==='Warning'?'pill-warn':'pill-crit';
+  return `<span class="pill ${c}">${esc(s)}</span>`;
+}
+function kpiDelta(key,val){
+  const prev=_prevKpi[key];
+  _prevKpi[key]=val;
+  if(!Number.isFinite(prev)||!Number.isFinite(val)) return '<span class="delta flat">—</span>';
+  const d=val-prev;
+  if(Math.abs(d)<0.001) return '<span class="delta flat">±0.0</span>';
+  const cls=d>0?'up':'down';
+  const sign=d>0?'+':'';
+  return `<span class="delta ${cls}">${sign}${d.toFixed(1)}</span>`;
 }
 
-async function loadStorage(){
-  const a=await j('/api/admin/storage');
-  const d2=a.models?.icon_d2||{}, eu=a.models?.icon_eu||{};
-  const tmp=a.tmp||{};
-  const ingest=a.ingest||{};
-  const rows=[
-    ['Total data size', fmt(a.totalBytes)],
-    ['D2 size', fmt(d2.totalBytes)],
-    ['EU size', fmt(eu.totalBytes)],
-    ['D2 latest run', d2.latestRun],
-    ['D2 available on DWD', d2.latestRunFullyAvailableOnDwdAt],
-    ['D2 model calc duration (min)', d2.modelCalculationMinutes],
-    ['D2 first step ingested at', d2.latestRunFirstIngestedAt],
-    ['D2 ingest running (min)', d2.ingestRunningMinutes],
-    ['D2 ingest finished', d2.latestRunFullyIngestedAt],
-    ['D2 ingest duration (min)', d2.ingestDurationMinutes],
-    ['EU latest run', eu.latestRun],
-    ['EU available on DWD', eu.latestRunFullyAvailableOnDwdAt],
-    ['EU model calc duration (min)', eu.modelCalculationMinutes],
-    ['EU first step ingested at', eu.latestRunFirstIngestedAt],
-    ['EU ingest running (min)', eu.ingestRunningMinutes],
-    ['EU ingest finished', eu.latestRunFullyIngestedAt],
-    ['EU ingest duration (min)', eu.ingestDurationMinutes],
-    ['D2 full-ingest freshness(min)', d2.freshnessMinutesSinceFullIngest],
-    ['EU full-ingest freshness(min)', eu.freshnessMinutesSinceFullIngest],
-    ['Ingest running', ingest.isRunning],
-    ['Ingest lock', ingest.lock?.exists ? `yes (${ingest.lock?.ageSeconds}s)` : 'no'],
-    ['tmp entries', tmp.count||0],
+function applyUrlState(){
+  const p=new URLSearchParams(location.search);
+  for(const k of ['fbStatus','fbSearch','logLevel','logSource','logFilter','logFile']) if(p.has(k)) state[k]=p.get(k)||state[k];
+  if(p.has('logNewest')) state.logNewest=p.get('logNewest')==='1';
+  document.getElementById('fbStatus').value=state.fbStatus;
+  document.getElementById('fbSearch').value=state.fbSearch;
+  document.getElementById('logLevel').value=state.logLevel;
+  document.getElementById('logSource').value=state.logSource;
+  document.getElementById('logFilter').value=state.logFilter;
+  document.getElementById('logNewest').checked=state.logNewest;
+}
+function persistUrlState(){
+  const p=new URLSearchParams();
+  Object.entries(state).forEach(([k,v])=>{if(v!==''&&v!=='all'&&!(k==='logNewest'&&v===true)) p.set(k,String(v));});
+  if(state.logNewest===false) p.set('logNewest','0');
+  history.replaceState({},'',`${location.pathname}${p.toString()?'?'+p.toString():''}`);
+}
+
+function healthEval(s,storage){
+  const fresh=toNum(s?.ingest?.freshnessMinutes);
+  const p95=toNum(s?.perf?.overlayTilePhases?.recentWindow?.p95?.totalMs);
+  const lockAge=toNum(storage?.ingest?.lock?.ageSeconds);
+  const running=!!storage?.ingest?.isRunning;
+
+  const ingest = (!running && lockAge && lockAge>1800) ? ['Critical',`stale lock ${Math.round(lockAge/60)}m`] : [running?'Warning':'OK', running?'running':'idle'];
+  const freshness = fresh==null?['Warning','unknown'] : fresh>180?['Warning',`${fresh.toFixed(1)} min`]:['OK',`${fresh.toFixed(1)} min`];
+  const perf = p95==null?['Warning','unknown'] : p95>800?['Warning',`${Math.round(p95)} ms p95`]:['OK',`${Math.round(p95)} ms p95`];
+  const fbNew=(_feedbackLast||[]).filter(x=>(x.status||'new')==='new').length;
+  const incidents = fbNew>0?['Warning',`${fbNew} open feedback`]:['OK','none'];
+  return {ingest,freshness,perf,incidents};
+}
+
+function renderHealth(s,storage){
+  const h=healthEval(s,storage);
+  const map=[['Ingest',h.ingest],['Data freshness',h.freshness],['Tile performance',h.perf],['Incidents',h.incidents]];
+  document.getElementById('healthRow').innerHTML = map.map(([label,[stateTxt,detail]])=>
+    `<div class="health-chip"><div class="health-title">${esc(label)}</div><div class="health-state ${stateTxt==='OK'?'state-ok':stateTxt==='Warning'?'state-warn':'state-crit'}">${esc(stateTxt)}</div><div class="muted">${esc(detail)}</div></div>`
+  ).join('');
+}
+
+function renderKpis(s,storage){
+  const freshness=toNum(s?.ingest?.freshnessMinutes);
+  const p95=toNum(s?.perf?.overlayTilePhases?.recentWindow?.p95?.totalMs);
+  const p50=toNum(s?.perf?.overlayTilePhases?.recentWindow?.p50?.totalMs);
+  const hitRate=toNum(s?.cache?.tile?.hitRate);
+  const d2Fresh=toNum(storage?.models?.icon_d2?.freshnessMinutesSinceFullIngest);
+  const euFresh=toNum(storage?.models?.icon_eu?.freshnessMinutesSinceFullIngest);
+
+  const cards=[
+    ['Freshness', freshness==null?'-':`${freshness.toFixed(1)} min`, 'freshness', freshness],
+    ['Tile p95', p95==null?'-':`${Math.round(p95)} ms`, 'p95', p95],
+    ['Tile p50', p50==null?'-':`${Math.round(p50)} ms`, 'p50', p50],
+    ['Cache hit rate', hitRate==null?'-':`${(hitRate*100).toFixed(1)}%`, 'hitRate', hitRate*100],
+    ['D2 full ingest age', d2Fresh==null?'-':`${d2Fresh.toFixed(1)} min`, 'd2Fresh', d2Fresh],
+    ['EU full ingest age', euFresh==null?'-':`${euFresh.toFixed(1)} min`, 'euFresh', euFresh],
   ];
-  let html=kvTable(rows);
+  document.getElementById('kpis').innerHTML=cards.map(([l,v,k,n])=>`<div class="kpi"><div class="label">${esc(l)}</div><div class="value">${esc(v)}</div>${kpiDelta(k,n)}</div>`).join('');
+}
+
+function renderPipeline(storage){
+  const modelRow=(name,m,stepsExpected)=>{
+    const steps=toNum(m?.latestRunFullyIngestedSteps);
+    const pct=(Number.isFinite(steps)?Math.min(100,(steps/stepsExpected)*100):0);
+    const rows=[
+      ['Latest run',m?.latestRun],['DWD available',m?.latestRunFullyAvailableOnDwdAt],['First ingest',m?.latestRunFirstIngestedAt],
+      ['Full ingest',m?.latestRunFullyIngestedAt],['Calc duration (min)',m?.modelCalculationMinutes],['Ingest duration (min)',m?.ingestDurationMinutes]
+    ];
+    return `<div class="timeline-row">
+      <div class="timeline-head"><strong>${esc(name)}</strong><span class="muted">${esc(m?.latestRun||'-')}</span></div>
+      ${kvTable(rows)}
+      <div class="muted" style="margin-top:8px">Completion estimate by steps: ${Number.isFinite(steps)?`${steps}/${stepsExpected}`:'-'}</div>
+      <div class="timeline-track"><div class="timeline-fill" style="width:${pct.toFixed(1)}%"></div></div>
+    </div>`;
+  };
+  const d2=storage?.models?.icon_d2||{};
+  const eu=storage?.models?.icon_eu||{};
+  document.getElementById('pipeline').innerHTML = `<div class="timeline">${modelRow('ICON-D2',d2,48)}${modelRow('ICON-EU',eu,92)}</div>`;
+}
+
+function renderStorage(storage){
+  const d2=storage?.models?.icon_d2||{}, eu=storage?.models?.icon_eu||{}, tmp=storage?.tmp||{}, ingest=storage?.ingest||{};
+  let html=kvTable([
+    ['Total data size',fmt(storage?.totalBytes)],['D2 size',fmt(d2.totalBytes)],['EU size',fmt(eu.totalBytes)],
+    ['Ingest running',ingest.isRunning],['Ingest lock', ingest.lock?.exists ? `yes (${ingest.lock?.ageSeconds}s)` : 'no'],['tmp entries',tmp.count||0],
+  ]);
   if((tmp.entries||[]).length){
-    html += '<h3>tmp</h3><table><tr><th>Name</th><th>Dir</th><th>Size</th></tr>' + tmp.entries.map(e=>`<tr><td>${esc(e.name)}</td><td>${e.isDir}</td><td>${fmt(e.bytes)}</td></tr>`).join('') + '</table>';
+    html+='<h3>tmp</h3><table><tr><th>Name</th><th>Dir</th><th>Size</th></tr>'+
+      tmp.entries.map(e=>`<tr><td>${esc(e.name)}</td><td>${esc(e.isDir)}</td><td>${fmt(e.bytes)}</td></tr>`).join('')+'</table>';
   }
   document.getElementById('storage').innerHTML=html;
 }
 
-async function loadUsage(){
-  const a=await j('/api/admin/storage');
-  const m=a.markers||{}, u=a.usage||{};
-  const rows=[
-    ['Stored markers', m.totalMarkers],
-    ['Distinct clients', m.distinctClientIds],
-    ['Markers active 24h', m.activeLast24h],
-    ['Markers active 7d', m.activeLast7d],
-    ['Visits (30d)', u.totalVisits],
-    ['Estimated unique (30d)', u.estimatedUniqueVisitors],
-    ['Usage updatedAt', u.updatedAt],
-  ];
-  document.getElementById('usage').innerHTML=kvTable(rows);
+function renderUsage(storage){
+  const m=storage?.markers||{}, u=storage?.usage||{};
+  document.getElementById('usage').innerHTML = kvTable([
+    ['Stored markers', m.totalMarkers],['Distinct clients', m.distinctClientIds],['Markers active 24h', m.activeLast24h],['Markers active 7d', m.activeLast7d],
+    ['Visits (30d)', u.totalVisits],['Estimated unique (30d)', u.estimatedUniqueVisitors],['Usage updatedAt', u.updatedAt],
+  ]);
 }
 
 async function setStatus(id,status){
@@ -200,54 +289,64 @@ async function setStatus(id,status){
   await loadFeedback();
 }
 
+function renderFeedbackSummary(fb){
+  const by=s=>fb.filter(x=>(x.status||'new')===s);
+  const nw=by('new'), tr=by('triaged'), rs=by('resolved');
+  const ages=nw.map(x=>minsSince(x.timestamp)).filter(Number.isFinite);
+  const avgAge=ages.length?(ages.reduce((a,b)=>a+b,0)/ages.length).toFixed(1):'-';
+  document.getElementById('feedbackSummary').innerHTML =
+    `${badgeState(nw.length? 'Warning':'OK')} <span class="muted">new: ${nw.length}</span> <span class="muted">triaged: ${tr.length}</span> <span class="muted">resolved: ${rs.length}</span> <span class="muted">avg new age: ${avgAge} min</span>`;
+}
+
 async function loadFeedback(){
-  const p=new URLSearchParams({limit:'200'}); if(state.fbStatus)p.set('status',state.fbStatus); if(state.fbSearch)p.set('q',state.fbSearch);
+  const p=new URLSearchParams({limit:'200'});
+  if(state.fbStatus) p.set('status',state.fbStatus);
+  if(state.fbSearch) p.set('q',state.fbSearch);
   const r=await j('/api/feedback?'+p.toString());
   const fb=r.feedback||[];
+  _feedbackLast=fb;
+  renderFeedbackSummary(fb);
   document.getElementById('feedback').innerHTML = fb.length
-    ? '<table><tr><th>Time</th><th>Type</th><th>Status</th><th>Message</th><th>Actions</th></tr>' + fb.map(f=>`<tr><td>${esc(f.timestamp)}</td><td>${esc(f.type)}</td><td><span class="tag ${esc(f.status||'new')}">${esc(f.status||'new')}</span></td><td>${esc(f.message)}</td><td><button onclick="setStatus(${Number(f.id)},'new')">new</button> <button onclick="setStatus(${Number(f.id)},'triaged')">triaged</button> <button onclick="setStatus(${Number(f.id)},'resolved')">resolved</button></td></tr>`).join('') + '</table>'
+    ? '<table><tr><th>Time</th><th>Type</th><th>Status</th><th>Message</th><th>Actions</th></tr>' + fb.map(f=>`<tr><td>${esc(f.timestamp)}</td><td>${esc(f.type)}</td><td><span class="tag ${esc(f.status||'new')}">${esc(f.status||'new')}</span></td><td>${esc(f.message)}</td><td><button onclick="setStatus(${Number(f.id)},\'new\')">new</button> <button onclick="setStatus(${Number(f.id)},\'triaged\')">triaged</button> <button onclick="setStatus(${Number(f.id)},\'resolved\')">resolved</button></td></tr>`).join('') + '</table>'
     : '<div class="muted">No feedback.</div>';
 }
 
 const SOURCE_LABEL={'backend':'⚙️ Backend','ingest':'📥 Ingest','stdout':'📄 stdout'};
 const SOURCE_COLOR={'backend':'#2563eb','ingest':'#d97706','stdout':'#475569'};
 
+function renderLogsSummary(logs){
+  let error=0,warn=0; let latestEx='-'; const freq={};
+  const all=(logs||[]).flatMap(l=>l.tail||[]);
+  for(const ln of all){
+    const lo=ln.toLowerCase();
+    if(/error|exception|traceback|critical/.test(lo)){error++; latestEx=ln; freq[ln]=(freq[ln]||0)+1;}
+    else if(/warn|warning/.test(lo)) warn++;
+  }
+  const top=Object.entries(freq).sort((a,b)=>b[1]-a[1])[0];
+  document.getElementById('logsSummary').innerHTML=`${badgeState(error? 'Warning':'OK')} <span class="muted">errors: ${error}</span> <span class="muted">warnings: ${warn}</span> <span class="muted">top repeat: ${esc(top?`${top[0].slice(0,90)} (${top[1]}x)`:'-')}</span> <span class="muted">latest exception: ${esc(latestEx==='-'?'-':latestEx.slice(0,90))}</span>`;
+}
+
 function renderLogs(){
   const needle=(state.logFilter||'').toLowerCase();
   const fileFilter=state.logFile;
   const newestFirst=state.logNewest;
-
   let logs=fileFilter==='all'?_logsCache:_logsCache.filter(l=>l.file===fileFilter);
   if(!logs.length){document.getElementById('logs').innerHTML='<div class="muted">No logs.</div>';return;}
 
-  // Group by source
   const groups={};
-  for(const l of logs){
-    const s=l.source||'backend';
-    if(!groups[s]) groups[s]=[];
-    groups[s].push(l);
-  }
-
+  for(const l of logs){const s=l.source||'backend'; (groups[s]||(groups[s]=[])).push(l);}
   let html='';
   for(const src of ['backend','ingest','stdout']){
-    const grp=groups[src];
-    if(!grp||!grp.length) continue;
-    const color=SOURCE_COLOR[src]||'#475569';
-    const label=SOURCE_LABEL[src]||src;
-    html+=`<div style="border-left:3px solid ${color};padding-left:10px;margin-bottom:18px">`;
-    html+=`<h3 style="margin:0 0 8px;color:${color}">${label}</h3>`;
+    const grp=groups[src]; if(!grp||!grp.length) continue;
+    const color=SOURCE_COLOR[src]||'#475569'; const label=SOURCE_LABEL[src]||src;
+    html+=`<div style="border-left:3px solid ${color};padding-left:10px;margin-bottom:18px"><h3 style="margin:0 0 8px;color:${color}">${label}</h3>`;
     for(const l of grp){
-      let lines=[...(l.tail||[])];
-      if(newestFirst) lines=lines.reverse();
-      const total=lines.length;
-      if(needle) lines=lines.filter(ln=>ln.toLowerCase().includes(needle));
+      let lines=[...(l.tail||[])]; if(newestFirst) lines=lines.reverse();
+      const total=lines.length; if(needle) lines=lines.filter(ln=>ln.toLowerCase().includes(needle));
       const shown=lines.length;
-      const counter=needle?`${shown} of ${total} lines`:`${total} lines`;
-      const pre=esc(lines.join('\n'));
-      html+=`<details open><summary style="cursor:pointer;font-size:13px;margin-bottom:4px">${esc(l.file)} <span class="muted">${fmt(l.sizeBytes)} · ${counter}</span></summary>`;
-      html+=`<pre>${pre||'(empty)'}</pre></details>`;
+      html+=`<details open><summary style="cursor:pointer;font-size:13px;margin-bottom:4px">${esc(l.file)} <span class="muted">${fmt(l.sizeBytes)} · ${shown}${needle?` of ${total}`:''} lines</span></summary><pre>${esc(lines.join('\n')||'(empty)')}</pre></details>`;
     }
-    html+=`</div>`;
+    html+='</div>';
   }
   document.getElementById('logs').innerHTML=html;
 }
@@ -256,131 +355,98 @@ async function loadLogs(){
   const params=new URLSearchParams({limit:'5000',level:state.logLevel,source:state.logSource});
   const r=await j('/api/admin/logs?'+params.toString());
   const arts=r.artifacts||{};
-
   _logsCache=r.logs||[];
 
-  // Populate file selector (preserve previous selection)
   const sel=document.getElementById('logFile');
-  const prev=sel.value;
+  const prev=state.logFile||sel.value;
   sel.innerHTML='<option value="all">all files</option>'+_logsCache.map(l=>`<option value="${esc(l.file)}">${esc(l.file)}</option>`).join('');
-  if(_logsCache.some(l=>l.file===prev)) sel.value=prev;
+  state.logFile=_logsCache.some(l=>l.file===prev)?prev:'all';
+  sel.value=state.logFile;
 
-  // Artifacts banner (rendered once, not appended)
   const ai=(arts.ingest||[]).map(x=>`<span title="${esc(x.path)}">${esc(x.name)} (${fmt(x.sizeBytes)})</span>`).join(', ')||'<span class="muted">none</span>';
   document.getElementById('logsArtifacts').innerHTML=`<span class="muted" style="font-size:12px">Ingest artifacts: ${ai}</span>`;
-
+  renderLogsSummary(_logsCache);
   renderLogs();
 }
 
-async function loadAll(){await Promise.all([loadStatus(),loadStorage(),loadUsage(),loadFeedback(),loadLogs()]);}
+async function loadCore(){
+  const [status,storage]=await Promise.all([j('/api/status'),j('/api/admin/storage')]);
+  _statusCache=status; _storageCache=storage;
+  renderHealth(status,storage); renderKpis(status,storage); renderPipeline(storage); renderStorage(storage); renderUsage(storage);
+}
+
+async function loadAll(){
+  await Promise.all([loadCore(), loadFeedback(), loadLogs()]);
+  document.getElementById('lastUpdated').textContent = new Date().toLocaleString();
+  _refreshLeft=_refreshEvery;
+}
+
+async function queryEmagram(){
+  const lat=parseFloat(document.getElementById('emLat').value); const lon=parseFloat(document.getElementById('emLon').value);
+  const time=document.getElementById('emTime').value.trim()||'latest'; const model=document.getElementById('emModel').value;
+  const out=document.getElementById('emResult'); out.innerHTML='<div class="muted">Loading…</div>';
+  try{
+    const p=new URLSearchParams({lat,lon,time,model}); const data=await j('/api/emagram_point?'+p.toString());
+    const pt=data.point||{};
+    let html=kvTable([
+      ['Model',data.model],['Run',data.run],['Step',data.step],['Valid time',data.validTime],['Requested',`${pt.requestedLat}, ${pt.requestedLon}`],['Grid point',`${pt.gridLat}, ${pt.gridLon} (i=${pt.i}, j=${pt.j})`],['Levels returned',data.count],
+    ]);
+    if((data.levels||[]).length){
+      html+='<h3>Levels</h3><table><tr><th>hPa</th><th>Alt (m)</th><th>Temp (°C)</th><th>Dew (°C)</th><th>RH (%)</th><th>Wind (kt)</th><th>Dir (°)</th><th>Geopotential</th></tr>';
+      for(const l of data.levels) html+=`<tr><td>${esc(l.pressureHpa)}</td><td>${esc(l.altitudeM??'-')}</td><td>${esc(l.temperatureC??'-')}</td><td>${esc(l.dewpointC??'-')}</td><td>${esc(l.relativeHumidityPct??'-')}</td><td>${esc(l.windSpeedKt??'-')}</td><td>${esc(l.windDirDeg??'-')}</td><td>${esc(l.geopotential??'-')}</td></tr>`;
+      html+='</table>';
+    }
+    html+=`<details style="margin-top:10px"><summary style="cursor:pointer;font-size:13px">Raw JSON</summary><pre>${esc(JSON.stringify(data,null,2))}</pre></details>`;
+    out.innerHTML=html;
+  }catch(e){out.innerHTML=`<div style="color:#f87171">${esc(e.message)}</div>`;}
+}
+
+async function queryMeteogram(){
+  const lat=parseFloat(document.getElementById('mgLat').value); const lon=parseFloat(document.getElementById('mgLon').value);
+  const model=document.getElementById('mgModel').value; const out=document.getElementById('mgResult'); out.innerHTML='<div class="muted">Loading…</div>';
+  try{
+    const p=new URLSearchParams({lat,lon}); if(model) p.set('model',model); const data=await j('/api/meteogram_point?'+p.toString());
+    const pt=data.point||{}; const series=data.series||[]; const first=series[0]||{}, last=series[series.length-1]||{};
+    const models=[...new Set(series.map(x=>x.model).filter(Boolean))].join(', ');
+    let html=kvTable([
+      ['Requested',`${pt.requestedLat}, ${pt.requestedLon}`],['Grid point',`${pt.gridLat}, ${pt.gridLon} (i=${pt.i}, j=${pt.j})`],['Points',data.count],['Models',models||'-'],['From',first.validTime||'-'],['To',last.validTime||'-'],
+    ]);
+    if(series.length){
+      const sample=series.slice(0,12);
+      html+='<h3>Sample</h3><table><tr><th>Valid</th><th>Model</th><th>Wind kt</th><th>Dir°</th><th>Gust kt</th><th>Cloud %</th><th>Precip</th><th>SnowDepth m</th><th>CAPE</th><th>LPI</th></tr>';
+      for(const r of sample) html+=`<tr><td>${esc(r.validTime)}</td><td>${esc(r.model)}</td><td>${esc(r.wind10mKt??'-')}</td><td>${esc(r.windDir10mDeg??'-')}</td><td>${esc(r.gust10mKt??'-')}</td><td>${esc(r.cloudTotalPct??'-')}</td><td>${esc(r.precipTotal??'-')}</td><td>${esc(r.snowDepthM??'-')}</td><td>${esc(r.capeMl??'-')}</td><td>${esc(r.lpi??'-')}</td></tr>`;
+      html+='</table>'; if(series.length>sample.length) html+=`<div class="muted">Showing first ${sample.length} of ${series.length} rows.</div>`;
+    }
+    html+=`<details style="margin-top:10px"><summary style="cursor:pointer;font-size:13px">Raw JSON</summary><pre>${esc(JSON.stringify(data,null,2))}</pre></details>`;
+    out.innerHTML=html;
+  }catch(e){out.innerHTML=`<div style="color:#f87171">${esc(e.message)}</div>`;}
+}
 
 document.getElementById('refresh').onclick=()=>loadAll().catch(e=>alert(e.message));
-document.getElementById('fbApply').onclick=()=>{state.fbStatus=document.getElementById('fbStatus').value;state.fbSearch=document.getElementById('fbSearch').value.trim();loadFeedback().catch(e=>alert(e.message));};
+document.getElementById('fbApply').onclick=()=>{state.fbStatus=document.getElementById('fbStatus').value;state.fbSearch=document.getElementById('fbSearch').value.trim();persistUrlState();loadFeedback().catch(e=>alert(e.message));};
 document.getElementById('logApply').onclick=()=>{
   state.logLevel=document.getElementById('logLevel').value;
   state.logSource=document.getElementById('logSource').value;
   state.logFilter=document.getElementById('logFilter').value.trim();
   state.logFile=document.getElementById('logFile').value;
   state.logNewest=document.getElementById('logNewest').checked;
+  persistUrlState();
   loadLogs().catch(e=>alert(e.message));
 };
-document.getElementById('logFilter').addEventListener('input',()=>{
-  state.logFilter=document.getElementById('logFilter').value.trim();
-  if(_logsCache.length) renderLogs();
-});
-document.getElementById('logFile').addEventListener('change',()=>{
-  state.logFile=document.getElementById('logFile').value;
-  if(_logsCache.length) renderLogs();
-});
-document.getElementById('logNewest').addEventListener('change',()=>{
-  state.logNewest=document.getElementById('logNewest').checked;
-  if(_logsCache.length) renderLogs();
-});
-document.getElementById('logSource').addEventListener('change',()=>{
-  state.logSource=document.getElementById('logSource').value;
-  // Source change requires a new API fetch (server-side filter)
-  loadLogs().catch(e=>alert(e.message));
-});
-window.setStatus=(id,s)=>setStatus(id,s).catch(e=>alert(e.message));
 
-async function queryEmagram(){
-  const lat=parseFloat(document.getElementById('emLat').value);
-  const lon=parseFloat(document.getElementById('emLon').value);
-  const time=document.getElementById('emTime').value.trim()||'latest';
-  const model=document.getElementById('emModel').value;
-  const out=document.getElementById('emResult');
-  out.innerHTML='<div class="muted">Loading…</div>';
-  try{
-    const p=new URLSearchParams({lat,lon,time,model});
-    const data=await j('/api/emagram_point?'+p.toString());
-    const pt=data.point||{};
-    const meta=[
-      ['Model',data.model],['Run',data.run],['Step',data.step],['Valid time',data.validTime],
-      ['Requested',`${pt.requestedLat}, ${pt.requestedLon}`],
-      ['Grid point',`${pt.gridLat}, ${pt.gridLon} (i=${pt.i}, j=${pt.j})`],
-      ['Levels returned',data.count],
-    ];
-    let html=kvTable(meta);
-    if((data.levels||[]).length){
-      html+='<h3 style="margin:10px 0 6px">Levels</h3>';
-      html+='<table><tr><th>hPa</th><th>Alt (m)</th><th>Temp (°C)</th><th>Dew (°C)</th><th>RH (%)</th><th>Wind (kt)</th><th>Dir (°)</th><th>Geopotential</th></tr>';
-      for(const l of data.levels){
-        html+=`<tr><td>${esc(l.pressureHpa)}</td><td>${esc(l.altitudeM??'-')}</td><td>${esc(l.temperatureC??'-')}</td><td>${esc(l.dewpointC??'-')}</td><td>${esc(l.relativeHumidityPct??'-')}</td><td>${esc(l.windSpeedKt??'-')}</td><td>${esc(l.windDirDeg??'-')}</td><td>${esc(l.geopotential??'-')}</td></tr>`;
-      }
-      html+='</table>';
-    }
-    html+=`<details style="margin-top:10px"><summary style="cursor:pointer;font-size:13px">Raw JSON</summary><pre>${esc(JSON.stringify(data,null,2))}</pre></details>`;
-    out.innerHTML=html;
-  }catch(e){
-    out.innerHTML=`<div style="color:#f87171">${esc(e.message)}</div>`;
-  }
-}
-
-async function queryMeteogram(){
-  const lat=parseFloat(document.getElementById('mgLat').value);
-  const lon=parseFloat(document.getElementById('mgLon').value);
-  const model=document.getElementById('mgModel').value;
-  const out=document.getElementById('mgResult');
-  out.innerHTML='<div class="muted">Loading…</div>';
-  try{
-    const p=new URLSearchParams({lat,lon});
-    if(model) p.set('model',model);
-    const data=await j('/api/meteogram_point?'+p.toString());
-    const pt=data.point||{};
-    const series=data.series||[];
-    const first=series[0]||{}, last=series[series.length-1]||{};
-    const models=[...new Set(series.map(x=>x.model).filter(Boolean))].join(', ');
-    const rows=[
-      ['Requested',`${pt.requestedLat}, ${pt.requestedLon}`],
-      ['Grid point',`${pt.gridLat}, ${pt.gridLon} (i=${pt.i}, j=${pt.j})`],
-      ['Points',data.count],
-      ['Models',models||'-'],
-      ['From',first.validTime||'-'],
-      ['To',last.validTime||'-'],
-    ];
-    let html=kvTable(rows);
-    if(series.length){
-      const sample=series.slice(0,12);
-      html+='<h3 style="margin:10px 0 6px">Sample</h3>';
-      html+='<table><tr><th>Valid</th><th>Model</th><th>Wind kt</th><th>Dir°</th><th>Gust kt</th><th>Cloud %</th><th>Precip</th><th>SnowDepth m</th><th>CAPE</th><th>LPI</th></tr>';
-      for(const r of sample){
-        html+=`<tr><td>${esc(r.validTime)}</td><td>${esc(r.model)}</td><td>${esc(r.wind10mKt??'-')}</td><td>${esc(r.windDir10mDeg??'-')}</td><td>${esc(r.gust10mKt??'-')}</td><td>${esc(r.cloudTotalPct??'-')}</td><td>${esc(r.precipTotal??'-')}</td><td>${esc(r.snowDepthM??'-')}</td><td>${esc(r.capeMl??'-')}</td><td>${esc(r.lpi??'-')}</td></tr>`;
-      }
-      html+='</table>';
-      if(series.length>sample.length) html+=`<div class="muted" style="margin-top:6px">Showing first ${sample.length} of ${series.length} rows.</div>`;
-    }
-    html+=`<details style="margin-top:10px"><summary style="cursor:pointer;font-size:13px">Raw JSON</summary><pre>${esc(JSON.stringify(data,null,2))}</pre></details>`;
-    out.innerHTML=html;
-  }catch(e){
-    out.innerHTML=`<div style="color:#f87171">${esc(e.message)}</div>`;
-  }
-}
+document.getElementById('logFilter').addEventListener('input',()=>{state.logFilter=document.getElementById('logFilter').value.trim();persistUrlState();if(_logsCache.length) renderLogs();});
+document.getElementById('logFile').addEventListener('change',()=>{state.logFile=document.getElementById('logFile').value;persistUrlState();if(_logsCache.length) renderLogs();});
+document.getElementById('logNewest').addEventListener('change',()=>{state.logNewest=document.getElementById('logNewest').checked;persistUrlState();if(_logsCache.length) renderLogs();});
+document.getElementById('logSource').addEventListener('change',()=>{state.logSource=document.getElementById('logSource').value;persistUrlState();loadLogs().catch(e=>alert(e.message));});
 
 document.getElementById('emQuery').onclick=()=>queryEmagram();
 document.getElementById('mgQuery').onclick=()=>queryMeteogram();
+window.setStatus=(id,s)=>setStatus(id,s).catch(e=>alert(e.message));
 
+applyUrlState();
 loadAll().catch(e=>{document.body.insertAdjacentHTML('beforeend','<pre>'+esc(e.message)+'</pre>');});
-window.setInterval(()=>{loadAll().catch(()=>{});},120000);
+window.setInterval(()=>{_refreshLeft=Math.max(0,_refreshLeft-1);document.getElementById('refreshCountdown').textContent=String(_refreshLeft);},1000);
+window.setInterval(()=>{loadAll().catch(()=>{});},_refreshEvery*1000);
 </script>
 </body>
 </html>
