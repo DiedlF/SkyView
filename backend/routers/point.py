@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Optional
-import time
+import time as _time
 from collections import OrderedDict
 
 import numpy as np
@@ -55,7 +55,7 @@ def build_point_router(
             int(zoom) if zoom is not None else None,
             bool(include_overlay),
         )
-        now = time.time()
+        now = _time.time()
         cached = point_cache.get(cache_key)
         if cached is not None:
             payload, ts = cached
