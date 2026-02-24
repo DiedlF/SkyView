@@ -1085,25 +1085,34 @@ async def api_symbols(
 
 
 async def api_emagram_point(
+    request: Request,
     lat: float = Query(..., ge=-90, le=90),
     lon: float = Query(..., ge=-180, le=180),
     time: str = Query("latest"),
     model: Optional[str] = Query("icon_d2"),
     stream: bool = Query(False),
     _internal: bool = False,
+    _cancel_event: Optional[threading.Event] = None,
 ):
     """Vertical emagram core profile (ICON-D2): T + altitude from geopotential."""
     if stream and not _internal:
         async def _gen():
+            cancel_event = threading.Event()
             yield json.dumps({"type": "progress", "message": "starting emagram"}) + "\n"
-            task = asyncio.create_task(run_in_threadpool(lambda: asyncio.run(api_emagram_point(lat=lat, lon=lon, time=time, model=model, stream=False, _internal=True))))
+            task = asyncio.create_task(run_in_threadpool(lambda: asyncio.run(api_emagram_point(request=request, lat=lat, lon=lon, time=time, model=model, stream=False, _internal=True, _cancel_event=cancel_event))))
             while not task.done():
+                if await request.is_disconnected():
+                    cancel_event.set()
+                    task.cancel()
+                    return
                 yield json.dumps({"type": "heartbeat", "message": "working"}) + "\n"
                 await asyncio.sleep(1.0)
             try:
                 payload = await task
                 yield json.dumps({"type": "done", "data": payload}) + "\n"
             except Exception as e:
+                if cancel_event.is_set():
+                    return
                 yield json.dumps({"type": "error", "detail": str(e)}) + "\n"
         return StreamingResponse(_gen(), media_type="application/x-ndjson")
 
@@ -1142,6 +1151,8 @@ async def api_emagram_point(
 
     levels = []
     for lev in EMAGRAM_D2_LEVELS_HPA:
+        if _cancel_event is not None and _cancel_event.is_set():
+            raise HTTPException(499, "Client Closed Request")
         t_key = f"t_{lev}hpa"
         fi_key = f"fi_{lev}hpa"
         rh_key = f"relhum_{lev}hpa"
@@ -1201,23 +1212,32 @@ async def api_emagram_point(
 
 
 async def api_meteogram_point(
+    request: Request,
     lat: float = Query(..., ge=-90, le=90),
     lon: float = Query(..., ge=-180, le=180),
     model: Optional[str] = Query("icon_d2"),
     stream: bool = Query(False),
     _internal: bool = False,
+    _cancel_event: Optional[threading.Event] = None,
 ):
     if stream and not _internal:
         async def _gen():
+            cancel_event = threading.Event()
             yield json.dumps({"type": "progress", "message": "starting meteogram"}) + "\n"
-            task = asyncio.create_task(run_in_threadpool(lambda: asyncio.run(api_meteogram_point(lat=lat, lon=lon, model=model, stream=False, _internal=True))))
+            task = asyncio.create_task(run_in_threadpool(lambda: asyncio.run(api_meteogram_point(request=request, lat=lat, lon=lon, model=model, stream=False, _internal=True, _cancel_event=cancel_event))))
             while not task.done():
+                if await request.is_disconnected():
+                    cancel_event.set()
+                    task.cancel()
+                    return
                 yield json.dumps({"type": "heartbeat", "message": "working"}) + "\n"
                 await asyncio.sleep(1.0)
             try:
                 payload = await task
                 yield json.dumps({"type": "done", "data": payload}) + "\n"
             except Exception as e:
+                if cancel_event.is_set():
+                    return
                 yield json.dumps({"type": "error", "detail": str(e)}) + "\n"
         return StreamingResponse(_gen(), media_type="application/x-ndjson")
 
@@ -1253,6 +1273,8 @@ async def api_meteogram_point(
     out = []
     grid_point = None
     for s in steps:
+        if _cancel_event is not None and _cancel_event.is_set():
+            raise HTTPException(499, "Client Closed Request")
         run_i = s.get("run")
         step_i = int(s.get("step"))
         model_i = s.get("model")
