@@ -445,8 +445,8 @@ async function throwHttpError(res, context = 'request') {
   throw err;
 }
 
-async function fetchNdjson(url, onEvent) {
-  const res = await fetch(url);
+async function fetchNdjson(url, onEvent, options = {}) {
+  const res = await fetch(url, { signal: options.signal });
   if (!res.ok) await throwHttpError(res, 'API');
   if (!res.body) return null;
   const reader = res.body.getReader();
@@ -1595,7 +1595,7 @@ const meteogramClose = document.getElementById('meteogram-close');
 const meteogramTitle = document.getElementById('meteogram-title');
 const meteogramBody = document.getElementById('meteogram-body');
 let emagramState = { open: false, lat: null, lon: null, model: '', zoom: null, loading: false, reqId: 0, allowedIndices: [] };
-let meteogramState = { open: false, lat: null, lon: null, model: '' };
+let meteogramState = { open: false, lat: null, lon: null, model: '', abortCtrl: null };
 const emagramCache = new Map();
 const meteogramCache = new Map();
 const EMAGRAM_CACHE_MAX = 96;
@@ -1638,6 +1638,10 @@ function closeEmagram() {
 
 function closeMeteogram() {
   meteogramState.open = false;
+  if (meteogramState.abortCtrl) {
+    try { meteogramState.abortCtrl.abort(); } catch {}
+    meteogramState.abortCtrl = null;
+  }
   if (meteogramOverlay) meteogramOverlay.style.display = 'none';
 }
 
@@ -2015,7 +2019,11 @@ function renderMeteogramSvg(series) {
 async function openMeteogramAt(lat, lon, model = 'icon_d2') {
   if (!meteogramOverlay || !meteogramBody) return;
   const key = `${Number(lat).toFixed(4)}|${Number(lon).toFixed(4)}|${model || ''}`;
-  meteogramState = { open: true, lat: Number(lat), lon: Number(lon), model: model || '' };
+  if (meteogramState.abortCtrl) {
+    try { meteogramState.abortCtrl.abort(); } catch {}
+  }
+  const abortCtrl = new AbortController();
+  meteogramState = { open: true, lat: Number(lat), lon: Number(lon), model: model || '', abortCtrl };
   meteogramOverlay.style.display = 'flex';
   meteogramBody.innerHTML = '<div style="opacity:.8">Loading meteogram…</div>';
   try {
@@ -2028,7 +2036,7 @@ async function openMeteogramAt(lat, lon, model = 'icon_d2') {
         if (evt?.type === 'progress' || evt?.type === 'heartbeat') {
           meteogramBody.innerHTML = '<div style="opacity:.8">Loading meteogram…</div>';
         }
-      });
+      }, { signal: abortCtrl.signal });
       meteogramCacheSet(key, data);
     }
     const p = data.point || {};
@@ -2039,7 +2047,12 @@ async function openMeteogramAt(lat, lon, model = 'icon_d2') {
     if (meteogramTitle) meteogramTitle.textContent = `Meteogram · ${glat}, ${glon} · ${String(modelUsed).toUpperCase().replace('_','-')} · Run ${runUsed}`;
     meteogramBody.innerHTML = renderMeteogramSvg(data.series || []);
   } catch (e) {
+    if (e && (e.name === 'AbortError' || String(e.message || '').toLowerCase().includes('aborted'))) {
+      return;
+    }
     meteogramBody.innerHTML = `<div style="color:#ff9f9f">Failed to load meteogram: ${String(e.message || e)}</div>`;
+  } finally {
+    if (meteogramState.abortCtrl === abortCtrl) meteogramState.abortCtrl = null;
   }
 }
 
