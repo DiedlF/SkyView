@@ -2,7 +2,11 @@
 
 let map, symbolLayer, windLayer, markerLayer, d2BorderLayer = null, overlayLayer = null, debounceTimer, overlayDebounce, windDebounce, timesteps = [], currentTimeIndex = 0, currentRun = '';
 let overlayRequestSeq = 0;
+let symbolsRequestSeq = 0;
+let windRequestSeq = 0;
 let overlayAbortCtrl = null;
+let symbolsAbortCtrl = null;
+let windAbortCtrl = null;
 let overlayPrewarmCtrl = null;
 let overlayObjectUrl = null;
 let currentOverlay = 'none';
@@ -652,13 +656,19 @@ async function loadSymbols() {
     const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
     const zoom = map.getZoom();
     const time = timesteps[currentTimeIndex]?.validTime || '';
+    const reqId = ++symbolsRequestSeq;
+    if (symbolsAbortCtrl) symbolsAbortCtrl.abort();
+    symbolsAbortCtrl = new AbortController();
+    const signal = symbolsAbortCtrl.signal;
     try {
       // Pass model hint if timestep has model info (from merged timeline)
       const step = timesteps[currentTimeIndex];
       const modelParam = step && step.model ? `&model=${step.model}` : '';
-      const res = await fetch(`/api/symbols?bbox=${bbox}&zoom=${zoom}&time=${encodeURIComponent(time)}${modelParam}`);
+      const res = await fetch(`/api/symbols?bbox=${bbox}&zoom=${zoom}&time=${encodeURIComponent(time)}${modelParam}`, { signal });
       if (!res.ok) await throwHttpError(res, 'API');
+      if (reqId !== symbolsRequestSeq) return;
       const data = await res.json();
+      if (reqId !== symbolsRequestSeq) return;
       markApiSuccess();
       updateFallbackBanner(data);
       symbolLayer.clearLayers();
@@ -698,6 +708,7 @@ async function loadSymbols() {
         }
       }
     } catch (e) {
+      if (e.name === 'AbortError') return;
       console.error('Error loading symbols:', e);
       markApiFailure('symbols', e);
       updateFallbackBanner(null);
@@ -1175,11 +1186,17 @@ async function loadWind() {
     const time = timesteps[currentTimeIndex]?.validTime || '';
     const step = timesteps[currentTimeIndex];
     const modelParam = step && step.model ? `&model=${step.model}` : '';
+    const reqId = ++windRequestSeq;
+    if (windAbortCtrl) windAbortCtrl.abort();
+    windAbortCtrl = new AbortController();
+    const signal = windAbortCtrl.signal;
 
     try {
-      const res = await fetch(`/api/wind?bbox=${bbox}&zoom=${zoom}&time=${encodeURIComponent(time)}${modelParam}&level=${windLevel}`);
+      const res = await fetch(`/api/wind?bbox=${bbox}&zoom=${zoom}&time=${encodeURIComponent(time)}${modelParam}&level=${windLevel}`, { signal });
       if (!res.ok) await throwHttpError(res, 'API');
+      if (reqId !== windRequestSeq) return;
       const data = await res.json();
+      if (reqId !== windRequestSeq) return;
       markApiSuccess();
 
       data.barbs.forEach(b => {
@@ -1197,6 +1214,7 @@ async function loadWind() {
         });
       }
     } catch (e) {
+      if (e.name === 'AbortError') return;
       console.error('Wind barb error:', e);
       markApiFailure('wind', e);
     }

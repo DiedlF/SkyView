@@ -85,7 +85,19 @@ def build_weather_router(
         run, step, model_used = resolve_time_with_cache_context(time, model)
 
         is_low_zoom_global = zoom <= LOW_ZOOM_GLOBAL_CACHE_MAX_ZOOM
-        cache_bbox = f"{lat_min:.4f},{lon_min:.4f},{lat_max:.4f},{lon_max:.4f}"
+
+        def _snap(v: float, q: float) -> float:
+            return round(round(v / q) * q, 5)
+
+        # Normalize high-zoom bbox keys to improve cache hit-rate across micro-pans.
+        if is_low_zoom_global:
+            cache_bbox = f"{lat_min:.4f},{lon_min:.4f},{lat_max:.4f},{lon_max:.4f}"
+        else:
+            q = max(0.01, cell_size * 0.5)
+            cache_bbox = (
+                f"{_snap(lat_min,q):.4f},{_snap(lon_min,q):.4f},"
+                f"{_snap(lat_max,q):.4f},{_snap(lon_max,q):.4f}"
+            )
         symbols_cache_key = (
             f"{model_used}|{run}|{step}|z{zoom}|global"
             if is_low_zoom_global
@@ -179,12 +191,21 @@ def build_weather_router(
 
         eu_data_missing = False
         if model_used == "icon_d2":
+            # Cheap EU-skip gate: if viewport is well inside D2 and D2 signal density is high,
+            # skip EU fallback entirely for this request.
+            bbox_inside_d2 = (
+                lat_min >= d2_lat_min and lat_max <= d2_lat_max
+                and lon_min >= d2_lon_min and lon_max <= d2_lon_max
+            )
+            finite_ratio = float(np.mean(np.isfinite(ww))) if ww.size else 0.0
+            allow_eu_fallback = not (bbox_inside_d2 and finite_ratio >= 0.995)
+
             needs_eu_for_coverage = (
                 (lat_min - pad) < d2_lat_min or (lat_max + pad) > d2_lat_max
                 or (lon_min - pad) < d2_lon_min or (lon_max + pad) > d2_lon_max
             )
             needs_eu_for_signal = bool(ww.size) and bool(np.any(~np.isfinite(ww)))
-            if needs_eu_for_coverage or needs_eu_for_signal:
+            if allow_eu_fallback and (needs_eu_for_coverage or needs_eu_for_signal):
                 try:
                     eu_fb = _load_eu_data_strict(time, symbol_keys)
                     if eu_fb is not None and eu_fb.get("missing"):
@@ -229,12 +250,20 @@ def build_weather_router(
         )
         t_grid_ms += (perf_counter() - t_grid0) * 1000.0
 
-        _pre_d2 = scatter_cell_stats(
-            c_lat, c_lon, ctx, ww, c_cape, ceil_arr,
-            CAPE_CONV_THRESHOLD, CEILING_VALID_MAX_METERS,
+        need_pre_d2 = (d_eu is not None) or (c_sym_code is None) or (c_cb_hm is None)
+        _pre_d2: Any = None
+        if need_pre_d2:
+            _pre_d2 = scatter_cell_stats(
+                c_lat, c_lon, ctx, ww, c_cape, ceil_arr,
+                CAPE_CONV_THRESHOLD, CEILING_VALID_MAX_METERS,
+            )
+
+        need_pre_eu = (
+            d_eu is not None and c_lat_eu is not None and ww_eu is not None
+            and ((c_sym_code_eu is None) or (c_cb_hm_eu is None))
         )
         _pre_eu: Any = None
-        if d_eu is not None and c_lat_eu is not None and ww_eu is not None:
+        if need_pre_eu:
             _pre_eu = scatter_cell_stats(
                 c_lat_eu, c_lon_eu, ctx, ww_eu, c_cape_eu, ceil_arr_eu,
                 CAPE_CONV_THRESHOLD, CEILING_VALID_MAX_METERS,
