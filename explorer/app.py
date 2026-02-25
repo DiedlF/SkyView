@@ -67,7 +67,6 @@ PID_FILE = os.path.join(SCRIPT_DIR, "logs", "explorer.pid")
 # Shared helpers (keeps API alias + point normalization in one place)
 sys.path.insert(0, os.path.join(SCRIPT_DIR, "..", "backend"))
 from api_contract import resolve_layer_alias as _resolve_layer_alias
-from point_data import build_overlay_values_from_raw
 from time_contract import get_available_runs as tc_get_available_runs, get_merged_timeline as tc_get_merged_timeline, resolve_time as tc_resolve_time
 from grid_utils import bbox_indices as _bbox_indices, slice_array as _slice_array
 from response_headers import build_overlay_headers, build_tile_headers
@@ -830,30 +829,29 @@ async def api_point(
     time: str = Query("latest", description="ISO time or 'latest'"),
     model: Optional[str] = Query(None, description="icon_d2 or icon_eu"),
     run: Optional[str] = Query(None, description="Optional explicit run id YYYYMMDDHH"),
-    wind_level: str = Query("10m", description="10m or pressure level (950/850/700/500/300)"),
+    var: Optional[str] = Query(None, description="Rendered variable key"),
+    layer: Optional[str] = Query(None, description="Optional Skyview layer alias"),
 ):
-    """Return all variable values at a specific point for a given timestep."""
-    # Load all data for this timestep
+    """Return only one point metric: the currently rendered overlay value."""
+    if var is None and layer is not None:
+        var = _resolve_layer_alias(layer)
+    if not var:
+        raise HTTPException(400, "Missing required query param: var (or layer alias)")
+
     run, step, model_used = resolve_time_with_run(time, model, run)
-    d = load_data(run, step, model_used)
-    
+    d = load_data(run, step, model_used, keys=[var])
+
     lat_arr = d["lat"]
     lon_arr = d["lon"]
-    
-    # Find nearest grid point
     lat_idx = int(np.argmin(np.abs(lat_arr - lat)))
     lon_idx = int(np.argmin(np.abs(lon_arr - lon)))
-    
-    # Extract values for all variables
-    values = {}
-    for var_name in VARIABLE_METADATA.keys():
-        if var_name in d:
-            arr = d[var_name]
-            if isinstance(arr, np.ndarray) and arr.ndim == 2:
-                val = float(arr[lat_idx, lon_idx])
-                values[var_name] = None if np.isnan(val) else round(val, 3)
-    
-    overlay_values = build_overlay_values_from_raw(values, wind_level=wind_level)
+
+    value = None
+    if var in d:
+        arr = d[var]
+        if isinstance(arr, np.ndarray) and arr.ndim == 2:
+            val = float(arr[lat_idx, lon_idx])
+            value = None if np.isnan(val) else round(val, 3)
 
     return {
         "lat": round(float(lat_arr[lat_idx]), 4),
@@ -861,8 +859,8 @@ async def api_point(
         "validTime": d["validTime"],
         "run": run,
         "model": model_used,
-        "values": values,
-        "overlay_values": overlay_values,
+        "var": var,
+        "value": value,
     }
 
 

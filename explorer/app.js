@@ -954,10 +954,14 @@ async function handleMapClick(e) {
     if (!STATE.selectedTime) return;
 
     try {
+        const selected = STATE.selectedVariable;
+        if (!selected) return;
+
         const params = new URLSearchParams({
             lat: e.latlng.lat,
             lon: e.latlng.lng,
-            time: STATE.selectedTime
+            time: STATE.selectedTime,
+            var: selected.name,
         });
         if (STATE.selectedModel) params.append('model', STATE.selectedModel);
         if (STATE.selectedRun) params.append('run', STATE.selectedRun);
@@ -965,19 +969,17 @@ async function handleMapClick(e) {
         const response = await fetch(`/api/point?${params}`);
         const data = await response.json();
 
-        if (data.values) {
-            showPointPopup(e.latlng, data.values);
+        if ('value' in data) {
+            showPointPopup(e.latlng, data.value);
         }
     } catch (error) {
         console.error('Failed to fetch point data:', error);
     }
 }
 
-function showPointPopup(latlng, values) {
+function showPointPopup(latlng, value) {
     const selected = STATE.selectedVariable;
     if (!selected) return;
-
-    const value = values[selected.name];
 
     function formatValue(v, variable) {
         if (v === null || v === undefined || Number.isNaN(Number(v))) return 'n/a';
