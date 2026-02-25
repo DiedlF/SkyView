@@ -1,4 +1,4 @@
-"""Symbol aggregation logic for /api/symbols."""
+"""Symbol aggregation logic and lookup tables for /api/symbols."""
 
 from __future__ import annotations
 
@@ -6,6 +6,35 @@ import numpy as np
 from typing import Callable, Tuple
 
 from weather_codes import ww_to_symbol, ww_severity_rank
+
+# ── Symbol code ↔ type name ──────────────────────────────────────────────────
+SYMBOL_CODE_TO_TYPE: dict[int, str] = {
+    0: "clear", 1: "st", 2: "ac", 3: "ci",
+    4: "blue_thermal", 5: "cu_hum", 6: "cu_con", 7: "cb",
+    20: "fog", 21: "rime_fog",
+    22: "drizzle_light", 23: "drizzle_moderate", 24: "drizzle_dense",
+    25: "freezing_drizzle", 26: "freezing_drizzle_heavy",
+    27: "rain_slight", 28: "rain_moderate", 29: "rain_heavy",
+    30: "freezing_rain",
+    31: "snow_slight", 32: "snow_moderate", 33: "snow_heavy", 34: "snow_grains",
+    35: "rain_shower", 36: "rain_shower_moderate",
+    37: "snow_shower", 38: "snow_shower_heavy",
+    39: "thunderstorm", 40: "thunderstorm_hail",
+}
+
+# Severity priority order: highest-severity first (index 0 = most severe).
+SYMBOL_PRIORITY: list[int] = [
+    40, 39, 38, 37, 36, 35, 34, 33, 32, 31, 30,
+    29, 28, 27, 26, 25, 24, 23, 22, 21, 20,
+    7, 6, 5, 4, 1, 2, 3, 0,
+]
+
+# Fast O(1) priority rank lookup by integer symbol code.
+SYMBOL_CODE_RANK_LUT: np.ndarray = np.full(256, -1, dtype=np.int16)
+for _rk, _code in enumerate(SYMBOL_PRIORITY):
+    if 0 <= _code < SYMBOL_CODE_RANK_LUT.shape[0]:
+        SYMBOL_CODE_RANK_LUT[_code] = _rk
+del _rk, _code
 from constants import (
     CAPE_CONV_THRESHOLD,
     CAPE_CB_STRONG_THRESHOLD,
