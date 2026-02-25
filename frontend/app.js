@@ -4,6 +4,8 @@ let map, symbolLayer, windLayer, markerLayer, d2BorderLayer = null, overlayLayer
 let overlayRequestSeq = 0;
 let symbolsRequestSeq = 0;
 let windRequestSeq = 0;
+let ingestPulseRevision = null;
+let ingestPulseRunning = null;
 let overlayAbortCtrl = null;
 let symbolsAbortCtrl = null;
 let windAbortCtrl = null;
@@ -2273,41 +2275,39 @@ applyLocale(currentLang);
 loadTimesteps();
 loadMarkerProfile();
 
-// Auto-refresh: check for new runs every 60s
-setInterval(async () => {
+// Auto-refresh: react quickly when ingest completes / timeline changes.
+let _timelineRefreshBusy = false;
+async function refreshTimelineIfChanged() {
+  if (_timelineRefreshBusy) return;
+  _timelineRefreshBusy = true;
   try {
     const res = await fetch('/api/timesteps');
     if (!res.ok) return;
     const data = await res.json();
-    
-    // Use merged timeline
+
     const merged = data.merged;
     const source = merged && merged.steps.length ? merged : (data.runs && data.runs[0]);
     if (!source) return;
-    
+
     const newRun = source.run || source.run;
     const newSteps = source.steps;
     const newRunTime = source.runTime;
 
     if (currentRun && newRun !== currentRun) {
-      // New run available — remember relative position
       const wasAtStart = currentTimeIndex === 0;
       const wasAtEnd = currentTimeIndex === timesteps.length - 1;
       const oldValidTime = timesteps[currentTimeIndex]?.validTime;
 
-      // Reload timesteps
       timesteps = newSteps;
       currentRun = newRun;
       document.getElementById('run-time').textContent = newRunTime ? formatDateShort(new Date(newRunTime)) : 'N/A';
       document.getElementById('model').textContent = merged ? 'ICON-D2 + EU' : (source.model ? source.model.toUpperCase().replace('_', '-') : 'ICON-D2');
 
-      // Try to keep same valid time, otherwise go to start
       if (wasAtStart) {
         currentTimeIndex = 0;
       } else if (wasAtEnd) {
         currentTimeIndex = timesteps.length - 1;
       } else {
-        // Find closest valid time
         let bestIdx = 0, bestDist = Infinity;
         timesteps.forEach((s, i) => {
           const dist = Math.abs(new Date(s.validTime) - new Date(oldValidTime));
@@ -2322,23 +2322,43 @@ setInterval(async () => {
       loadWind();
       loadD2Border();
 
-      // Flash the run label to signal update
       const runEl = document.getElementById('run-time');
       runEl.style.color = '#00AA00';
       setTimeout(() => { runEl.style.color = ''; }, 3000);
     } else if (newRun === currentRun && newSteps.length > timesteps.length) {
-      // Same run but more steps available
       const oldLen = timesteps.length;
       timesteps = newSteps;
-      // If user was at the end, stay at end
-      if (currentTimeIndex === oldLen - 1) {
-        currentTimeIndex = timesteps.length - 1;
-      }
+      if (currentTimeIndex === oldLen - 1) currentTimeIndex = timesteps.length - 1;
       buildTimeline();
       loadOverlay();
       loadD2Border();
     }
-  } catch (e) {
-    // Silently ignore polling errors
+  } catch (_) {
+    // ignore polling errors
+  } finally {
+    _timelineRefreshBusy = false;
   }
-}, 60000);
+}
+
+setInterval(async () => {
+  try {
+    const res = await fetch('/api/ingest_pulse');
+    if (!res.ok) return;
+    const pulse = await res.json();
+
+    const rev = pulse?.revision || null;
+    const running = !!pulse?.ingestRunning;
+
+    const revChanged = ingestPulseRevision && rev && rev !== ingestPulseRevision;
+    const justFinished = (ingestPulseRunning === true && running === false);
+
+    ingestPulseRevision = rev;
+    ingestPulseRunning = running;
+
+    if (revChanged || justFinished) {
+      await refreshTimelineIfChanged();
+    }
+  } catch (_) {
+    // ignore pulse errors
+  }
+}, 12000);

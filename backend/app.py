@@ -581,6 +581,46 @@ def resolve_time_with_cache_context(time_str: str, model: Optional[str] = None) 
     return run, step, model_used
 
 
+def _ingest_pulse_payload() -> Dict[str, Any]:
+    runs = get_available_runs()
+    latest_by_model: Dict[str, Dict[str, Any]] = {}
+    for m in ("icon_d2", "icon_eu"):
+        r = next((x for x in runs if x.get("model") == m), None)
+        latest_by_model[m] = {
+            "run": r.get("run") if r else None,
+            "stepCount": len(r.get("steps", [])) if r else 0,
+            "runTime": r.get("runTime") if r else None,
+        }
+
+    lock_path = "/tmp/skyview-ingest.lock"
+    lock_exists = os.path.exists(lock_path)
+    lock_age = None
+    if lock_exists:
+        try:
+            lock_age = int(time.time() - os.path.getmtime(lock_path))
+        except Exception:
+            lock_age = None
+
+    rev = (
+        f"d2:{latest_by_model['icon_d2']['run']}:{latest_by_model['icon_d2']['stepCount']}|"
+        f"eu:{latest_by_model['icon_eu']['run']}:{latest_by_model['icon_eu']['stepCount']}"
+    )
+
+    return {
+        "revision": rev,
+        "ingestRunning": lock_exists,
+        "ingestLockAgeSeconds": lock_age,
+        "latest": latest_by_model,
+        "serverTime": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+
+
+@app.get("/api/ingest_pulse")
+async def api_ingest_pulse():
+    """Lightweight ingest/timeline change signal for frontend auto-refresh."""
+    return _ingest_pulse_payload()
+
+
 def _freshness_minutes_from_run(run: str) -> Optional[float]:
     try:
         run_dt = datetime.strptime(run, "%Y%m%d%H").replace(tzinfo=timezone.utc)
