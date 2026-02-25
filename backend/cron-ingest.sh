@@ -5,15 +5,20 @@
 # D2: runs every 3h, ~1h publication delay
 # EU: runs every 6h, ~2h publication delay
 #
-# Config-driven: reads ingest_config.yaml for variable groups.
-# D2: full grid (746×1215), EU: cropped to D2 bounds.
+# Config-driven profiles from ingest_config.yaml.
+# D2: skyview_d2_core (includes skew-t/meteogram support).
+# EU: skyview_eu_core (symbols/wind/overlay focused; reduced pressure levels).
 # Retention: latest run only (configurable in ingest_config.yaml).
 
 cd "$(dirname "$0")"
 
 LOCKFILE="/tmp/skyview-ingest.lock"
-LOCKFILE_AGE_MAX=3600  # 60 minutes (increased for larger download set)
-INGEST_PROFILE="${SKYVIEW_INGEST_PROFILE:-skyview_core}"
+LOCKFILE_AGE_MAX=5400  # 90 minutes (EU + D2 full-cycle safety window)
+# Leave profile on auto unless explicitly overridden.
+# ingest.py resolves model-specific defaults from ingest_config.yaml:
+#   icon-d2 -> skyview_d2_core
+#   icon-eu -> skyview_eu_core
+INGEST_PROFILE="${SKYVIEW_INGEST_PROFILE:-auto}"
 export SKYVIEW_INGEST_RATE_LIMIT="${SKYVIEW_INGEST_RATE_LIMIT:-10M}"
 
 # Check for stale lock (process died without cleanup)
@@ -44,10 +49,10 @@ if [ $? -eq 0 ]; then
     "$PYTHON_BIN" ingest.py --model icon-d2 --profile "$INGEST_PROFILE" --steps all
 fi
 
-# ICON-EU ingest disabled for now (meteogram focus on ICON-D2)
-# "$PYTHON_BIN" ingest.py --model icon-eu --profile "$INGEST_PROFILE" --check-only 2>/dev/null
-# if [ $? -eq 0 ]; then
-#     "$PYTHON_BIN" ingest.py --model icon-eu --profile "$INGEST_PROFILE" --steps all
-# fi
+# Check and ingest ICON-EU (6.5km, longer horizon, slim EU profile by default)
+"$PYTHON_BIN" ingest.py --model icon-eu --profile "$INGEST_PROFILE" --check-only 2>/dev/null
+if [ $? -eq 0 ]; then
+    "$PYTHON_BIN" ingest.py --model icon-eu --profile "$INGEST_PROFILE" --steps all
+fi
 
 # Lock automatically removed by trap on exit
