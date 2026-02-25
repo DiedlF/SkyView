@@ -5,6 +5,16 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  schedule:
+    # Nightly perf run (UTC)
+    - cron: '20 2 * * *'
+  workflow_dispatch:
+    inputs:
+      run_perf:
+        description: 'Also run perf tests'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   lint:
@@ -26,8 +36,6 @@ jobs:
             pytest-args: tests/ -m "not integration and not perf" --cov=backend/ --cov-report=xml --cov-report=term-missing
           - name: integration
             pytest-args: tests/ -m integration
-          - name: perf
-            pytest-args: tests/ -m perf
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -75,5 +83,24 @@ jobs:
           QA_EXIT=$?
           kill $APP_PID 2>/dev/null || true
           exit $QA_EXIT
+        env:
+          PYTHONPATH: backend/
+
+  perf:
+    # Keep perf out of normal push/PR gating. Run on schedule or manual dispatch.
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_perf)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install pytest pytest-asyncio
+      - name: Run perf tests
+        run: pytest tests/ -m perf
         env:
           PYTHONPATH: backend/
