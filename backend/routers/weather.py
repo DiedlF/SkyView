@@ -29,13 +29,12 @@ from constants import (
     CEILING_VALID_MAX_METERS,
     CELL_SIZES_BY_ZOOM,
     EMAGRAM_D2_LEVELS_HPA,
-    EU_STRICT_MAX_DELTA_HOURS_DEFAULT,
     G0,
     LOW_ZOOM_GLOBAL_CACHE_MAX_ZOOM,
 )
 from grid_aggregation import build_grid_context, choose_cell_groups, scatter_cell_stats
 from grid_utils import bbox_indices as _bbox_indices, slice_array as _slice_array
-from services.symbol_ops import filter_symbols_to_bbox, load_symbols_precomputed, save_symbols_precomputed
+from services.symbol_ops import filter_symbols_to_bbox, load_symbols_precomputed
 from symbol_logic import SYMBOL_CODE_RANK_LUT, SYMBOL_CODE_TO_TYPE, aggregate_symbol_cell
 
 

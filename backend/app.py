@@ -75,7 +75,6 @@ from services.symbol_ops import seed_symbols_cache_from_disk as _seed_symbols_ca
 from point_data import build_overlay_values, POINT_KEYS, POINT_KEYS_MINIMAL
 from classify import classify_point as classify_point_core
 from time_contract import get_available_runs as tc_get_available_runs, get_merged_timeline as tc_get_merged_timeline, resolve_time as tc_resolve_time
-from grid_aggregation import build_grid_context, choose_cell_groups, scatter_cell_stats
 from status_ops import build_status_payload, build_perf_payload
 from feedback_ops import make_feedback_entry, append_feedback, read_feedback_list, update_feedback_status
 from model_caps import get_models_payload
@@ -93,16 +92,10 @@ from routers.overlay import build_overlay_router
 from routers.ops import build_ops_router
 from routers.admin import build_admin_router
 from constants import (
-    CELL_SIZES_BY_ZOOM,
-    CAPE_CONV_THRESHOLD,
-    CEILING_VALID_MAX_METERS,
     ICON_EU_STEP_3H_START,
     EU_STRICT_MAX_DELTA_HOURS_DEFAULT,
     DATA_CACHE_MAX_ITEMS,
     LOW_ZOOM_GLOBAL_CACHE_MAX_ZOOM,
-    LOW_ZOOM_GLOBAL_BBOX,
-    EMAGRAM_D2_LEVELS_HPA,
-    G0,
 )
 from cache_state import (
     TILE_CACHE_MAX_ITEMS_DESKTOP, TILE_CACHE_MAX_ITEMS_MOBILE, TILE_CACHE_TTL_SECONDS,
@@ -110,7 +103,7 @@ from cache_state import (
     overlay_phase_recent, overlay_phase_totals, overlay_phase_record,
     perf_record, computed_cache_get_or_compute, computed_metrics_payload,
     tile_cache_prune, tile_cache_get, tile_cache_set,
-    symbols_cache_get, symbols_cache_set, symbols_cache_stats_payload,
+    symbols_cache_set, symbols_cache_stats_payload,
     rotate_caches_for_context, cache_context_stats_payload,
 )
 
