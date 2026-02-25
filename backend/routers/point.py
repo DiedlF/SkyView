@@ -38,10 +38,68 @@ def build_point_router(
         wind_level: str = Query("10m"),
         zoom: Optional[int] = Query(None, ge=5, le=12),
         include_overlay: bool = Query(True),
+        include_symbol: bool = Query(True),
+        include_wind: bool = Query(False),
+        overlay_key: Optional[str] = Query(None),
     ):
-        # Selective key loading: only fetch variables actually needed for a point query.
+        # Selective key loading based on currently rendered layers.
         run, step, model_used = resolve_time_with_cache_context(time, model)
-        req_keys = POINT_KEYS if include_overlay else POINT_KEYS_MINIMAL
+
+        ov = (overlay_key or "").strip().lower()
+        ov_alias = {
+            "rain_amount": "rain",
+            "snow_amount": "snow",
+            "hail_amount": "hail",
+        }
+        ov = ov_alias.get(ov, ov)
+        need_overlay = bool(include_overlay and ov and ov != "none")
+
+        req_set = {"lat", "lon", "validTime"}
+        symbol_keys = {"ww", "ceiling", "clcl", "clcm", "clch", "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hsurf"}
+        req_set.update(symbol_keys)  # also used for D2 signal checks and fallback decisions
+
+        if include_wind:
+            if wind_level == "10m" or wind_level == "gust10m":
+                req_set.update({"u_10m", "v_10m"})
+                if wind_level == "gust10m":
+                    req_set.add("vmax_10m")
+            else:
+                req_set.update({f"u_{wind_level}hpa", f"v_{wind_level}hpa"})
+
+        if need_overlay:
+            overlay_needs = {
+                "clouds_low": {"clcl"},
+                "clouds_mid": {"clcm"},
+                "clouds_high": {"clch"},
+                "clouds_total": {"clct"},
+                "clouds_total_mod": {"clct_mod"},
+                "thermals": {"cape_ml"},
+                "dry_conv_top": {"htop_dc"},
+                "ceiling": {"ceiling"},
+                "cloud_base": {"hbas_sc"},
+                "rain": {"rain_rate"},
+                "snow": {"snow_rate"},
+                "hail": {"hail_rate"},
+                "total_precip": {"tp_rate"},
+                "h_snow": {"h_snow"},
+                "dew_spread_2m": {"t_2m", "td_2m"},
+                "conv_thickness": {"htop_sc", "hbas_sc"},
+                "lpi": {"lpi_max"},
+                "t_2m": {"t_2m"},
+                "t_950hpa": {"t_950hpa"},
+                "t_850hpa": {"t_850hpa"},
+                "t_700hpa": {"t_700hpa"},
+                "t_500hpa": {"t_500hpa"},
+                "t_300hpa": {"t_300hpa"},
+                "relhum_2m": {"relhum_2m"},
+                "mh": {"mh"},
+                "ashfl_s": {"ashfl_s"},
+                "climb_rate": {"ashfl_s", "mh", "t_2m", "td_2m", "hsurf", "t_850hpa", "t_700hpa", "t_500hpa", "t_300hpa"},
+                "lcl": {"t_2m", "td_2m", "hsurf"},
+            }
+            req_set.update(overlay_needs.get(ov, set()))
+
+        req_keys = sorted(req_set)
         d = load_data(run, step, model_used, keys=req_keys)
         fallback_decision = "primary_model_only"
 
@@ -54,6 +112,9 @@ def build_point_router(
             str(wind_level),
             int(zoom) if zoom is not None else None,
             bool(include_overlay),
+            bool(include_symbol),
+            bool(include_wind),
+            ov,
         )
         now = _time.time()
         cached = point_cache.get(cache_key)
@@ -118,8 +179,7 @@ def build_point_router(
             v = float(d[key][li0, lo0])
             return None if not np.isfinite(v) else v
 
-        vars_out = ["ww", "clcl", "clcm", "clch", "clct", "cape_ml",
-                    "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "ceiling"]
+        vars_out = ["ww", "clcl", "clcm", "clch", "clct", "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "ceiling"]
         result = {}
         for v in vars_out:
             val = _get(v)
@@ -130,47 +190,56 @@ def build_point_router(
             else:
                 result[v] = round(val, 1)
 
-        # Cloud type classification
-        best_type = classify_point(
-            clcl=_get("clcl") or 0.0,
-            clcm=_get("clcm") or 0.0,
-            clch=_get("clch") or 0.0,
-            cape_ml=_get("cape_ml") or 0.0,
-            htop_dc=_get("htop_dc") or 0.0,
-            hbas_sc=_get("hbas_sc") or 0.0,
-            htop_sc=_get("htop_sc") or 0.0,
-            lpi=(_get("lpi_max") if _get("lpi_max") is not None else (_get("lpi") or 0.0)),
-            ceiling=_get("ceiling") or 0.0,
-            hsurf=_get("hsurf") or 0.0,
-        )
-        result["cloudType"] = best_type
-
         ww_max = int(_get("ww") or 0)
-        ww_sym = ww_to_symbol(ww_max) if ww_max > 10 else None
-        sym = ww_sym or best_type
-        result["symbol"] = sym
-        result["cloudTypeName"] = sym.title()
-        result["ww"] = ww_max
+        best_type = None
+        sym = None
 
-        # Cloud base height (hectometers), matching symbol label logic
-        ceil_cell = d["ceiling"][np.ix_(li, lo)] if "ceiling" in d else np.array([])
-        htop_cell = d["htop_dc"][np.ix_(li, lo)] if "htop_dc" in d else np.array([])
-        hbas_cell = d["hbas_sc"][np.ix_(li, lo)] if "hbas_sc" in d else np.array([])
-        valid_ceil = ceil_cell[(ceil_cell > 0) & (ceil_cell < 20_000)] if ceil_cell.size else np.array([])
-        valid_hbas = hbas_cell[(hbas_cell > 0) & np.isfinite(hbas_cell)] if hbas_cell.size else np.array([])
+        if include_symbol:
+            best_type = classify_point(
+                clcl=_get("clcl") or 0.0,
+                clcm=_get("clcm") or 0.0,
+                clch=_get("clch") or 0.0,
+                cape_ml=_get("cape_ml") or 0.0,
+                htop_dc=_get("htop_dc") or 0.0,
+                hbas_sc=_get("hbas_sc") or 0.0,
+                htop_sc=_get("htop_sc") or 0.0,
+                lpi=(_get("lpi_max") if _get("lpi_max") is not None else (_get("lpi") or 0.0)),
+                ceiling=_get("ceiling") or 0.0,
+                hsurf=_get("hsurf") or 0.0,
+            )
+            result["cloudType"] = best_type
+            ww_sym = ww_to_symbol(ww_max) if ww_max > 10 else None
+            sym = ww_sym or best_type
+            result["symbol"] = sym
+            result["cloudTypeName"] = sym.title()
+            result["ww"] = ww_max
 
-        if sym in ("cu_hum", "cu_con", "cb") and len(valid_hbas) > 0:
-            result["cloudBaseHm"] = int(np.min(valid_hbas) / 100)
-        elif sym in ("st", "ac", "ci", "fog", "rime_fog") and len(valid_ceil) > 0:
-            result["cloudBaseHm"] = int(np.min(valid_ceil) / 100)
-        elif sym == "blue_thermal" and htop_cell.size and np.any(htop_cell > 0):
-            result["cloudBaseHm"] = int(np.max(htop_cell[htop_cell > 0]) / 100)
+            # Cloud base height (hectometers), matching symbol label logic
+            ceil_cell = d["ceiling"][np.ix_(li, lo)] if "ceiling" in d else np.array([])
+            htop_cell = d["htop_dc"][np.ix_(li, lo)] if "htop_dc" in d else np.array([])
+            hbas_cell = d["hbas_sc"][np.ix_(li, lo)] if "hbas_sc" in d else np.array([])
+            valid_ceil = ceil_cell[(ceil_cell > 0) & (ceil_cell < 20_000)] if ceil_cell.size else np.array([])
+            valid_hbas = hbas_cell[(hbas_cell > 0) & np.isfinite(hbas_cell)] if hbas_cell.size else np.array([])
+
+            if sym in ("cu_hum", "cu_con", "cb") and len(valid_hbas) > 0:
+                result["cloudBaseHm"] = int(np.min(valid_hbas) / 100)
+            elif sym in ("st", "ac", "ci", "fog", "rime_fog") and len(valid_ceil) > 0:
+                result["cloudBaseHm"] = int(np.min(valid_ceil) / 100)
+            elif sym == "blue_thermal" and htop_cell.size and np.any(htop_cell > 0):
+                result["cloudBaseHm"] = int(np.max(htop_cell[htop_cell > 0]) / 100)
+            else:
+                result["cloudBaseHm"] = None
         else:
+            result["ww"] = ww_max
+            result["symbol"] = None
+            result["cloudType"] = None
+            result["cloudTypeName"] = None
             result["cloudBaseHm"] = None
+            ceil_cell = d["ceiling"][np.ix_(li, lo)] if "ceiling" in d else np.array([])
 
-        # Overlay values (active overlay info shown in click popup)
-        if include_overlay:
-            overlay_values = build_overlay_values(
+        # Overlay values (only active basemap data: max 1 overlay + optional wind)
+        if include_overlay or include_wind:
+            full_overlay = build_overlay_values(
                 d=d,
                 li=li,
                 lo=lo,
@@ -185,7 +254,21 @@ def build_point_router(
                 model_used=model_used,
                 step=step,
             )
-            result["overlay_values"] = overlay_values
+            ov_out = {}
+            if include_wind:
+                if "wind_speed" in full_overlay:
+                    ov_out["wind_speed"] = full_overlay.get("wind_speed")
+                if "wind_dir" in full_overlay:
+                    ov_out["wind_dir"] = full_overlay.get("wind_dir")
+            if need_overlay:
+                ov_val = full_overlay.get(ov)
+                if ov_val is None:
+                    ov_val = full_overlay.get(ov_alias.get(ov, ov))
+                ov_out[ov] = ov_val
+                # Keep thermal_class as fallback helper for climb-rate UI derivation.
+                if ov == "climb_rate" and "thermal_class" in full_overlay:
+                    ov_out["thermal_class"] = full_overlay.get("thermal_class")
+            result["overlay_values"] = ov_out if ov_out else None
         else:
             result["overlay_values"] = None
 

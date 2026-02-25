@@ -774,7 +774,12 @@ async function loadPoint(lat, lon, time, model, windLvl = '10m', zoom = null) {
     const modelParam = model ? `&model=${model}` : '';
     const windParam = windLvl ? `&wind_level=${encodeURIComponent(windLvl)}` : '';
     const zoomParam = (zoom != null) ? `&zoom=${encodeURIComponent(zoom)}` : '';
-    const res = await fetch(`/api/point?lat=${lat}&lon=${lon}&time=${encodeURIComponent(time)}${modelParam}${windParam}${zoomParam}`);
+    const overlayKey = getEffectiveOverlayLayer();
+    const includeOverlay = (overlayKey && overlayKey !== 'none') ? '&include_overlay=1' : '&include_overlay=0';
+    const overlayParam = (overlayKey && overlayKey !== 'none') ? `&overlay_key=${encodeURIComponent(overlayKey)}` : '';
+    const includeWind = windEnabled ? '&include_wind=1' : '&include_wind=0';
+    const includeSymbol = '&include_symbol=1';
+    const res = await fetch(`/api/point?lat=${lat}&lon=${lon}&time=${encodeURIComponent(time)}${modelParam}${windParam}${zoomParam}${includeOverlay}${overlayParam}${includeWind}${includeSymbol}`);
     if (!res.ok) await throwHttpError(res, 'API');
     const data = await res.json();
 
@@ -782,7 +787,6 @@ async function loadPoint(lat, lon, time, model, windLvl = '10m', zoom = null) {
     let lines = [`<b>${symbolName}</b>`];
 
     // Show active overlay value if an overlay is selected
-    const overlayKey = getEffectiveOverlayLayer();
     if (overlayKey !== 'none' && data.overlay_values) {
       const aliasKey = ({ rain_amount: 'rain', snow_amount: 'snow', hail_amount: 'hail' })[overlayKey] || overlayKey;
       let ovVal = data.overlay_values[overlayKey];
