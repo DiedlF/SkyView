@@ -266,10 +266,15 @@ MODEL_CONFIG = {
 }
 
 
-def get_latest_run(model="icon-d2"):
-    """Determine latest available run, accounting for publication delay."""
+def get_latest_run(model="icon-d2", config=None):
+    """Determine latest expected run, accounting for publication delay/holdoff."""
     now = datetime.now(timezone.utc)
-    delay_hours = 0 if model == "icon-d2" else 2
+
+    default_delay_hours = 0 if model == "icon-d2" else 2
+    delay_cfg = (config or {}).get("publication_delay_hours", {}) if isinstance(config, dict) else {}
+    model_key = model.replace("_", "-")
+    delay_hours = float(delay_cfg.get(model, delay_cfg.get(model_key, default_delay_hours)))
+
     ref = now - timedelta(hours=delay_hours)
     cfg = MODEL_CONFIG[model]
     hour = (ref.hour // cfg["run_interval"]) * cfg["run_interval"]
@@ -1091,7 +1096,7 @@ def main():
     cfg = MODEL_CONFIG[model]
     profile_name = resolve_profile_name(config, model, args.profile)
 
-    run = get_latest_run(model) if args.run == "latest" else args.run
+    run = get_latest_run(model, config=config) if args.run == "latest" else args.run
 
     # Fast check mode
     if args.check_only:

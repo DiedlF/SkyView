@@ -15,6 +15,12 @@ d2_bounds:
 retention:
   keep_runs: 1           # Latest run only
 
+# Holdoff before selecting the latest cycle (hours).
+# Helps avoid ingest overlap contention between ICON-EU and fresh ICON-D2 cycles.
+publication_delay_hours:
+  icon-d2: 0
+  icon-eu: 4.5
+
 # Default profile per model when ingest.py is run with --profile auto/default.
 default_profiles:
   icon-d2: skyview_d2_core
