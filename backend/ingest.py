@@ -160,6 +160,30 @@ def _get_profile(config, profile_name):
     return profiles[profile_name]
 
 
+def resolve_profile_name(config, model: str, profile_name: str) -> str:
+    """Resolve effective profile, supporting model-specific defaults.
+
+    - explicit profile (e.g. full, skyview_d2_core, skyview_eu_core) wins
+    - auto/default uses config.default_profiles[model]
+    """
+    p = (profile_name or "auto").strip()
+    if p not in ("auto", "default"):
+        _get_profile(config, p)  # validate
+        return p
+
+    defaults = config.get("default_profiles", {})
+    model_key = model.replace("_", "-")
+    eff = defaults.get(model_key) or defaults.get(model)
+    if eff:
+        _get_profile(config, eff)  # validate
+        return eff
+
+    # backward-compatible fallback
+    if "full" in (config.get("profiles") or {}):
+        return "full"
+    raise ValueError("No default ingest profile configured and 'full' profile missing")
+
+
 def get_active_variables(config, profile_name="full"):
     """Collect single-level variables, optionally profile-scoped."""
     profile = _get_profile(config, profile_name) if config.get("profiles") else None
@@ -1058,14 +1082,14 @@ def main():
                         help="Fast check: exit 0 if new data available, 1 otherwise. With --verbose, also checks variable URLs.")
     parser.add_argument("--verbose", action="store_true",
                         help="With --check-only: print variable URL resolution results")
-    parser.add_argument("--profile", type=str, default="full",
-                        help="Ingest profile from ingest_config.yaml (e.g. full, skyview_core)")
+    parser.add_argument("--profile", type=str, default="auto",
+                        help="Ingest profile from ingest_config.yaml (e.g. auto, full, skyview_d2_core, skyview_eu_core)")
     args = parser.parse_args()
 
     config = load_config()
     model = args.model
     cfg = MODEL_CONFIG[model]
-    profile_name = args.profile
+    profile_name = resolve_profile_name(config, model, args.profile)
 
     run = get_latest_run(model) if args.run == "latest" else args.run
 
