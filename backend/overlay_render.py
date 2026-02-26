@@ -135,9 +135,9 @@ def colormap_dew_spread(v):
 
 def colormap_thermals(val):
     cape = float(val)
-    if cape < 50:
+    if cape < 5:
         return None
-    t = min(max((cape - 50.0) / 950.0, 0.0), 1.0)
+    t = min(max((cape - 5.0) / 995.0, 0.0), 1.0)
     return (int(50 + 205 * t), int(180 * (1 - t)), int(50 * (1 - t)), int(90 + 130 * t))
 
 

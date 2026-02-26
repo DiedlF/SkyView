@@ -158,6 +158,7 @@ const I18N = {
     'layer.ceiling': 'Ceiling',
     'layer.convthickness': 'Cloud thickness (convective)',
     'layer.lpi': 'LPI',
+    'layer.h_snow': 'Snow depth',
     'layer.experimental': 'Experimental',
     'layer.climbrate': 'Climb Rate (lapse_rate)',
     'layer.lcl': 'Cloud Base (spread * 125)',
@@ -264,6 +265,7 @@ const I18N = {
     'layer.ceiling': 'Haupt-Wolkenuntergrenze',
     'layer.convthickness': 'Wolkenmächtigkeit (konvektiv)',
     'layer.lpi': 'LPI',
+    'layer.h_snow': 'Schneehöhe',
     'layer.experimental': 'Experimentell',
     'layer.climbrate': 'Steigwerte (lapse_rate)',
     'layer.lcl': 'Wolkenbasis (Spread * 125)',
@@ -497,10 +499,11 @@ const LEGEND_CONFIGS = {
   dew_spread_2m: { title: 'Dew point spread 2m', gradient: 'linear-gradient(to right, rgb(70,200,220), rgb(170,140,110), rgb(255,70,40))', labels: ['0 K', '25+ K'] },
   conv_thickness: { title: 'Cloud thickness (convective)', gradient: 'linear-gradient(to right, rgb(40,220,60), rgb(200,200,40), rgb(240,80,40))', labels: ['0m', '6000m'] },
   lpi: { title: 'LPI', gradient: 'linear-gradient(to right, rgb(70,190,80), rgb(160,150,60), rgb(255,70,40))', labels: ['0', '20+'] },
-  thermals: { title: 'CAPE_ml', gradient: 'linear-gradient(to right, rgb(50,180,50), rgb(150,150,50), rgb(220,100,30), rgb(255,50,50))', labels: ['50 J/kg', '1000+ J/kg'] },
+  thermals: { title: 'CAPE_ml', gradient: 'linear-gradient(to right, rgb(50,180,50), rgb(150,150,50), rgb(220,100,30), rgb(255,50,50))', labels: ['5 J/kg', '1000+ J/kg'] },
   climb_rate: { title: 'Climb Rate', gradient: 'linear-gradient(to right, rgb(50,200,50), rgb(180,200,50), rgb(220,150,30), rgb(255,50,50))', labels: ['0 m/s', '5 m/s'] },
   lcl: { title: 'Cloud Base (LCL) MSL', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '5000m MSL'] },
-  h_snow: { title: 'Snow depth', gradient: 'linear-gradient(to right, rgba(255,255,255,0), rgb(220,235,255), rgb(160,200,255), rgb(100,150,240))', labels: ['0', '100+ cm'] }
+  h_snow: { title: 'Snow depth', gradient: 'linear-gradient(to right, rgba(255,255,255,0), rgb(220,235,255), rgb(160,200,255), rgb(100,150,240))', labels: ['0', '100+ cm'] },
+  ashfl_s: { title: 'Surface heat flux', gradient: 'linear-gradient(to right, rgb(70,170,240), rgb(162,115,130), rgb(255,60,20))', labels: ['20 W/m²', '400+ W/m²'] },
 };
 
 // Initialize map
@@ -747,6 +750,7 @@ const OVERLAY_META = {
   climb_rate: { label: 'Climb', unit: 'm/s', decimals: 1 },
   lcl: { label: 'Cloud base (LCL)', unit: 'm MSL', integer: true },
   h_snow: { label: 'Snow depth', unit: 'm', decimals: 2 },
+  ashfl_s: { label: 'Surface heat flux', unit: 'W/m²', decimals: 0 },
 };
 
 function formatOverlayValue(key, value) {
