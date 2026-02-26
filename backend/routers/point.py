@@ -95,6 +95,7 @@ def build_point_router(
                 "mh": {"mh"},
                 "ashfl_s": {"ashfl_s"},
                 "climb_rate": {"ashfl_s", "mh", "t_2m", "td_2m", "hsurf", "t_850hpa", "t_700hpa", "t_500hpa", "t_300hpa"},
+    "climb_rate_cape": {"climb_rate_cape"},
                 "lcl": {"t_2m", "td_2m", "hsurf"},
             }
             req_set.update(overlay_needs.get(ov, set()))

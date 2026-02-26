@@ -259,6 +259,10 @@ def build_overlay_values(
     hs = _safe_get(d, "h_snow", i0, j0)
     if hs is not None:
         ov["h_snow"] = round(hs, 3)
+    # Climb rate from CAPE (precomputed at ingest)
+    crc = _safe_get(d, "climb_rate_cape", i0, j0)
+    if crc is not None:
+        ov["climb_rate_cape"] = round(float(crc), 1)
 
     # Extract shared temperature/humidity scalars once for reuse below
     t2m  = _safe_get(d, "t_2m",  i0, j0)
