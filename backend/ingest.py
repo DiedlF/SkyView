@@ -128,12 +128,10 @@ def _precompute_symbol_native_fields(arrays: dict, step: int | None = None, mode
     sym_code[wx & (ww_i == 48)] = m["rime_fog"]
 
     # ranking shortcut for fast per-cell weather pick
-    ww_rank = np.where(np.isfinite(ww) & (ww > 10), ww.astype(np.int16), np.int16(-1))
 
     arrays["sym_code"] = sym_code
     arrays["cb_hm"] = cb_hm
-    arrays["ww_rank"] = ww_rank
-    msg = f"symbol precompute ok for {ctx}: wrote sym_code/cb_hm/ww_rank"
+    msg = f"symbol precompute ok for {ctx}: wrote sym_code/cb_hm"
     return True, msg
 
 
