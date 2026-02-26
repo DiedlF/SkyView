@@ -355,7 +355,7 @@ def _build_model_capabilities(p):
             continue
         try:
             step = int(steps[0].get("step"))
-            d = p.load_data(r["run"], step, model, keys=["t_2m"])  # lightweight sample for bbox
+            d = p.load_data(r["run"], step, model, keys=None)  # load full sample for var discovery
         except Exception:
             continue
 

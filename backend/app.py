@@ -68,6 +68,8 @@ from overlay_data import (
     build_overlay_keys,
     compute_computed_field_cropped,
     compute_computed_field_full,
+    get_precomputed_field_cropped,
+    get_precomputed_field_full,
     normalize_clouds_total_mod,
 )
 from weather_codes import ww_to_symbol
@@ -1223,10 +1225,7 @@ async def api_overlay(
         var_name = cfg["var"]
         if var_name not in d and layer == "clouds_total_mod" and "clct" in d:
             var_name = "clct"  # fallback when modified total cloud is unavailable
-        if var_name not in d:
-            raise HTTPException(404, f"Variable {cfg['var']} not available for this timestep")
-        var_data = d[var_name]
-        cropped = var_data[np.ix_(li, lo)]
+        cropped = get_precomputed_field_cropped(var_name, d, li, lo)
         if layer == "clouds_total_mod":
             cropped = normalize_clouds_total_mod(cropped)
         h, w = cropped.shape
@@ -1358,9 +1357,7 @@ def _overlay_source_field(layer: str, cfg: dict, d: dict, model_used: str, run: 
     vname = cfg["var"]
     if vname not in d and layer == "clouds_total_mod" and "clct" in d:
         vname = "clct"
-    if vname not in d:
-        raise HTTPException(404, f"Variable {cfg['var']} unavailable")
-    src = d[vname]
+    src = get_precomputed_field_full(vname, d)
     if layer == "clouds_total_mod":
         src = normalize_clouds_total_mod(src)
     return src

@@ -46,6 +46,28 @@ def normalize_clouds_total_mod(arr: np.ndarray) -> np.ndarray:
     return arr
 
 
+def get_precomputed_field_cropped(var: str, d: dict, li: np.ndarray, lo: np.ndarray) -> np.ndarray:
+    """Return a cropped precomputed (non-computed) overlay field."""
+    if var == "climb_rate_cape":
+        if "climb_rate_cape" not in d:
+            raise HTTPException(404, "climb_rate_cape not available (re-ingest needed)")
+        return d["climb_rate_cape"][np.ix_(li, lo)]
+    if var not in d:
+        raise HTTPException(404, f"Variable {var} not available for this timestep")
+    return d[var][np.ix_(li, lo)]
+
+
+def get_precomputed_field_full(var: str, d: dict) -> np.ndarray:
+    """Return a full-grid precomputed (non-computed) overlay field."""
+    if var == "climb_rate_cape":
+        if "climb_rate_cape" not in d:
+            raise HTTPException(404, "climb_rate_cape not available (re-ingest needed)")
+        return d["climb_rate_cape"]
+    if var not in d:
+        raise HTTPException(404, f"Variable {var} unavailable")
+    return d[var]
+
+
 def _precip_precomputed_field(var: str, d: dict) -> np.ndarray:
     key = PRECIP_RATE_FIELD_BY_LAYER_VAR.get(var)
     if not key:

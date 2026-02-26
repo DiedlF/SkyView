@@ -131,7 +131,14 @@ def _precompute_symbol_native_fields(arrays: dict, step: int | None = None, mode
 
     arrays["sym_code"] = sym_code
     arrays["cb_hm"] = cb_hm
-    msg = f"symbol precompute ok for {ctx}: wrote sym_code/cb_hm"
+    # Climb rate estimate from CAPE: sqrt(CAPE_ML)/4 - 0.7, clipped to >= 0
+    cr_cape = np.where(
+        np.isfinite(cape),
+        np.maximum(0.0, np.sqrt(np.maximum(cape, 0.0)) / 4.0 - 0.7),
+        np.nan,
+    ).astype(np.float32)
+    arrays["climb_rate_cape"] = cr_cape
+    msg = f"symbol precompute ok for {ctx}: wrote sym_code/cb_hm/climb_rate_cape"
     return True, msg
 
 

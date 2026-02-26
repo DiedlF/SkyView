@@ -79,6 +79,91 @@ def colormap_sigwx(val):
     return (r, g, b, a)
 
 
+def _hsv_to_rgb_vectorized(h: np.ndarray, s: np.ndarray, v: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Vectorized HSV->RGB conversion matching colorsys.hsv_to_rgb semantics."""
+    h = np.asarray(h, dtype=np.float64)
+    s = np.asarray(s, dtype=np.float64)
+    v = np.asarray(v, dtype=np.float64)
+
+    i = np.floor(h * 6.0).astype(np.int16)
+    f = h * 6.0 - i
+    p = v * (1.0 - s)
+    q = v * (1.0 - f * s)
+    t = v * (1.0 - (1.0 - f) * s)
+    i = np.mod(i, 6)
+
+    r = np.empty_like(v)
+    g = np.empty_like(v)
+    b = np.empty_like(v)
+
+    m = i == 0
+    r[m], g[m], b[m] = v[m], t[m], p[m]
+    m = i == 1
+    r[m], g[m], b[m] = q[m], v[m], p[m]
+    m = i == 2
+    r[m], g[m], b[m] = p[m], v[m], t[m]
+    m = i == 3
+    r[m], g[m], b[m] = p[m], q[m], v[m]
+    m = i == 4
+    r[m], g[m], b[m] = t[m], p[m], v[m]
+    m = i == 5
+    r[m], g[m], b[m] = v[m], p[m], q[m]
+    return r, g, b
+
+
+def colormap_sigwx_vectorized(v: np.ndarray, valid: np.ndarray) -> np.ndarray:
+    """Vectorized SIGWX color mapping for arrays of WMO ww codes."""
+    h, w = v.shape
+    rgba = np.zeros((h, w, 4), dtype=np.uint8)
+    if not np.any(valid):
+        return rgba
+
+    ww = np.clip(v.astype(np.int16), 0, 255)
+    m = valid & (ww != 0)
+    if not np.any(m):
+        return rgba
+
+    # Fixed grayscale buckets for light weather codes.
+    m1 = m & (ww == 1)
+    rgba[m1] = (205, 205, 205, 165)
+    m2 = m & (ww == 2)
+    rgba[m2] = (145, 145, 145, 175)
+    m3 = m & (ww == 3)
+    rgba[m3] = (85, 85, 85, 190)
+    mg = m & (ww >= 4) & (ww < 10)
+    if np.any(mg):
+        g = np.clip(120 - (ww[mg] - 4) * 8, 75, 130).astype(np.uint8)
+        rgba[..., 0][mg] = g
+        rgba[..., 1][mg] = g
+        rgba[..., 2][mg] = g
+        rgba[..., 3][mg] = np.uint8(185)
+
+    mc = m & (ww >= 10)
+    if not np.any(mc):
+        return rgba
+
+    base_h = np.full(ww.shape, 210.0 / 360.0, dtype=np.float64)
+    base_h[ww == 45] = 45.0 / 360.0
+    base_h[ww == 48] = 45.0 / 360.0
+    base_h[(ww >= 50) & (ww <= 59)] = 95.0 / 360.0
+    base_h[(ww >= 60) & (ww <= 69)] = 130.0 / 360.0
+    base_h[(ww >= 70) & (ww <= 79)] = 265.0 / 360.0
+    base_h[(ww >= 80) & (ww <= 84)] = 175.0 / 360.0
+    base_h[(ww >= 85) & (ww <= 86)] = 280.0 / 360.0
+    base_h[(ww >= 95) & (ww <= 99)] = 350.0 / 360.0
+
+    hue = np.mod(base_h + np.mod(ww * 0.61803398875, 1.0) * 0.18, 1.0)
+    sat = np.where(ww >= 95, 0.82, 0.78)
+    val_v = np.where(ww >= 95, 0.95, 0.88)
+    r_f, g_f, b_f = _hsv_to_rgb_vectorized(hue, sat, val_v)
+
+    rgba[..., 0][mc] = np.clip(r_f[mc] * 255.0, 0, 255).astype(np.uint8)
+    rgba[..., 1][mc] = np.clip(g_f[mc] * 255.0, 0, 255).astype(np.uint8)
+    rgba[..., 2][mc] = np.clip(b_f[mc] * 255.0, 0, 255).astype(np.uint8)
+    rgba[..., 3][mc] = np.where(ww[mc] >= 95, 210, 190).astype(np.uint8)
+    return rgba
+
+
 def colormap_clouds(val):
     pct = float(val)
     if pct < 1:
@@ -172,6 +257,14 @@ def colormap_climb_rate(v):
     return (int(50 + 205 * t), int(200 - 80 * t), int(50 * (1 - t)), int(100 + 130 * t))
 
 
+def colormap_climb_rate_cape(v):
+    """CAPE-based climb rate: transparent at 0, green→yellow→red up to 5 m/s."""
+    if v is None or float(v) <= 0:
+        return None
+    t = min(float(v) / 5.0, 1.0)
+    return (int(50 + 205 * t), int(200 - 80 * t), int(50 * (1 - t)), int(100 + 130 * t))
+
+
 def colormap_lcl(v):
     if v < 50:
         return None
@@ -198,18 +291,6 @@ def colormap_lpi(v):
         return None
     t = min(float(v) / 20.0, 1.0)
     return (int(70 + 185 * t), int(190 * (1 - t) + 70 * t), int(80 * (1 - t) + 40 * t), int(120 + 110 * t))
-
-
-def _build_sigwx_lut() -> np.ndarray:
-    lut = np.zeros((256, 4), dtype=np.uint8)
-    for ww in range(256):
-        c = colormap_sigwx(ww)
-        if c:
-            lut[ww] = np.array(c, dtype=np.uint8)
-    return lut
-
-
-SIGWX_LUT = _build_sigwx_lut()
 
 
 OVERLAY_CONFIGS = {
@@ -241,6 +322,7 @@ OVERLAY_CONFIGS = {
     "thermals": {"var": "cape_ml", "cmap": colormap_thermals},
     "wstar": {"var": "wstar", "cmap": colormap_wstar, "computed": True},
     "climb_rate": {"var": "climb_rate", "cmap": colormap_climb_rate, "computed": True},
+    "climb_rate_cape": {"var": "climb_rate_cape", "cmap": colormap_climb_rate_cape},
     "lcl": {"var": "lcl", "cmap": colormap_lcl, "computed": True},
     "h_snow": {"var": "h_snow", "cmap": colormap_clouds},
     "reachable": {"var": "reachable", "cmap": colormap_reachable, "computed": True},
@@ -387,11 +469,7 @@ def colorize_layer_vectorized(layer: str, sampled: np.ndarray, valid: np.ndarray
         return rgba
 
     if layer == "sigwx":
-        # Fast lookup-table path for discrete WMO ww codes.
-        wwi = np.clip(v.astype(np.int16), 0, 255).astype(np.uint8)
-        rgba_lookup = SIGWX_LUT[wwi]
-        rgba[valid] = rgba_lookup[valid]
-        return rgba
+        return colormap_sigwx_vectorized(v, valid)
 
     # Generic fallback for uncommon/custom layers: process only valid samples.
     # (Avoid full h*w nested Python loops.)
