@@ -8,6 +8,103 @@ from typing import Optional, Tuple
 import numpy as np
 
 
+def scatter_best_symbol(
+    c_lat: np.ndarray,
+    c_lon: np.ndarray,
+    ctx: "GridContext",
+    sym_code: np.ndarray,
+    cb_hm: np.ndarray,
+    rank_lut: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Vectorized O(N_grid) per-cell best-symbol aggregation.
+
+    For each grid cell, finds the grid point with the highest-severity symbol
+    (lowest rank in rank_lut; rank 0 = most severe) and returns arrays that
+    allow O(1) per-cell lookup in the symbols loop — eliminating all per-cell
+    np.ix_() calls for the fast (ingest-precomputed) path.
+
+    Returns
+    -------
+    cell_best_code : int16  (lat_cell_count, lon_cell_count)  — 0 = clear
+    cell_best_cb   : int16  (lat_cell_count, lon_cell_count)  — -1 = no base
+    cell_best_lat_idx : intp (lat_cell_count, lon_cell_count) — row into c_lat; -1 = none
+    cell_best_lon_idx : intp (lat_cell_count, lon_cell_count) — col into c_lon; -1 = none
+    """
+    shape = (ctx.lat_cell_count, ctx.lon_cell_count)
+    n_cells = ctx.lat_cell_count * ctx.lon_cell_count
+    _empty_i16 = np.zeros(shape, dtype=np.int16)
+    _empty_cb = np.full(shape, -1, dtype=np.int16)
+    _empty_idx = np.full(shape, -1, dtype=np.intp)
+
+    if n_cells == 0 or c_lat.size == 0 or c_lon.size == 0:
+        return _empty_i16, _empty_cb, _empty_idx, _empty_idx
+    if sym_code.shape != (c_lat.size, c_lon.size):
+        return _empty_i16, _empty_cb, _empty_idx, _empty_idx
+    if len(ctx.lat_edges) < 2 or len(ctx.lon_edges) < 2:
+        return _empty_i16, _empty_cb, _empty_idx, _empty_idx
+
+    lat_cs = float(ctx.lat_edges[1] - ctx.lat_edges[0])
+    lon_cs = float(ctx.lon_edges[1] - ctx.lon_edges[0])
+
+    lat_bins = np.floor(
+        (c_lat.astype(np.float64) - ctx.lat_start) / lat_cs
+    ).astype(np.intp)
+    lon_bins = np.floor(
+        (c_lon.astype(np.float64) - ctx.lon_start) / lon_cs
+    ).astype(np.intp)
+
+    lat_ok = (lat_bins >= 0) & (lat_bins < ctx.lat_cell_count)
+    lon_ok = (lon_bins >= 0) & (lon_bins < ctx.lon_cell_count)
+    domain_ok = lat_ok[:, None] & lon_ok[None, :]          # (n_lat, n_lon)
+
+    flat_cell = (
+        lat_bins[:, None] * ctx.lon_cell_count + lon_bins[None, :]
+    ).ravel()                                               # (n_lat*n_lon,)
+    domain_v = domain_ok.ravel()
+
+    codes_flat = sym_code.ravel().astype(np.int16, copy=False)
+    cb_flat    = cb_hm.ravel().astype(np.int16, copy=False)
+
+    valid = domain_v & (codes_flat >= 0) & (codes_flat < rank_lut.shape[0])
+    if not np.any(valid):
+        return _empty_i16, _empty_cb, _empty_idx, _empty_idx
+
+    valid_idx   = np.flatnonzero(valid)
+    valid_codes = codes_flat[valid_idx]
+    valid_cb    = cb_flat[valid_idx]
+    valid_cells = flat_cell[valid_idx]
+    valid_ranks = rank_lut[valid_codes]
+
+    # Sort descending by rank (worst/lowest-severity first) so that the
+    # highest-severity point (rank 0) is written last and survives the
+    # fancy-index assignment below.
+    sort_order     = np.argsort(valid_ranks)[::-1]
+    ordered_cells  = valid_cells[sort_order]
+    ordered_codes  = valid_codes[sort_order]
+    ordered_cb     = valid_cb[sort_order]
+    ordered_vidx   = valid_idx[sort_order]    # flat index into sym_code.ravel()
+
+    best_code_flat = np.zeros(n_cells, dtype=np.int16)
+    best_cb_flat   = np.full(n_cells, -1, dtype=np.int16)
+    best_fidx_flat = np.full(n_cells, -1, dtype=np.intp)   # flat data index
+
+    best_code_flat[ordered_cells] = ordered_codes
+    best_cb_flat[ordered_cells]   = ordered_cb
+    best_fidx_flat[ordered_cells] = ordered_vidx
+
+    # Convert flat data index back to (lat_row, lon_col) into c_lat / c_lon.
+    n_lon = c_lon.size
+    lat_idx_flat = np.where(best_fidx_flat >= 0, best_fidx_flat // n_lon, -1)
+    lon_idx_flat = np.where(best_fidx_flat >= 0, best_fidx_flat  % n_lon, -1)
+
+    return (
+        best_code_flat.reshape(shape),
+        best_cb_flat.reshape(shape),
+        lat_idx_flat.reshape(shape).astype(np.intp),
+        lon_idx_flat.reshape(shape).astype(np.intp),
+    )
+
+
 @dataclass
 class GridModelContext:
     lat: np.ndarray

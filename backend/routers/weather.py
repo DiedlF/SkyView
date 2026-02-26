@@ -32,10 +32,11 @@ from constants import (
     G0,
     LOW_ZOOM_GLOBAL_CACHE_MAX_ZOOM,
 )
-from grid_aggregation import build_grid_context, choose_cell_groups, scatter_cell_stats
+from grid_aggregation import build_grid_context, choose_cell_groups, scatter_cell_stats, scatter_best_symbol
 from grid_utils import bbox_indices as _bbox_indices, slice_array as _slice_array
 from services.symbol_ops import filter_symbols_to_bbox, load_symbols_precomputed
 from symbol_logic import SYMBOL_CODE_RANK_LUT, SYMBOL_CODE_TO_TYPE, aggregate_symbol_cell
+from weather_codes import ww_to_symbol, ww_severity_rank
 
 
 def build_weather_router(
@@ -250,23 +251,33 @@ def build_weather_router(
         )
         t_grid_ms += (perf_counter() - t_grid0) * 1000.0
 
-        need_pre_d2 = (d_eu is not None) or (c_sym_code is None) or (c_cb_hm is None)
-        _pre_d2: Any = None
-        if need_pre_d2:
-            _pre_d2 = scatter_cell_stats(
-                c_lat, c_lon, ctx, ww, c_cape, ceil_arr,
-                CAPE_CONV_THRESHOLD, CEILING_VALID_MAX_METERS,
-            )
-
-        need_pre_eu = (
-            d_eu is not None and c_lat_eu is not None and ww_eu is not None
-            and ((c_sym_code_eu is None) or (c_cb_hm_eu is None))
+        # P0: always compute pre-pass — provides cell_max_ww / cell_any_cape /
+        # cell_any_ceil for O(1) per-cell fast-paths and EU-fallback gate.
+        _pre_d2: Any = scatter_cell_stats(
+            c_lat, c_lon, ctx, ww, c_cape, ceil_arr,
+            CAPE_CONV_THRESHOLD, CEILING_VALID_MAX_METERS,
         )
+
         _pre_eu: Any = None
-        if need_pre_eu:
+        if d_eu is not None and c_lat_eu is not None and ww_eu is not None:
             _pre_eu = scatter_cell_stats(
                 c_lat_eu, c_lon_eu, ctx, ww_eu, c_cape_eu, ceil_arr_eu,
                 CAPE_CONV_THRESHOLD, CEILING_VALID_MAX_METERS,
+            )
+
+        # P1: vectorised per-cell best-symbol pre-scatter — O(N_grid) once,
+        # then O(1) lookup per cell in the loop (eliminates all np.ix_ calls
+        # in the fast path).
+        _best_sym_d2 = _best_cb_d2 = _best_lat_d2 = _best_lon_d2 = None
+        if c_sym_code is not None and c_cb_hm is not None:
+            _best_sym_d2, _best_cb_d2, _best_lat_d2, _best_lon_d2 = scatter_best_symbol(
+                c_lat, c_lon, ctx, c_sym_code, c_cb_hm, SYMBOL_CODE_RANK_LUT,
+            )
+
+        _best_sym_eu = _best_cb_eu = _best_lat_eu = _best_lon_eu = None
+        if c_sym_code_eu is not None and c_cb_hm_eu is not None and c_lat_eu is not None and c_lon_eu is not None:
+            _best_sym_eu, _best_cb_eu, _best_lat_eu, _best_lon_eu = scatter_best_symbol(
+                c_lat_eu, c_lon_eu, ctx, c_sym_code_eu, c_cb_hm_eu, SYMBOL_CODE_RANK_LUT,
             )
 
         t_agg0 = perf_counter()
@@ -333,50 +344,69 @@ def build_weather_router(
                 if len(cli) == 0 or len(clo) == 0:
                     continue
 
-                # Fast path: ingest-precomputed sym_code / cb_hm
-                if src_sym_code is not None and src_cb_hm is not None:
-                    cell_codes = src_sym_code[np.ix_(cli, clo)]
-                    cell_cb = src_cb_hm[np.ix_(cli, clo)]
-                    cell_ww = src_ww[np.ix_(cli, clo)]
-                    max_ww = int(np.nanmax(cell_ww)) if not np.all(np.isnan(cell_ww)) else 0
-                    best_ii = int(cli_list[len(cli_list) // 2])
-                    best_jj = int(clo_list[len(clo_list) // 2])
-                    sym = "clear"
-                    cb_hm = None
+                # ── Shared pre-pass lookup (available for both paths) ─────────
+                _pre = _pre_eu if (use_eu and _pre_eu is not None) else _pre_d2
+                _pre_max_ww  = float(_pre[0][i, j])
+                _pre_any_cape = bool(_pre[1][i, j])
+                _pre_any_ceil = bool(_pre[2][i, j])
+                max_ww = int(_pre_max_ww) if np.isfinite(_pre_max_ww) else 0
 
-                    flat_codes = cell_codes.ravel().astype(np.int16, copy=False)
-                    valid = (flat_codes >= 0) & (flat_codes < SYMBOL_CODE_RANK_LUT.shape[0])
-                    if np.any(valid):
-                        valid_idx = np.flatnonzero(valid)
-                        ranks = SYMBOL_CODE_RANK_LUT[flat_codes[valid_idx]]
-                        keep = ranks >= 0
-                        if np.any(keep):
-                            best_k = int(np.argmin(ranks[keep]))
-                            flat_idx = int(valid_idx[np.flatnonzero(keep)[best_k]])
-                        else:
-                            flat_idx = int(valid_idx[0])
-                        ii_f, jj_f = np.unravel_index(flat_idx, cell_codes.shape)
-                        code = int(cell_codes[ii_f, jj_f])
-                        best_ii = int(cli[ii_f])
-                        best_jj = int(clo[jj_f])
-                        sym = SYMBOL_CODE_TO_TYPE.get(code, "clear")
-                        vcb = int(cell_cb[ii_f, jj_f])
-                        cb_hm = vcb if vcb >= 0 else None
+                # ── P0/P1: fast path — ingest-precomputed sym_code / cb_hm ───
+                # O(1) lookup into pre-scattered arrays; zero np.ix_() calls.
+                _best_sym = _best_sym_eu if use_eu else _best_sym_d2
+                _best_cb  = _best_cb_eu  if use_eu else _best_cb_d2
+                _best_li  = _best_lat_eu if use_eu else _best_lat_d2
+                _best_lj  = _best_lon_eu if use_eu else _best_lon_d2
+
+                if _best_sym is not None and src_sym_code is not None and src_cb_hm is not None:
+                    code = int(_best_sym[i, j])
+                    sym  = SYMBOL_CODE_TO_TYPE.get(code, "clear")
+                    vcb  = int(_best_cb[i, j])
+                    cb_hm = vcb if vcb >= 0 else None
+
+                    # Representative point for clickLat/clickLon
+                    li_idx = int(_best_li[i, j])
+                    lj_idx = int(_best_lj[i, j])
+                    if li_idx >= 0 and lj_idx >= 0:
+                        best_ii, best_jj = li_idx, lj_idx
+                    else:
+                        best_ii = int(cli_list[len(cli_list) // 2])
+                        best_jj = int(clo_list[len(clo_list) // 2])
+
                 else:
-                    # Legacy fallback: classify from raw arrays
-                    _pre = _pre_eu if (use_eu and _pre_eu is not None) else _pre_d2
-                    _pre_max_ww = float(_pre[0][i, j])
-                    _pre_any_cape = bool(_pre[1][i, j])
-                    _pre_any_ceil = bool(_pre[2][i, j])
-
-                    if (not np.isnan(_pre_max_ww)) and _pre_max_ww <= 3 and not _pre_any_cape and not _pre_any_ceil:
+                    # ── Legacy fallback: classify from raw arrays ─────────────
+                    # P0: clear fast-path (no sig-wx, no CAPE, no ceiling)
+                    if np.isnan(_pre_max_ww) or (_pre_max_ww <= 3 and not _pre_any_cape and not _pre_any_ceil):
                         sym, cb_hm = "clear", None
                         best_ii = int(cli_list[len(cli_list) // 2])
                         best_jj = int(clo_list[len(clo_list) // 2])
-                        max_ww = int(_pre_max_ww) if np.isfinite(_pre_max_ww) else 0
+
+                    # P0: sig-wx fast-path — extract only ww, skip classification
+                    elif np.isfinite(_pre_max_ww) and _pre_max_ww > 10:
+                        cell_ww_only = src_ww[np.ix_(cli, clo)]
+                        sig_mask = np.isfinite(cell_ww_only) & (cell_ww_only > 10)
+                        if np.any(sig_mask):
+                            i_loc, j_loc = np.where(sig_mask)
+                            ww_vals = cell_ww_only[i_loc, j_loc].astype(int)
+                            k = max(
+                                range(len(ww_vals)),
+                                key=lambda idx: (ww_severity_rank(int(ww_vals[idx])), int(ww_vals[idx])),
+                            )
+                            sym = ww_to_symbol(int(ww_vals[k])) or "clear"
+                            best_ii = int(cli[int(i_loc[k])])
+                            best_jj = int(clo[int(j_loc[k])])
+                            max_ww  = int(ww_vals[k])
+                        else:
+                            sym = ww_to_symbol(max_ww) or "clear"
+                            best_ii = int(cli_list[len(cli_list) // 2])
+                            best_jj = int(clo_list[len(clo_list) // 2])
+                        cb_hm = None
+
                     else:
+                        # Full cloud classification (cape or ceiling present)
+                        # P2: aggregate_symbol_cell now uses strided arrays only.
                         cell_ww = src_ww[np.ix_(cli, clo)]
-                        max_ww = int(np.nanmax(cell_ww)) if not np.all(np.isnan(cell_ww)) else 0
+                        max_ww  = int(np.nanmax(cell_ww)) if np.any(np.isfinite(cell_ww)) else 0
                         sym, cb_hm, best_ii, best_jj = aggregate_symbol_cell(
                             cli=cli, clo=clo, cell_ww=cell_ww,
                             ceil_arr=src_ceil, c_clcl=src_clcl, c_clcm=src_clcm,
@@ -385,6 +415,8 @@ def build_weather_router(
                             c_lpi=src_lpi, c_hsurf=src_hsurf,
                             classify_point_fn=_classify_point_core,
                             zoom=zoom,
+                            pre_has_cape=_pre_any_cape,
+                            pre_has_ceil=_pre_any_ceil,
                         )
 
                 label = None
