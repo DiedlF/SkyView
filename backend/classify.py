@@ -105,7 +105,7 @@ def classify_cloud_type(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc
     # Suppress convective symbols when AGL signal is too low:
     # - convective clouds (cu_hum/cu_con/cb): cloud base must be >= 300 m AGL
     # - blue_thermal: dry convection top must be >= 300 m AGL
-    conv_cloud_ok = np.isfinite(hbas_agl) & (hbas_agl >= AGL_CONV_MIN_METERS)
+    conv_cloud_ok = np.isfinite(hbas_agl) & (hbas_agl >= AGL_CONV_MIN_METERS) & (hbas_sc > 0)
     blue_ok = np.isfinite(htop_dc_agl) & (htop_dc_agl >= AGL_CONV_MIN_METERS)
 
     blue_mask = conv_mask & ((hbas_sc <= 0) | (clcl < 5)) & blue_ok
@@ -137,11 +137,18 @@ def classify_cloud_type(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc
 
 
 def get_cloud_base(ceiling, hbas_sc):
-    """Cloud base in hectometers. -1 if invalid."""
-    mask_valid = np.isfinite(ceiling) & (ceiling > 0) & (ceiling < CEILING_VALID_MAX_METERS)
-    base = np.where(mask_valid, ceiling, hbas_sc)
+    """Cloud base in hectometers. -1 if invalid.
 
-    # Avoid RuntimeWarning from casting NaN/inf to int16.
+    Priority:
+    - If hbas_sc > 0 (convective cloud formed): use hbas_sc directly.
+    - Else if ceiling is valid (finite, >0, <CEILING_VALID_MAX_METERS): use ceiling
+      (stratiform base).
+    - Else: return -1 (no valid base).
+    """
+    hbas_valid = np.isfinite(hbas_sc) & (hbas_sc > 0)
+    ceil_valid  = np.isfinite(ceiling) & (ceiling > 0) & (ceiling < CEILING_VALID_MAX_METERS)
+    base = np.where(hbas_valid, hbas_sc, np.where(ceil_valid, ceiling, np.nan))
+
     base_hm = np.full(base.shape, -1, dtype=np.int16)
     finite = np.isfinite(base)
     if np.any(finite):

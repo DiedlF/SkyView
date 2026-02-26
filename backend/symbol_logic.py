@@ -130,7 +130,7 @@ def aggregate_symbol_cell(
         s_htop_sc - s_hbas_sc, 0.0,
     ))
     hbas_agl_s = s_hbas_sc - s_hsurf
-    p2_mask_s  = conv_mask_s & np.isfinite(hbas_agl_s) & (hbas_agl_s >= AGL_CONV_MIN_METERS)
+    p2_mask_s  = conv_mask_s & np.isfinite(hbas_agl_s) & (hbas_agl_s >= AGL_CONV_MIN_METERS) & (s_hbas_sc > 0)
 
     if np.any(p2_mask_s):
         cb_mask_s   = p2_mask_s & (
@@ -168,8 +168,9 @@ def aggregate_symbol_cell(
             sym = "blue_thermal"
             cb_hm = int((cb_val + 50) / 100) if cb_val > 0 else None
         else:
-            # Stride missed; use conservative cu_hum at cell centre.
-            sym = "cu_hum"
+            # Stride missed convective cloud base; cannot confirm hbas_sc > 0
+            # so do not emit a cloud symbol.
+            sym = "clear"
             cb_hm = None
 
     else:
