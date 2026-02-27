@@ -501,7 +501,7 @@ const LEGEND_CONFIGS = {
   dew_spread_2m: { title: 'Dew point spread 2m', gradient: 'linear-gradient(to right, rgb(70,200,220), rgb(170,140,110), rgb(255,70,40))', labels: ['0 K', '25+ K'] },
   conv_thickness: { title: 'Cloud thickness (convective)', gradient: 'linear-gradient(to right, rgb(40,220,60), rgb(200,200,40), rgb(240,80,40))', labels: ['0m', '6000m'] },
   lpi: { title: 'LPI', gradient: 'linear-gradient(to right, rgb(70,190,80), rgb(160,150,60), rgb(255,70,40))', labels: ['0', '20+'] },
-  thermals: { title: 'CAPE_ml', gradient: 'linear-gradient(to right, rgb(50,180,50), rgb(150,150,50), rgb(220,100,30), rgb(255,50,50))', labels: ['5 J/kg', '1000+ J/kg'] },
+  thermals: { title: 'CAPE_ml', gradient: 'linear-gradient(to right, rgb(50,180,50), rgb(150,150,50), rgb(220,100,30), rgb(255,50,50))', labels: ['0 J/kg', '1000+ J/kg'] },
   climb_rate: { title: 'Climb Rate', gradient: 'linear-gradient(to right, rgb(50,200,50), rgb(180,200,50), rgb(220,150,30), rgb(255,50,50))', labels: ['0 m/s', '5 m/s'] },
   climb_rate_cape: { title: 'Climb Rate (CAPE)', gradient: 'linear-gradient(to right, rgb(50,200,50), rgb(180,200,50), rgb(220,150,30), rgb(255,50,50))', labels: ['0 m/s', '5+ m/s'] },
   lcl: { title: 'Cloud Base (LCL) MSL', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '5000m MSL'] },

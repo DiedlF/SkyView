@@ -220,9 +220,9 @@ def colormap_dew_spread(v):
 
 def colormap_thermals(val):
     cape = float(val)
-    if cape < 5:
+    if cape <= 0:
         return None
-    t = min(max((cape - 5.0) / 995.0, 0.0), 1.0)
+    t = min(max(cape / 1000.0, 0.0), 1.0)
     return (int(50 + 205 * t), int(180 * (1 - t)), int(50 * (1 - t)), int(90 + 130 * t))
 
 
@@ -431,9 +431,9 @@ def colorize_layer_vectorized(layer: str, sampled: np.ndarray, valid: np.ndarray
         return rgba
 
     if layer == "thermals":
-        m = valid & (v >= 50)
+        m = valid & (v > 0)
         if np.any(m):
-            t = np.clip((v - 50.0) / 950.0, 0.0, 1.0)
+            t = np.clip(v / 1000.0, 0.0, 1.0)
             set_rgba(m, 50 + 205 * t, 180 * (1 - t), 50 * (1 - t), 90 + 130 * t)
         return rgba
 
