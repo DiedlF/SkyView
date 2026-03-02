@@ -204,11 +204,17 @@ request_metrics: Dict[str, Dict[str, Any]] = {}
 overlay_layer_metrics: Dict[str, Dict[str, Any]] = {}
 feature_usage_counters: Dict[str, int] = {
     "page": 0,
+    "timesteps": 0,
     "overlay_tile": 0,
+    "overlay_meta": 0,
     "symbols": 0,
+    "wind": 0,
     "point": 0,
     "meteogram": 0,
     "emagram": 0,
+    "status": 0,
+    "admin": 0,
+    "ops": 0,
     "other_api": 0,
 }
 capacity_samples = deque(maxlen=288)  # ~24h at 5min cadence
@@ -282,16 +288,28 @@ def _set_fallback_current(endpoint: str, decision: str, source_model: Optional[s
 def _classify_feature(path: str) -> str:
     if path in ("/", "/index.html"):
         return "page"
-    if path == "/api/overlay_tile":
+    if path == "/api/timesteps":
+        return "timesteps"
+    if path.startswith("/api/overlay_tile"):
         return "overlay_tile"
+    if path == "/api/overlay":
+        return "overlay_meta"
     if path == "/api/symbols":
         return "symbols"
+    if path == "/api/wind":
+        return "wind"
     if path == "/api/point":
         return "point"
     if path == "/api/meteogram_point":
         return "meteogram"
     if path == "/api/emagram_point":
         return "emagram"
+    if path in ("/api/status", "/api/health", "/api/cache_stats", "/api/perf_stats", "/api/usage_stats"):
+        return "status"
+    if path.startswith("/api/admin/"):
+        return "admin"
+    if path.startswith("/api/markers") or path.startswith("/api/marker_") or path.startswith("/api/location_search") or path.startswith("/api/feedback"):
+        return "ops"
     if path.startswith("/api/"):
         return "other_api"
     return "other_api"
