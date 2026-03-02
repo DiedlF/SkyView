@@ -1216,7 +1216,7 @@ def main():
         except Exception as e:
             logger.warning(f"D2 boundary cache build failed: {e}")
 
-    # Precompute low-zoom symbols layers (z5-z9) for this run.
+    # Precompute low-zoom symbols layers (z5-z10) for this run.
     if ok > 0:
         try:
             subprocess.run(
@@ -1225,7 +1225,7 @@ def main():
                     os.path.join(SCRIPT_DIR, "precompute_symbols.py"),
                     "--model", model,
                     "--run", run,
-                    "--zooms", "5,6,7,8,9",
+                    "--zooms", "5,6,7,8,9,10",
                 ],
                 check=False,
                 capture_output=True,

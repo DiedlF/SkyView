@@ -48,7 +48,7 @@ PRECIP_RATE_FIELD_BY_LAYER_VAR: dict[str, str] = {
 DATA_CACHE_MAX_ITEMS: int = int(os.environ.get('SKYVIEW_DATA_CACHE_MAX_ITEMS', '24'))
 
 # Low-zoom global symbols settings (also used by routers)
-LOW_ZOOM_GLOBAL_CACHE_MAX_ZOOM: int = 9
+LOW_ZOOM_GLOBAL_CACHE_MAX_ZOOM: int = 10
 LOW_ZOOM_GLOBAL_BBOX: tuple[float, float, float, float] = (30.0, -30.0, 72.0, 45.0)
 
 # Emagram pressure levels (D2)
