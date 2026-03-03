@@ -5,8 +5,10 @@ import os
 import argparse
 import asyncio
 import numpy as np
+import requests
 
 import app
+from constants import LOW_ZOOM_GLOBAL_BBOX
 
 
 def _model_api_name(model: str) -> str:
@@ -30,20 +32,42 @@ async def _run(model: str, run: str, zooms: list[int]):
         print(f"Run dir not found: {run_dir}")
         return 1
 
+    # Most .npz files do not carry validTime; build run+step -> validTime map
+    # from timeline metadata instead of relying on npz payload internals.
+    step_to_valid_time: dict[int, str] = {}
+    try:
+        runs = app.get_available_runs()
+        match = next((r for r in runs if r.get("model") == api_model and r.get("run") == run), None)
+        if match:
+            for s in match.get("steps", []):
+                st = s.get("step")
+                vt = s.get("validTime")
+                if isinstance(st, int) and isinstance(vt, str) and vt:
+                    step_to_valid_time[st] = vt
+    except Exception as e:
+        print(f"warning: failed to build step->validTime map for {model} {run}: {e}")
+
     done = 0
+    bbox = f"{LOW_ZOOM_GLOBAL_BBOX[0]},{LOW_ZOOM_GLOBAL_BBOX[1]},{LOW_ZOOM_GLOBAL_BBOX[2]},{LOW_ZOOM_GLOBAL_BBOX[3]}"
+    base_url = os.environ.get("SKYVIEW_PRECOMPUTE_BASE_URL", "http://127.0.0.1:8000")
+
     for step, path in _iter_steps(run_dir):
         try:
-            z = np.load(path)
-            valid_time = z["validTime"].item() if "validTime" in z.files else None
+            valid_time = step_to_valid_time.get(step)
+            if not valid_time:
+                # Backward fallback for datasets that embed validTime directly.
+                z = np.load(path)
+                valid_time = z["validTime"].item() if "validTime" in z.files else None
             if not valid_time:
                 continue
             for zoom in zooms:
-                await app.api_symbols(
-                    zoom=zoom,
-                    bbox=f"{app.LOW_ZOOM_GLOBAL_BBOX[0]},{app.LOW_ZOOM_GLOBAL_BBOX[1]},{app.LOW_ZOOM_GLOBAL_BBOX[2]},{app.LOW_ZOOM_GLOBAL_BBOX[3]}",
-                    time=str(valid_time),
-                    model=api_model,
+                resp = requests.get(
+                    f"{base_url}/api/symbols",
+                    params={"zoom": zoom, "bbox": bbox, "time": str(valid_time), "model": api_model},
+                    timeout=60,
                 )
+                if resp.status_code != 200:
+                    raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
                 done += 1
         except Exception as e:
             print(f"precompute failed {model} {run} step={step}: {e}")

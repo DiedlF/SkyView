@@ -1219,7 +1219,7 @@ def main():
     # Precompute low-zoom symbols layers (z5-z10) for this run.
     if ok > 0:
         try:
-            subprocess.run(
+            proc = subprocess.run(
                 [
                     sys.executable,
                     os.path.join(SCRIPT_DIR, "precompute_symbols.py"),
@@ -1231,6 +1231,15 @@ def main():
                 capture_output=True,
                 text=True,
             )
+            if proc.returncode != 0:
+                logger.warning(
+                    "Low-zoom symbols precompute returned %s (stdout=%s stderr=%s)",
+                    proc.returncode,
+                    (proc.stdout or "").strip()[:1200],
+                    (proc.stderr or "").strip()[:1200],
+                )
+            elif proc.stdout:
+                logger.info("Low-zoom symbols precompute: %s", proc.stdout.strip()[:1200])
         except Exception as e:
             logger.warning(f"Low-zoom symbols precompute failed: {e}")
 
