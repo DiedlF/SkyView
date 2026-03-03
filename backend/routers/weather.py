@@ -34,7 +34,14 @@ from constants import (
 )
 from grid_aggregation import build_grid_context, choose_cell_groups, scatter_cell_stats, scatter_best_symbol
 from grid_utils import bbox_indices as _bbox_indices, slice_array as _slice_array
-from services.symbol_ops import filter_symbols_to_bbox, load_symbols_precomputed
+from services.symbol_ops import (
+    filter_symbols_to_bbox,
+    load_symbols_precomputed,
+    load_symbols_precomputed_bins_merged,
+    save_symbols_precomputed_bin,
+    symbols_bin_bbox,
+    symbols_bin_indices_for_bbox,
+)
 from symbol_logic import SYMBOL_CODE_RANK_LUT, SYMBOL_CODE_TO_TYPE, aggregate_symbol_cell
 from weather_codes import ww_to_symbol, ww_severity_rank
 
@@ -90,8 +97,12 @@ def build_weather_router(
         def _snap(v: float, q: float) -> float:
             return round(round(v / q) * q, 5)
 
+        bin_ids = symbols_bin_indices_for_bbox(lat_min, lon_min, lat_max, lon_max, cell_size) if is_low_zoom_global else []
+
         # Normalize high-zoom bbox keys to improve cache hit-rate across micro-pans.
         if is_low_zoom_global:
+            bins_key = ";".join(f"{i}:{j}" for i, j in bin_ids)
+            symbols_cache_key = f"{model_used}|{run}|{step}|z{zoom}|bins|{bins_key}"
             cache_bbox = f"{lat_min:.4f},{lon_min:.4f},{lat_max:.4f},{lon_max:.4f}"
         else:
             q = max(0.01, cell_size * 0.5)
@@ -99,11 +110,7 @@ def build_weather_router(
                 f"{_snap(lat_min,q):.4f},{_snap(lon_min,q):.4f},"
                 f"{_snap(lat_max,q):.4f},{_snap(lon_max,q):.4f}"
             )
-        symbols_cache_key = (
-            f"{model_used}|{run}|{step}|z{zoom}|global"
-            if is_low_zoom_global
-            else f"{model_used}|{run}|{step}|z{zoom}|{cache_bbox}"
-        )
+            symbols_cache_key = f"{model_used}|{run}|{step}|z{zoom}|{cache_bbox}"
         cached_symbols = symbols_cache_get(symbols_cache_key)
         served_from = None
         cache_load_ms = 0.0
@@ -115,7 +122,20 @@ def build_weather_router(
             else:
                 low_zoom_symbols_cache_metrics["misses"] += 1
                 t_disk0 = perf_counter()
-                cached_symbols = load_symbols_precomputed(data_dir, model_used, run, step, zoom)
+                cached_symbols = load_symbols_precomputed_bins_merged(
+                    data_dir=data_dir,
+                    model_used=model_used,
+                    run=run,
+                    step=step,
+                    zoom=zoom,
+                    lat_min=lat_min,
+                    lon_min=lon_min,
+                    lat_max=lat_max,
+                    lon_max=lon_max,
+                    cell_size=cell_size,
+                )
+                if cached_symbols is None:
+                    cached_symbols = load_symbols_precomputed(data_dir, model_used, run, step, zoom)
                 cache_load_ms = (perf_counter() - t_disk0) * 1000.0
                 if cached_symbols is not None:
                     low_zoom_symbols_cache_metrics["diskHits"] += 1
@@ -139,9 +159,6 @@ def build_weather_router(
                 cache_load_ms, total_ms,
             )
             return out_payload
-
-        if is_low_zoom_global:
-            symbols_cache_key = f"{model_used}|{run}|{step}|z{zoom}|{cache_bbox}"
 
         t_load0 = perf_counter()
         d = load_data(run, step, model_used, keys=symbol_keys)
@@ -509,6 +526,29 @@ def build_weather_router(
             },
         }
         symbols_cache_set(symbols_cache_key, result)
+
+        # Persist world-anchored bin payloads for low-zoom requests when the
+        # request exactly matches a single bin. This enables stable pan-serving
+        # from disk precompute tiles/bins.
+        if is_low_zoom_global and len(bin_ids) == 1:
+            bi, bj = bin_ids[0]
+            b_lat_min, b_lon_min, b_lat_max, b_lon_max = symbols_bin_bbox(bi, bj, cell_size)
+            if (
+                abs(lat_min - b_lat_min) < 1e-6 and abs(lon_min - b_lon_min) < 1e-6
+                and abs(lat_max - b_lat_max) < 1e-6 and abs(lon_max - b_lon_max) < 1e-6
+            ):
+                save_symbols_precomputed_bin(
+                    data_dir=data_dir,
+                    model_used=model_used,
+                    run=run,
+                    step=step,
+                    zoom=zoom,
+                    i=bi,
+                    j=bj,
+                    payload=result,
+                    logger=logger,
+                )
+
         total_ms = (perf_counter() - t0) * 1000.0
         logger.info(
             "/api/symbols rid=%s served=computed zoom=%s count=%s euCells=%s d2Cells=%s "

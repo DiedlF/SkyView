@@ -8,7 +8,8 @@ import numpy as np
 import requests
 
 import app
-from constants import LOW_ZOOM_GLOBAL_BBOX
+from constants import LOW_ZOOM_GLOBAL_BBOX, CELL_SIZES_BY_ZOOM
+from services.symbol_ops import symbols_bin_bbox, symbols_bin_indices_for_bbox
 
 
 def _model_api_name(model: str) -> str:
@@ -48,8 +49,18 @@ async def _run(model: str, run: str, zooms: list[int]):
         print(f"warning: failed to build step->validTime map for {model} {run}: {e}")
 
     done = 0
-    bbox = f"{LOW_ZOOM_GLOBAL_BBOX[0]},{LOW_ZOOM_GLOBAL_BBOX[1]},{LOW_ZOOM_GLOBAL_BBOX[2]},{LOW_ZOOM_GLOBAL_BBOX[3]}"
     base_url = os.environ.get("SKYVIEW_PRECOMPUTE_BASE_URL", "http://127.0.0.1:8000")
+
+    bins_by_zoom: dict[int, list[tuple[int, int]]] = {}
+    for zoom in zooms:
+        cs = CELL_SIZES_BY_ZOOM.get(int(zoom))
+        if cs is None:
+            continue
+        bins_by_zoom[int(zoom)] = symbols_bin_indices_for_bbox(
+            LOW_ZOOM_GLOBAL_BBOX[0], LOW_ZOOM_GLOBAL_BBOX[1],
+            LOW_ZOOM_GLOBAL_BBOX[2], LOW_ZOOM_GLOBAL_BBOX[3],
+            cs,
+        )
 
     for step, path in _iter_steps(run_dir):
         try:
@@ -61,14 +72,20 @@ async def _run(model: str, run: str, zooms: list[int]):
             if not valid_time:
                 continue
             for zoom in zooms:
-                resp = requests.get(
-                    f"{base_url}/api/symbols",
-                    params={"zoom": zoom, "bbox": bbox, "time": str(valid_time), "model": api_model},
-                    timeout=60,
-                )
-                if resp.status_code != 200:
-                    raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
-                done += 1
+                cs = CELL_SIZES_BY_ZOOM.get(int(zoom))
+                if cs is None:
+                    continue
+                for bi, bj in bins_by_zoom.get(int(zoom), []):
+                    b = symbols_bin_bbox(bi, bj, cs)
+                    bbox = f"{b[0]},{b[1]},{b[2]},{b[3]}"
+                    resp = requests.get(
+                        f"{base_url}/api/symbols",
+                        params={"zoom": zoom, "bbox": bbox, "time": str(valid_time), "model": api_model},
+                        timeout=60,
+                    )
+                    if resp.status_code != 200:
+                        raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
+                    done += 1
         except Exception as e:
             print(f"precompute failed {model} {run} step={step}: {e}")
     print(f"Precomputed symbols entries: {done}")

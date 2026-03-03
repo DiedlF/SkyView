@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import glob
 import json
+import math
 import os
 from typing import Callable, Optional
 
@@ -28,6 +29,40 @@ def symbols_precomputed_path(data_dir: str, model_used: str, run: str, step: int
     )
 
 
+def symbols_bin_span(cell_size: float) -> float:
+    """World-anchored symbols bin span in degrees for a zoom cell size."""
+    return float(cell_size) * 24.0
+
+
+def symbols_bin_indices_for_bbox(lat_min: float, lon_min: float, lat_max: float, lon_max: float, cell_size: float):
+    span = symbols_bin_span(cell_size)
+    lat0, lon0 = -90.0, -180.0
+    i0 = int(math.floor((lat_min - lat0) / span))
+    i1 = int(math.floor((lat_max - lat0) / span))
+    j0 = int(math.floor((lon_min - lon0) / span))
+    j1 = int(math.floor((lon_max - lon0) / span))
+    out = []
+    for i in range(i0, i1 + 1):
+        for j in range(j0, j1 + 1):
+            out.append((i, j))
+    return out
+
+
+def symbols_bin_bbox(i: int, j: int, cell_size: float) -> tuple[float, float, float, float]:
+    span = symbols_bin_span(cell_size)
+    lat0, lon0 = -90.0, -180.0
+    lat_min = lat0 + i * span
+    lon_min = lon0 + j * span
+    return lat_min, lon_min, lat_min + span, lon_min + span
+
+
+def symbols_precomputed_bin_path(data_dir: str, model_used: str, run: str, step: int, zoom: int, i: int, j: int) -> str:
+    return os.path.join(
+        data_dir, _model_dir_name(model_used), run,
+        f"_symbols_z{zoom}_{int(step):03d}_b{i}_{j}.json",
+    )
+
+
 # ── Disk read / write ─────────────────────────────────────────────────────────
 
 def load_symbols_precomputed(
@@ -41,6 +76,51 @@ def load_symbols_precomputed(
             return json.load(f)
     except Exception:
         return None
+
+
+def load_symbols_precomputed_bin(
+    data_dir: str, model_used: str, run: str, step: int, zoom: int, i: int, j: int,
+) -> Optional[dict]:
+    path = symbols_precomputed_bin_path(data_dir, model_used, run, step, zoom, i, j)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def load_symbols_precomputed_bins_merged(
+    data_dir: str,
+    model_used: str,
+    run: str,
+    step: int,
+    zoom: int,
+    lat_min: float,
+    lon_min: float,
+    lat_max: float,
+    lon_max: float,
+    cell_size: float,
+) -> Optional[dict]:
+    bins = symbols_bin_indices_for_bbox(lat_min, lon_min, lat_max, lon_max, cell_size)
+    payloads: list[dict] = []
+    for i, j in bins:
+        p = load_symbols_precomputed_bin(data_dir, model_used, run, step, zoom, i, j)
+        if p is None:
+            return None
+        payloads.append(p)
+    if not payloads:
+        return None
+
+    symbols = []
+    for p in payloads:
+        symbols.extend(p.get("symbols", []))
+
+    base = dict(payloads[0])
+    base["symbols"] = symbols
+    base["count"] = len(symbols)
+    return filter_symbols_to_bbox(base, lat_min, lon_min, lat_max, lon_max)
 
 
 def save_symbols_precomputed(
@@ -61,6 +141,28 @@ def save_symbols_precomputed(
         os.replace(tmp, path)
     except Exception as exc:
         logger.warning("Failed writing symbols precompute %s: %s", path, exc)
+
+
+def save_symbols_precomputed_bin(
+    data_dir: str,
+    model_used: str,
+    run: str,
+    step: int,
+    zoom: int,
+    i: int,
+    j: int,
+    payload: dict,
+    logger,
+) -> None:
+    path = symbols_precomputed_bin_path(data_dir, model_used, run, step, zoom, i, j)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        os.replace(tmp, path)
+    except Exception as exc:
+        logger.warning("Failed writing symbols precompute bin %s: %s", path, exc)
 
 
 # ── Viewport filter ───────────────────────────────────────────────────────────
@@ -141,9 +243,16 @@ def seed_symbols_cache_from_disk(
             for zoom in range(5, LOW_ZOOM_GLOBAL_CACHE_MAX_ZOOM + 1):
                 for p in glob.glob(os.path.join(run_dir, f"_symbols_z{zoom}_*.json")):
                     try:
-                        step = int(os.path.basename(p).split("_")[-1].split(".")[0])
+                        name = os.path.basename(p)
+                        # Supports both legacy: _symbols_z{zoom}_{step}.json
+                        # and binned: _symbols_z{zoom}_{step}_b{i}_{j}.json
+                        rest = name.split(f"_symbols_z{zoom}_", 1)[1]
+                        step = int(rest.split("_", 1)[0].split(".")[0])
                         with open(p, "r", encoding="utf-8") as f:
                             payload = json.load(f)
+                        if "_b" in name:
+                            # Do not seed per-bbox/bin cache keys at startup.
+                            continue
                         key = f"{model_key}|{run}|{step}|z{zoom}|global"
                         symbols_cache_set_fn(key, payload)
                         loaded += 1
