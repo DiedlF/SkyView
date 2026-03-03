@@ -23,7 +23,7 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from cache_state import symbols_cache_get, symbols_cache_set
-from classify import classify_point as _classify_point_core
+from classify import classify_point as _classify_point_core, classify_cloud_type, get_cloud_base
 from constants import (
     CAPE_CONV_THRESHOLD,
     CEILING_VALID_MAX_METERS,
@@ -37,6 +37,105 @@ from grid_utils import bbox_indices as _bbox_indices, slice_array as _slice_arra
 from services.symbol_ops import filter_symbols_to_bbox, load_symbols_precomputed
 from symbol_logic import SYMBOL_CODE_RANK_LUT, SYMBOL_CODE_TO_TYPE, aggregate_symbol_cell
 from weather_codes import ww_to_symbol, ww_severity_rank
+
+
+def _symbol_code_map() -> dict[str, int]:
+    return {
+        "clear": 0,
+        "st": 1,
+        "ac": 2,
+        "ci": 3,
+        "blue_thermal": 4,
+        "cu_hum": 5,
+        "cu_con": 6,
+        "cb": 7,
+        "fog": 20,
+        "rime_fog": 21,
+        "drizzle_light": 22,
+        "drizzle_moderate": 23,
+        "drizzle_dense": 24,
+        "freezing_drizzle": 25,
+        "freezing_drizzle_heavy": 26,
+        "rain_slight": 27,
+        "rain_moderate": 28,
+        "rain_heavy": 29,
+        "freezing_rain": 30,
+        "snow_slight": 31,
+        "snow_moderate": 32,
+        "snow_heavy": 33,
+        "snow_grains": 34,
+        "rain_shower": 35,
+        "rain_shower_moderate": 36,
+        "snow_shower": 37,
+        "snow_shower_heavy": 38,
+        "thunderstorm": 39,
+        "thunderstorm_hail": 40,
+    }
+
+
+def _ensure_symbol_native_fields(d: dict[str, np.ndarray]) -> None:
+    """Ensure sym_code/cb_hm are present for stable, pan-invariant symbol picks.
+
+    Some historical datasets were ingested before sym_code/cb_hm precompute existed
+    (notably parts of icon-eu). Without these fields, /api/symbols falls back to
+    per-cell legacy classification, which can vary under panning.
+    """
+    if "sym_code" in d and "cb_hm" in d:
+        return
+
+    required = ("ww", "ceiling", "clcl", "clcm", "clch", "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "hsurf")
+    if any(k not in d for k in required):
+        return
+
+    ww = d["ww"]
+    ceiling = d["ceiling"]
+    clcl = d["clcl"]
+    clcm = d["clcm"]
+    clch = d["clch"]
+    cape = d["cape_ml"]
+    htop_dc = d["htop_dc"]
+    hbas_sc = d["hbas_sc"]
+    htop_sc = d["htop_sc"]
+    lpi = d["lpi_max"] if "lpi_max" in d else (d["lpi"] if "lpi" in d else np.zeros_like(ww))
+    hsurf = d["hsurf"]
+
+    cloud_type = classify_cloud_type(ww, clcl, clcm, clch, cape, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf)
+    cb_hm = get_cloud_base(ceiling, hbas_sc).astype(np.int16)
+
+    sym_code = np.zeros(ww.shape, dtype=np.int16)
+    m = _symbol_code_map()
+    for k, v in m.items():
+        if k == "clear":
+            continue
+        sym_code[cloud_type == k] = v
+
+    # Keep significant weather overrides identical to ingest behavior.
+    ww_i = np.where(np.isfinite(ww), ww, -999).astype(np.int16)
+    wx = ww_i > 10
+    sym_code[wx & (ww_i == 96)] = m["thunderstorm_hail"]
+    sym_code[wx & (ww_i >= 95) & (ww_i <= 99) & (ww_i != 96)] = m["thunderstorm"]
+    sym_code[wx & (ww_i == 86)] = m["snow_shower_heavy"]
+    sym_code[wx & (ww_i == 85)] = m["snow_shower"]
+    sym_code[wx & ((ww_i == 81) | (ww_i == 82))] = m["rain_shower_moderate"]
+    sym_code[wx & (ww_i == 80)] = m["rain_shower"]
+    sym_code[wx & (ww_i == 75)] = m["snow_heavy"]
+    sym_code[wx & (ww_i == 73)] = m["snow_moderate"]
+    sym_code[wx & (ww_i == 71)] = m["snow_slight"]
+    sym_code[wx & (ww_i == 77)] = m["snow_grains"]
+    sym_code[wx & (ww_i == 65)] = m["rain_heavy"]
+    sym_code[wx & (ww_i == 63)] = m["rain_moderate"]
+    sym_code[wx & (ww_i == 61)] = m["rain_slight"]
+    sym_code[wx & ((ww_i == 66) | (ww_i == 67))] = m["freezing_rain"]
+    sym_code[wx & (ww_i == 55)] = m["drizzle_dense"]
+    sym_code[wx & (ww_i == 53)] = m["drizzle_moderate"]
+    sym_code[wx & (ww_i == 51)] = m["drizzle_light"]
+    sym_code[wx & (ww_i == 57)] = m["freezing_drizzle_heavy"]
+    sym_code[wx & (ww_i == 56)] = m["freezing_drizzle"]
+    sym_code[wx & (ww_i == 45)] = m["fog"]
+    sym_code[wx & (ww_i == 48)] = m["rime_fog"]
+
+    d["sym_code"] = sym_code
+    d["cb_hm"] = cb_hm
 
 
 def build_weather_router(
@@ -145,6 +244,7 @@ def build_weather_router(
 
         t_load0 = perf_counter()
         d = load_data(run, step, model_used, keys=symbol_keys)
+        _ensure_symbol_native_fields(d)
         t_load_ms += (perf_counter() - t_load0) * 1000.0
 
         lat = d["lat"]
@@ -214,6 +314,7 @@ def build_weather_router(
                         eu_fb = None
                     if eu_fb is not None:
                         d_eu = eu_fb["data"]
+                        _ensure_symbol_native_fields(d_eu)
                         lat_eu = d_eu["lat"]
                         lon_eu = d_eu["lon"]
                         li_eu, lo_eu = _bbox_indices(lat_eu, lon_eu, lat_min - pad, lon_min - pad, lat_max + pad, lon_max + pad)
