@@ -102,8 +102,11 @@ def build_weather_router(
         # Normalize high-zoom bbox keys to improve cache hit-rate across micro-pans.
         if is_low_zoom_global:
             bins_key = ";".join(f"{i}:{j}" for i, j in bin_ids)
-            symbols_cache_key = f"{model_used}|{run}|{step}|z{zoom}|bins|{bins_key}"
+            # Important: include viewport bbox in the low-zoom memory-cache key.
+            # Using only bin ids can return a payload computed for a different
+            # viewport inside the same bins, which then misses symbols after pan.
             cache_bbox = f"{lat_min:.4f},{lon_min:.4f},{lat_max:.4f},{lon_max:.4f}"
+            symbols_cache_key = f"{model_used}|{run}|{step}|z{zoom}|bins|{bins_key}|bbox|{cache_bbox}"
         else:
             q = max(0.01, cell_size * 0.5)
             cache_bbox = (
