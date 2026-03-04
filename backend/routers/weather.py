@@ -84,7 +84,10 @@ def build_weather_router(
         parts = bbox.split(",")
         if len(parts) != 4:
             raise HTTPException(400, "bbox: lat_min,lon_min,lat_max,lon_max")
-        lat_min, lon_min, lat_max, lon_max = map(float, parts)
+        req_lat_min, req_lon_min, req_lat_max, req_lon_max = map(float, parts)
+
+        # Working bbox may be expanded to fixed world bins at low zoom.
+        lat_min, lon_min, lat_max, lon_max = req_lat_min, req_lon_min, req_lat_max, req_lon_max
 
         symbol_keys = [
             "ww", "ceiling", "clcl", "clcm", "clch",
@@ -97,16 +100,22 @@ def build_weather_router(
         def _snap(v: float, q: float) -> float:
             return round(round(v / q) * q, 5)
 
-        bin_ids = symbols_bin_indices_for_bbox(lat_min, lon_min, lat_max, lon_max, cell_size) if is_low_zoom_global else []
+        bin_ids = symbols_bin_indices_for_bbox(req_lat_min, req_lon_min, req_lat_max, req_lon_max, cell_size) if is_low_zoom_global else []
+
+        # Low zoom: stabilize panning by serving world-fixed bin unions.
+        # Compute/cache full bin payloads, then filter to requested viewport.
+        if is_low_zoom_global and bin_ids:
+            bboxes = [symbols_bin_bbox(i, j, cell_size) for i, j in bin_ids]
+            lat_min = min(b[0] for b in bboxes)
+            lon_min = min(b[1] for b in bboxes)
+            lat_max = max(b[2] for b in bboxes)
+            lon_max = max(b[3] for b in bboxes)
 
         # Normalize high-zoom bbox keys to improve cache hit-rate across micro-pans.
         if is_low_zoom_global:
             bins_key = ";".join(f"{i}:{j}" for i, j in bin_ids)
-            # Important: include viewport bbox in the low-zoom memory-cache key.
-            # Using only bin ids can return a payload computed for a different
-            # viewport inside the same bins, which then misses symbols after pan.
-            cache_bbox = f"{lat_min:.4f},{lon_min:.4f},{lat_max:.4f},{lon_max:.4f}"
-            symbols_cache_key = f"{model_used}|{run}|{step}|z{zoom}|bins|{bins_key}|bbox|{cache_bbox}"
+            symbols_cache_key = f"{model_used}|{run}|{step}|z{zoom}|bins|{bins_key}"
+            cache_bbox = f"{req_lat_min:.4f},{req_lon_min:.4f},{req_lat_max:.4f},{req_lon_max:.4f}"
         else:
             q = max(0.01, cell_size * 0.5)
             cache_bbox = (
@@ -151,7 +160,7 @@ def build_weather_router(
 
         if cached_symbols is not None:
             out_payload = (
-                filter_symbols_to_bbox(cached_symbols, lat_min, lon_min, lat_max, lon_max)
+                filter_symbols_to_bbox(cached_symbols, req_lat_min, req_lon_min, req_lat_max, req_lon_max)
                 if is_low_zoom_global
                 else cached_symbols
             )
@@ -552,15 +561,21 @@ def build_weather_router(
                     logger=logger,
                 )
 
+        out_payload = (
+            filter_symbols_to_bbox(result, req_lat_min, req_lon_min, req_lat_max, req_lon_max)
+            if is_low_zoom_global
+            else result
+        )
+
         total_ms = (perf_counter() - t0) * 1000.0
         logger.info(
             "/api/symbols rid=%s served=computed zoom=%s count=%s euCells=%s d2Cells=%s "
             "loadMs=%.2f gridMs=%.2f aggMs=%.2f totalMs=%.2f",
-            rid, zoom, result["count"],
-            result["diagnostics"]["euCells"], result["diagnostics"]["d2Cells"],
+            rid, zoom, out_payload["count"],
+            out_payload.get("diagnostics", {}).get("euCells"), out_payload.get("diagnostics", {}).get("d2Cells"),
             t_load_ms, t_grid_ms, t_agg_ms, total_ms,
         )
-        return result
+        return out_payload
 
     # ── /api/wind ─────────────────────────────────────────────────────────────
 
