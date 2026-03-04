@@ -2390,6 +2390,14 @@ async def admin_view():
     return FileResponse(p)
 
 
+@app.get('/favicon.ico', include_in_schema=False)
+async def favicon_ico_alias():
+    """Serve SVG favicon for browsers that still request /favicon.ico by default."""
+    p = os.path.join(FRONTEND_DIR, 'favicon.svg')
+    if os.path.isfile(p):
+        return FileResponse(p, media_type='image/svg+xml')
+    raise HTTPException(404, 'favicon not found')
+
 
 # Phase-4 modularization: ops/admin endpoints bound via routers
 app.include_router(build_ops_router(
