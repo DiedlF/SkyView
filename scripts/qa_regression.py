@@ -137,7 +137,7 @@ def check_wind_point_parity(base: str, t: str):
 
 
 def check_convective_agl_suppression_logic():
-    """Regression guard: convective/cloud-free decision must use AGL (MSL-hsurf), threshold 300m."""
+    """Regression guard: convective/cloud-free decision must use AGL (MSL-hsurf), threshold 100m."""
     backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend"))
     if backend_dir not in sys.path:
         sys.path.insert(0, backend_dir)
@@ -162,7 +162,7 @@ def check_convective_agl_suppression_logic():
 
     out = classify_cloud_type(ww, clcl, clcm, clch, cape, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=hsurf)
     got = [str(x) for x in out[0, :]]
-    want = ["clear", "cb", "clear", "cu_con", "clear", "cu_hum", "clear", "blue_thermal"]
+    want = ["cb", "cb", "cu_con", "cu_con", "cu_hum", "cu_hum", "blue_thermal", "blue_thermal"]
     if got != want:
         fail(f"AGL suppression regression: got={got}, want={want}")
 
