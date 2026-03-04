@@ -1166,6 +1166,20 @@ async function loadOverlay() {
         zIndex: 250,
       }).addTo(map);
 
+      // Retry transient tile failures once with a cache-buster.
+      overlayLayer.on('tileerror', (ev) => {
+        try {
+          const t = ev && ev.tile;
+          if (!t || t.dataset.retryOnce === '1') return;
+          t.dataset.retryOnce = '1';
+          const base = t.src.split('#')[0].split('?')[0];
+          const q = t.src.includes('?') ? '&' : '?';
+          t.src = `${base}${q}${params.toString()}&_rt=${Date.now()}`;
+        } catch (_e) {
+          // no-op
+        }
+      });
+
       // Best-effort prewarm: viewport + 1-ring tiles after layer/time switch.
       prewarmOverlayTiles(params).catch(() => {});
 

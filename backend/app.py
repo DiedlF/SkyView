@@ -1128,6 +1128,19 @@ from PIL import Image
 # Phase-2 modularization: use shared overlay registry from backend/overlay_render.py
 OVERLAY_CONFIGS = RENDER_OVERLAY_CONFIGS
 
+OVERLAY_LAYER_ALIASES = {
+    "rain": "rain_amount",
+    "snow": "snow_amount",
+    "hail": "hail_amount",
+    "precip": "total_precip",
+    "clouds": "clouds_total",
+}
+
+
+def _normalize_overlay_layer(layer: str) -> str:
+    key = str(layer or "").strip()
+    return OVERLAY_LAYER_ALIASES.get(key, key)
+
 
 async def api_overlay(
     layer: str = Query(...),
@@ -1136,6 +1149,7 @@ async def api_overlay(
     model: Optional[str] = Query(None),
     width: int = Query(400, ge=50, le=1200),
 ):
+    layer = _normalize_overlay_layer(layer)
     if layer not in OVERLAY_CONFIGS:
         raise HTTPException(400, f"Unknown layer: {layer}. Available: {list(OVERLAY_CONFIGS.keys())}")
 
@@ -1615,6 +1629,7 @@ async def api_overlay_tile(
     t_colorize_ms = 0.0
     t_encode_ms = 0.0
 
+    layer = _normalize_overlay_layer(layer)
     if layer not in OVERLAY_CONFIGS:
         raise HTTPException(400, f"Unknown layer: {layer}")
 
@@ -1627,9 +1642,30 @@ async def api_overlay_tile(
     if "hsurf" not in overlay_keys:
         overlay_keys = list(overlay_keys) + ["hsurf"]
 
+    def _empty_tile_response(reason: str, status_hint: str = "MISS") -> Response:
+        empty = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+        b = io.BytesIO(); empty.save(b, format="PNG", optimize=True)
+        png = b.getvalue()
+        return Response(
+            content=png,
+            media_type="image/png",
+            headers=build_tile_headers(
+                run="unknown",
+                valid_time="unknown",
+                model=model or "unknown",
+                cache=status_hint,
+                extra={"X-Overlay-Status": reason},
+            ),
+        )
+
     t_load0 = perf_counter()
-    run, step, model_used = resolve_time_with_cache_context(time, model)
-    d = load_data(run, step, model_used, keys=overlay_keys)
+    try:
+        run, step, model_used = resolve_time_with_cache_context(time, model)
+        d = load_data(run, step, model_used, keys=overlay_keys)
+    except HTTPException as exc:
+        if exc.status_code in (404, 422):
+            return _empty_tile_response(f"empty:{exc.status_code}")
+        raise
     lat = d["lat"]
     lon = d["lon"]
 
