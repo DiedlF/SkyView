@@ -49,7 +49,8 @@ async def _run(model: str, run: str, zooms: list[int]):
         print(f"warning: failed to build step->validTime map for {model} {run}: {e}")
 
     done = 0
-    base_url = os.environ.get("SKYVIEW_PRECOMPUTE_BASE_URL", "http://127.0.0.1:8000")
+    # Default to backend's local listen port (app.py uses 8501).
+    base_url = os.environ.get("SKYVIEW_PRECOMPUTE_BASE_URL", "http://127.0.0.1:8501")
 
     bins_by_zoom: dict[int, list[tuple[int, int]]] = {}
     for zoom in zooms:
