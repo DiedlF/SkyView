@@ -1216,8 +1216,9 @@ def main():
         except Exception as e:
             logger.warning(f"D2 boundary cache build failed: {e}")
 
-    # Precompute low-zoom symbols layers (z5-z10) for this run.
-    if ok > 0:
+    # Optional low-zoom symbols precompute (disabled by default).
+    # Rationale: broad-scale symbol effect is marginal while ingest/runtime cost is high.
+    if ok > 0 and os.environ.get("SKYVIEW_ENABLE_LOW_ZOOM_SYMBOLS_PRECOMPUTE", "0").strip().lower() in ("1", "true", "yes", "on"):
         try:
             proc = subprocess.run(
                 [
