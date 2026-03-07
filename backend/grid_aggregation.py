@@ -181,21 +181,11 @@ class GridContext:
     eu: Optional[GridModelContext] = None
 
 
-def build_fixed_grid(
-    lat: np.ndarray,
-    lon: np.ndarray,
-    lat_min: float,
-    lon_min: float,
-    lat_max: float,
-    lon_max: float,
-    cell_size: float,
-    zoom: int,
-    high_zoom_half_cell_shift: bool = False,
-):
+def build_fixed_grid(lat: np.ndarray, lon: np.ndarray, lat_min: float, lon_min: float, lat_max: float, lon_max: float, cell_size: float, zoom: int):
     """Build globally anchored fixed grid edges for the current viewport."""
     anchor_lat = float(lat.min())
     anchor_lon = float(lon.min())
-    if zoom >= 12 and high_zoom_half_cell_shift:
+    if zoom >= 12:
         anchor_lat -= cell_size / 2.0
         anchor_lon -= cell_size / 2.0
 
@@ -251,12 +241,10 @@ def build_grid_context(
     d2_lon_max: float,
     c_lat_eu: Optional[np.ndarray] = None,
     c_lon_eu: Optional[np.ndarray] = None,
-    high_zoom_half_cell_shift: bool = False,
 ) -> GridContext:
     """Build shared GridContext used by both symbols and wind endpoints."""
     lat_start, lon_start, lat_edges, lon_edges, lat_cell_count, lon_cell_count = build_fixed_grid(
-        lat, lon, lat_min, lon_min, lat_max, lon_max, cell_size, zoom,
-        high_zoom_half_cell_shift=high_zoom_half_cell_shift,
+        lat, lon, lat_min, lon_min, lat_max, lon_max, cell_size, zoom
     )
     in_d2_grid = build_domain_mask(lat_edges, lon_edges, d2_lat_min, d2_lat_max, d2_lon_min, d2_lon_max)
 

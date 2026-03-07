@@ -51,20 +51,14 @@ from weather_codes import ww_to_symbol, ww_severity_rank
 
 def _load_coverage_damping_cfg() -> dict:
     cfg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ingest_config.yaml")
-    out = {"enabled": False, "min_fraction": 0.15, "rank_tolerance": 1, "high_zoom_half_cell_shift": False}
+    out = {"enabled": False, "min_fraction": 0.15, "rank_tolerance": 1}
     try:
         with open(cfg_path, "r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f) or {}
-        sa = (cfg.get("symbol_aggregation") or {})
-        cd = (sa.get("coverage_damping") or {})
+        cd = ((cfg.get("symbol_aggregation") or {}).get("coverage_damping") or {})
         out["enabled"] = bool(cd.get("enabled", out["enabled"]))
         out["min_fraction"] = float(cd.get("min_fraction", out["min_fraction"]))
         out["rank_tolerance"] = int(cd.get("rank_tolerance", out["rank_tolerance"]))
-
-        align = (sa.get("alignment") or {})
-        out["high_zoom_half_cell_shift"] = bool(
-            align.get("high_zoom_half_cell_shift", out["high_zoom_half_cell_shift"])
-        )
     except Exception:
         pass
     return out
@@ -309,7 +303,6 @@ def build_weather_router(
             d2_lon_min=d2_lon_min, d2_lon_max=d2_lon_max,
             c_lat_eu=c_lat_eu if d_eu is not None else None,
             c_lon_eu=c_lon_eu if d_eu is not None else None,
-            high_zoom_half_cell_shift=_cd_cfg["high_zoom_half_cell_shift"],
         )
         t_grid_ms += (perf_counter() - t_grid0) * 1000.0
 
