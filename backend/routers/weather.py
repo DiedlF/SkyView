@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import os
 import threading
 import uuid
 from collections import OrderedDict
@@ -18,6 +19,7 @@ from time import perf_counter
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+import yaml
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
@@ -43,7 +45,23 @@ from services.symbol_ops import (
     symbols_bin_indices_for_bbox,
 )
 from symbol_logic import SYMBOL_CODE_RANK_LUT, SYMBOL_CODE_TO_TYPE, aggregate_symbol_cell
+from convective_filters import filter_hbas_with_mh
 from weather_codes import ww_to_symbol, ww_severity_rank
+
+
+def _load_coverage_damping_cfg() -> dict:
+    cfg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ingest_config.yaml")
+    out = {"enabled": False, "min_fraction": 0.15, "rank_tolerance": 1}
+    try:
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        cd = ((cfg.get("symbol_aggregation") or {}).get("coverage_damping") or {})
+        out["enabled"] = bool(cd.get("enabled", out["enabled"]))
+        out["min_fraction"] = float(cd.get("min_fraction", out["min_fraction"]))
+        out["rank_tolerance"] = int(cd.get("rank_tolerance", out["rank_tolerance"]))
+    except Exception:
+        pass
+    return out
 
 
 def build_weather_router(
@@ -80,6 +98,7 @@ def build_weather_router(
         t_grid_ms = 0.0
         t_agg_ms = 0.0
         cell_size = CELL_SIZES_BY_ZOOM[zoom]
+        _cd_cfg = _load_coverage_damping_cfg()
 
         parts = bbox.split(",")
         if len(parts) != 4:
@@ -91,7 +110,7 @@ def build_weather_router(
 
         symbol_keys = [
             "ww", "ceiling", "clcl", "clcm", "clch",
-            "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hsurf",
+            "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hsurf", "mh",
         ]
         run, step, model_used = resolve_time_with_cache_context(time, model)
 
@@ -186,7 +205,7 @@ def build_weather_router(
         d_eu = None
         c_lat_eu = c_lon_eu = None
         ww_eu = ceil_arr_eu = c_clcl_eu = c_clcm_eu = c_clch_eu = None
-        c_cape_eu = c_htop_dc_eu = c_hbas_sc_eu = c_htop_sc_eu = c_lpi_eu = c_hsurf_eu = None
+        c_cape_eu = c_htop_dc_eu = c_hbas_sc_eu = c_htop_sc_eu = c_lpi_eu = c_hsurf_eu = c_mh_eu = None
         c_sym_code_eu = c_cb_hm_eu = None
 
         pad = cell_size
@@ -197,7 +216,7 @@ def build_weather_router(
             ww = np.zeros((0, 0), dtype=float)
             ceil_arr = np.zeros((0, 0), dtype=float)
             c_clcl = c_clcm = c_clch = c_cape = c_htop_dc = np.zeros((0, 0), dtype=float)
-            c_hbas_sc = c_htop_sc = c_lpi = c_hsurf = np.zeros((0, 0), dtype=float)
+            c_hbas_sc = c_htop_sc = c_lpi = c_hsurf = c_mh = np.zeros((0, 0), dtype=float)
             c_sym_code = c_cb_hm = None
         else:
             c_lat = lat[li] if li is not None else lat
@@ -216,8 +235,13 @@ def build_weather_router(
                 else (_slice_array(d["lpi"], li, lo) if "lpi" in d else np.zeros_like(ww))
             )
             c_hsurf = _slice_array(d["hsurf"], li, lo) if "hsurf" in d else np.zeros_like(ww)
+            c_mh = _slice_array(d["mh"], li, lo) if "mh" in d else np.zeros_like(ww)
             c_sym_code = _slice_array(d["sym_code"], li, lo) if "sym_code" in d else None
             c_cb_hm = _slice_array(d["cb_hm"], li, lo) if "cb_hm" in d else None
+
+        # Keep weather.py fallback classification aligned with ingest-time hbas filtering.
+        if model_used == "icon_eu" and c_hbas_sc is not None and c_hsurf is not None and c_mh is not None:
+            c_hbas_sc, _ = filter_hbas_with_mh(c_hbas_sc, c_hsurf, c_mh, margin_m=500.0, hard_cap_agl_m=6500.0)
 
         eu_data_missing = False
         if model_used == "icon_d2":
@@ -263,6 +287,8 @@ def build_weather_router(
                                 else (_slice_array(d_eu["lpi"], li_eu, lo_eu) if "lpi" in d_eu else np.zeros_like(ww_eu))
                             )
                             c_hsurf_eu = _slice_array(d_eu["hsurf"], li_eu, lo_eu) if "hsurf" in d_eu else np.zeros_like(ww_eu)
+                            c_mh_eu = _slice_array(d_eu["mh"], li_eu, lo_eu) if "mh" in d_eu else np.zeros_like(ww_eu)
+                            c_hbas_sc_eu, _ = filter_hbas_with_mh(c_hbas_sc_eu, c_hsurf_eu, c_mh_eu, margin_m=500.0, hard_cap_agl_m=6500.0)
                             c_sym_code_eu = _slice_array(d_eu["sym_code"], li_eu, lo_eu) if "sym_code" in d_eu else None
                             c_cb_hm_eu = _slice_array(d_eu["cb_hm"], li_eu, lo_eu) if "cb_hm" in d_eu else None
                 except Exception:
@@ -301,12 +327,18 @@ def build_weather_router(
         if c_sym_code is not None and c_cb_hm is not None:
             _best_sym_d2, _best_cb_d2, _best_lat_d2, _best_lon_d2 = scatter_best_symbol(
                 c_lat, c_lon, ctx, c_sym_code, c_cb_hm, SYMBOL_CODE_RANK_LUT,
+                coverage_damping_enabled=_cd_cfg["enabled"],
+                coverage_min_fraction=_cd_cfg["min_fraction"],
+                coverage_rank_tolerance=_cd_cfg["rank_tolerance"],
             )
 
         _best_sym_eu = _best_cb_eu = _best_lat_eu = _best_lon_eu = None
         if c_sym_code_eu is not None and c_cb_hm_eu is not None and c_lat_eu is not None and c_lon_eu is not None:
             _best_sym_eu, _best_cb_eu, _best_lat_eu, _best_lon_eu = scatter_best_symbol(
                 c_lat_eu, c_lon_eu, ctx, c_sym_code_eu, c_cb_hm_eu, SYMBOL_CODE_RANK_LUT,
+                coverage_damping_enabled=_cd_cfg["enabled"],
+                coverage_min_fraction=_cd_cfg["min_fraction"],
+                coverage_rank_tolerance=_cd_cfg["rank_tolerance"],
             )
 
         t_agg0 = perf_counter()

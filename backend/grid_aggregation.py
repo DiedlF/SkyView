@@ -15,6 +15,10 @@ def scatter_best_symbol(
     sym_code: np.ndarray,
     cb_hm: np.ndarray,
     rank_lut: np.ndarray,
+    *,
+    coverage_damping_enabled: bool = False,
+    coverage_min_fraction: float = 0.15,
+    coverage_rank_tolerance: int = 1,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Vectorized O(N_grid) per-cell best-symbol aggregation.
 
@@ -91,6 +95,57 @@ def scatter_best_symbol(
     best_code_flat[ordered_cells] = ordered_codes
     best_cb_flat[ordered_cells]   = ordered_cb
     best_fidx_flat[ordered_cells] = ordered_vidx
+
+    # Optional coverage-aware damping: if the severity winner has too little
+    # cell coverage and a near-severity dominant class exists, prefer dominant.
+    if coverage_damping_enabled and valid_idx.size > 0 and n_cells > 0:
+        # Count occurrences of (cell, code) pairs via dense histogram on encoded ids.
+        enc = valid_cells.astype(np.int64) * rank_lut.shape[0] + valid_codes.astype(np.int64)
+        pair_counts = np.bincount(enc, minlength=n_cells * rank_lut.shape[0])
+        pair_counts = pair_counts.reshape(n_cells, rank_lut.shape[0])
+
+        cell_totals = np.bincount(valid_cells, minlength=n_cells).astype(np.int64)
+        dom_code = np.argmax(pair_counts, axis=1).astype(np.int16)
+        dom_count = pair_counts[np.arange(n_cells), dom_code]
+
+        best_rank = np.where(
+            (best_code_flat >= 0) & (best_code_flat < rank_lut.shape[0]),
+            rank_lut[best_code_flat],
+            -1,
+        )
+        dom_rank = rank_lut[dom_code]
+
+        with np.errstate(divide="ignore", invalid="ignore"):
+            dom_frac = np.where(cell_totals > 0, dom_count / cell_totals, 0.0)
+
+        # Candidate if dominant is sufficiently common and not much less severe.
+        apply_damping = (
+            (cell_totals > 0)
+            & (dom_frac >= float(coverage_min_fraction))
+            & (best_rank >= 0)
+            & (dom_rank >= 0)
+            & ((dom_rank - best_rank) <= int(coverage_rank_tolerance))
+            & (dom_code != best_code_flat)
+        )
+
+        if np.any(apply_damping):
+            # Need representative index for dominant code in each damped cell.
+            # Build first-occurrence map by flat valid order.
+            first_enc = np.full(n_cells * rank_lut.shape[0], -1, dtype=np.intp)
+            for vidx, e in zip(valid_idx, enc):
+                if first_enc[e] == -1:
+                    first_enc[e] = vidx
+
+            damp_cells = np.flatnonzero(apply_damping)
+            damp_enc = damp_cells.astype(np.int64) * rank_lut.shape[0] + dom_code[damp_cells].astype(np.int64)
+            damp_fidx = first_enc[damp_enc]
+            ok = damp_fidx >= 0
+            if np.any(ok):
+                ii = damp_cells[ok]
+                best_code_flat[ii] = dom_code[ii]
+                # Cloud-base for dominant class; if absent keep -1.
+                best_cb_flat[ii] = cb_flat[damp_fidx[ok]]
+                best_fidx_flat[ii] = damp_fidx[ok]
 
     # Convert flat data index back to (lat_row, lon_col) into c_lat / c_lon.
     n_lon = c_lon.size
