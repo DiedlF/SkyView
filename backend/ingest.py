@@ -27,6 +27,7 @@ import time
 from logging_config import setup_logging
 from constants import ICON_EU_STEP_3H_START
 from classify import classify_cloud_type, get_cloud_base
+from convective_filters import filter_hbas_with_mh
 
 logger = setup_logging(__name__, level="INFO", log_name="ingest")
 # Reduce cfgrib index-cache noise like "Ignoring index file ... older than GRIB file".
@@ -716,6 +717,36 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
             'snow_gsp': sg, 'snow_con': sc, 'grau_gsp': gg,
         }
 
+    # EU sanity filter: suppress implausible convective cloud-base spikes
+    # using boundary-layer depth (mh) consistency.
+    hbas_filter_cfg = (config or {}).get("hbas_filter", {}) if config else {}
+    hbas_filter_enabled = bool(hbas_filter_cfg.get("enabled", True))
+    hbas_filter_models = set(hbas_filter_cfg.get("models", ["icon-eu"]))
+    if (
+        hbas_filter_enabled
+        and model in hbas_filter_models
+        and ("hbas_sc" in arrays)
+        and ("hsurf" in arrays)
+        and ("mh" in arrays)
+    ):
+        margin_m = float(hbas_filter_cfg.get("margin_m", 500.0))
+        hard_cap_agl_m = float(hbas_filter_cfg.get("hard_cap_agl_m", 6500.0))
+        hbas_filtered, reject_mask, _quality = filter_hbas_with_mh(
+            arrays["hbas_sc"],
+            arrays["hsurf"],
+            arrays["mh"],
+            margin_m=margin_m,
+            hard_cap_agl_m=hard_cap_agl_m,
+            return_quality=True,
+        )
+        rejected = int(np.count_nonzero(reject_mask))
+        if rejected > 0:
+            frac = (rejected / reject_mask.size) * 100.0
+            logger.info(
+                f"Step {step:03d}: hbas_sc sanity filter rejected {rejected}/{reject_mask.size} cells ({frac:.2f}%)"
+            )
+        arrays["hbas_sc"] = hbas_filtered.astype(np.float32)
+
     _precompute_symbol_native_fields(arrays, step=step, model=model, run=run)
 
     os.makedirs(out_dir, exist_ok=True)
@@ -1181,6 +1212,11 @@ def main():
     prev_acc: dict | None = None
     prev_step_done: int | None = None
 
+    sp_cfg = config.get("symbol_precompute", {}) if isinstance(config, dict) else {}
+    sp_enabled = bool(sp_cfg.get("enabled", False))
+    sp_fresh_only = bool(sp_cfg.get("on_fresh_ingest_only", True))
+    sp_zooms = ",".join(str(int(z)) for z in sp_cfg.get("zooms", [5, 6, 7, 8, 9]))
+
     for step in steps:
         # Ensure prev_acc is consistent with what this step expects.
         # If we have the right one in memory, use it; otherwise fall back to disk.
@@ -1200,6 +1236,9 @@ def main():
             if os.path.exists(npz):
                 os.unlink(npz)
 
+        step_npz = os.path.join(out_dir, f"{step:03d}.npz")
+        existed_before = os.path.exists(step_npz)
+
         success, curr_acc = ingest_step(run, step, tmp_dir, out_dir, model, config,
                                         profile_name=profile_name,
                                         prev_acc=prev_acc, prev_step=prev_step_done)
@@ -1209,40 +1248,41 @@ def main():
                 prev_acc = curr_acc
                 prev_step_done = step
 
+            fresh_step = (not existed_before) and os.path.exists(step_npz)
+            should_precompute = sp_enabled and ((not sp_fresh_only) or fresh_step)
+            if should_precompute:
+                try:
+                    proc = subprocess.run(
+                        [
+                            sys.executable,
+                            os.path.join(SCRIPT_DIR, "precompute_symbols.py"),
+                            "--model", model,
+                            "--run", run,
+                            "--zooms", sp_zooms,
+                            "--steps", str(step),
+                            "--mode", "direct",
+                        ],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    if proc.returncode != 0:
+                        logger.warning(
+                            "Step %03d symbol precompute returned %s (stdout=%s stderr=%s)",
+                            step,
+                            proc.returncode,
+                            (proc.stdout or "").strip()[:400],
+                            (proc.stderr or "").strip()[:400],
+                        )
+                except Exception as e:
+                    logger.warning(f"Step {step:03d}: symbol precompute failed: {e}")
+
     # Build cached D2 boundary geometry once per run (for fast frontend border rendering)
     if model == "icon-d2" and ok > 0:
         try:
             build_d2_boundary_cache(run)
         except Exception as e:
             logger.warning(f"D2 boundary cache build failed: {e}")
-
-    # Optional low-zoom symbols precompute (disabled by default).
-    # Rationale: broad-scale symbol effect is marginal while ingest/runtime cost is high.
-    if ok > 0 and os.environ.get("SKYVIEW_ENABLE_LOW_ZOOM_SYMBOLS_PRECOMPUTE", "0").strip().lower() in ("1", "true", "yes", "on"):
-        try:
-            proc = subprocess.run(
-                [
-                    sys.executable,
-                    os.path.join(SCRIPT_DIR, "precompute_symbols.py"),
-                    "--model", model,
-                    "--run", run,
-                    "--zooms", "5,6,7,8,9,10",
-                ],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            if proc.returncode != 0:
-                logger.warning(
-                    "Low-zoom symbols precompute returned %s (stdout=%s stderr=%s)",
-                    proc.returncode,
-                    (proc.stdout or "").strip()[:1200],
-                    (proc.stderr or "").strip()[:1200],
-                )
-            elif proc.stdout:
-                logger.info("Low-zoom symbols precompute: %s", proc.stdout.strip()[:1200])
-        except Exception as e:
-            logger.warning(f"Low-zoom symbols precompute failed: {e}")
 
     # Cleanup tmp
     subprocess.run(["rm", "-rf", tmp_dir], capture_output=True)

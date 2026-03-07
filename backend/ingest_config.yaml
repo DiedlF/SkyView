@@ -222,3 +222,22 @@ eu_optional_variables:
   - prs_gsp
   - prg_gsp
   - freshsnw
+
+# Convective cloud-base sanity filter (shared by ingest + weather fallback)
+hbas_filter:
+  enabled: true
+  models:
+    - icon-eu
+  margin_m: 500
+  hard_cap_agl_m: 6500
+
+symbol_aggregation:
+  coverage_damping:
+    enabled: false
+    min_fraction: 0.15
+    rank_tolerance: 1
+
+symbol_precompute:
+  enabled: true
+  on_fresh_ingest_only: true
+  zooms: [5, 6, 7, 8, 9]
