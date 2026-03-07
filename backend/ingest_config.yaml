@@ -236,6 +236,9 @@ symbol_aggregation:
     enabled: false
     min_fraction: 0.15
     rank_tolerance: 1
+  alignment:
+    # Keep false to align high-zoom symbols with raw grid centers.
+    high_zoom_half_cell_shift: false
 
 symbol_precompute:
   enabled: true
