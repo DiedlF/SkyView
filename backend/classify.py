@@ -1,6 +1,7 @@
 """Cloud type classification for Skyview."""
 import numpy as np
 from logging_config import setup_logging
+from convective_filters import convective_cloud_mask
 from constants import (
     CAPE_CONV_THRESHOLD,
     CAPE_CB_STRONG_THRESHOLD,
@@ -16,7 +17,7 @@ from constants import (
 logger = setup_logging(__name__, level="WARNING")
 
 
-def classify_point(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=0.0):
+def classify_point(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=0.0, mh=None):
     """Canonical scalar cloud-type classification.
 
     Inputs use AMSL for htop_dc/hbas_sc; AGL thresholds are applied via hsurf.
@@ -28,12 +29,15 @@ def classify_point(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ce
     is_conv = np.isfinite(cape_ml) and (cape_ml > CAPE_CONV_THRESHOLD)
     if is_conv:
         cloud_depth = max(0.0, htop_sc - hbas_sc) if np.isfinite(htop_sc) and np.isfinite(hbas_sc) else 0.0
-        hbas_agl = (hbas_sc - hsurf) if (np.isfinite(hbas_sc) and np.isfinite(hsurf)) else np.nan
         htop_dc_agl = (htop_dc - hsurf) if (np.isfinite(htop_dc) and np.isfinite(hsurf)) else np.nan
+        conv_cloud_ok = bool(convective_cloud_mask(
+            np.asarray([hbas_sc]), np.asarray([hsurf]), None if mh is None else np.asarray([mh]),
+            min_agl_m=AGL_CONV_MIN_METERS,
+        )[0])
 
-        if (hbas_sc <= 0 or clcl < 5) and np.isfinite(htop_dc_agl) and htop_dc_agl >= AGL_CONV_MIN_METERS:
+        if (not conv_cloud_ok or clcl < 5) and np.isfinite(htop_dc_agl) and htop_dc_agl >= AGL_CONV_MIN_METERS:
             return "blue_thermal"
-        if np.isfinite(hbas_agl) and hbas_agl >= AGL_CONV_MIN_METERS:
+        if conv_cloud_ok:
             if (lpi > LPI_CB_THRESHOLD) or ((cloud_depth > CLOUD_DEPTH_CB_THRESHOLD) and (cape_ml > CAPE_CB_STRONG_THRESHOLD)):
                 return "cb"
             if cloud_depth > CLOUD_DEPTH_CU_CON_THRESHOLD:
@@ -92,7 +96,7 @@ def crop_to_bbox(arrays_dict, lat, lon, bbox):
     return cropped, lat[li], lon[lo]
 
 
-def classify_cloud_type(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=None):
+def classify_cloud_type(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=None, mh=None):
     """Classify cloud type for ww<=3 grid points.
 
     Non-convective class uses ceiling band + min layer cloud cover:
@@ -115,16 +119,19 @@ def classify_cloud_type(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc
     # hbas_sc / htop_dc are AMSL; convert to AGL using hsurf when available.
     if hsurf is None:
         hsurf = np.zeros_like(hbas_sc)
-    hbas_agl = hbas_sc - hsurf
     htop_dc_agl = htop_dc - hsurf
 
-    # Suppress convective symbols when AGL signal is too low:
-    # - convective clouds (cu_hum/cu_con/cb): cloud base must be >= 300 m AGL
-    # - blue_thermal: dry convection top must be >= 300 m AGL
-    conv_cloud_ok = np.isfinite(hbas_agl) & (hbas_agl >= AGL_CONV_MIN_METERS) & (hbas_sc > 0)
+    # Unified convective plausibility: cloud-forming convection requires a
+    # physically plausible convective cloud base; blue thermals use htop_dc.
+    conv_cloud_ok = convective_cloud_mask(
+        hbas_sc,
+        hsurf,
+        mh,
+        min_agl_m=AGL_CONV_MIN_METERS,
+    )
     blue_ok = np.isfinite(htop_dc_agl) & (htop_dc_agl >= AGL_CONV_MIN_METERS)
 
-    blue_mask = conv_mask & ((hbas_sc <= 0) | (clcl < 5)) & blue_ok
+    blue_mask = conv_mask & ((~conv_cloud_ok) | (clcl < 5)) & blue_ok
     cloud_type[blue_mask] = "blue_thermal"
     cloud_type[conv_mask & conv_cloud_ok & ((lpi > LPI_CB_THRESHOLD) | ((cloud_depth > CLOUD_DEPTH_CB_THRESHOLD) & (cape_ml > CAPE_CB_STRONG_THRESHOLD))) & (cloud_type != "blue_thermal")] = "cb"
     cu_con_mask = conv_mask & conv_cloud_ok & (cloud_depth > CLOUD_DEPTH_CU_CON_THRESHOLD) & (cloud_type != "cb") & (cloud_type != "blue_thermal")

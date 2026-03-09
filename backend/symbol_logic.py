@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 from typing import Callable, Tuple
 
+from convective_filters import convective_cloud_mask
 from weather_codes import ww_to_symbol, ww_severity_rank
 
 # ── Symbol code ↔ type name ──────────────────────────────────────────────────
@@ -60,6 +61,7 @@ def aggregate_symbol_cell(
     c_htop_sc: np.ndarray,
     c_lpi: np.ndarray,
     c_hsurf: np.ndarray,
+    c_mh: np.ndarray,
     classify_point_fn: Callable,
     zoom: int = 12,
     pre_has_cape: bool = False,
@@ -121,6 +123,7 @@ def aggregate_symbol_cell(
     s_htop_sc = c_htop_sc[np.ix_(iter_cli, iter_clo)]
     s_lpi    = c_lpi[np.ix_(iter_cli, iter_clo)]
     s_hsurf  = c_hsurf[np.ix_(iter_cli, iter_clo)]
+    s_mh     = c_mh[np.ix_(iter_cli, iter_clo)]
     s_ceil   = ceil_arr[np.ix_(iter_cli, iter_clo)]
 
     # ── Convection branch ─────────────────────────────────────────────────────
@@ -130,7 +133,13 @@ def aggregate_symbol_cell(
         s_htop_sc - s_hbas_sc, 0.0,
     ))
     hbas_agl_s = s_hbas_sc - s_hsurf
-    p2_mask_s  = conv_mask_s & np.isfinite(hbas_agl_s) & (hbas_agl_s >= AGL_CONV_MIN_METERS) & (s_hbas_sc > 0)
+    conv_cloud_ok_s = convective_cloud_mask(
+        s_hbas_sc,
+        s_hsurf,
+        s_mh,
+        min_agl_m=AGL_CONV_MIN_METERS,
+    )
+    p2_mask_s  = conv_mask_s & conv_cloud_ok_s
 
     if np.any(p2_mask_s):
         cb_mask_s   = p2_mask_s & (

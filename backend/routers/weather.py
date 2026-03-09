@@ -467,7 +467,7 @@ def build_weather_router(
                     src_clcl, src_clcm, src_clch = c_clcl_eu, c_clcm_eu, c_clch_eu
                     src_cape, src_htop_dc = c_cape_eu, c_htop_dc_eu
                     src_hbas_sc, src_htop_sc = c_hbas_sc_eu, c_htop_sc_eu
-                    src_lpi, src_hsurf = c_lpi_eu, c_hsurf_eu
+                    src_lpi, src_hsurf, src_mh = c_lpi_eu, c_hsurf_eu, c_mh_eu
                     src_sym_code, src_cb_hm = c_sym_code_eu, c_cb_hm_eu
                 else:
                     src_lat, src_lon = c_lat, c_lon
@@ -475,7 +475,7 @@ def build_weather_router(
                     src_clcl, src_clcm, src_clch = c_clcl, c_clcm, c_clch
                     src_cape, src_htop_dc = c_cape, c_htop_dc
                     src_hbas_sc, src_htop_sc = c_hbas_sc, c_htop_sc
-                    src_lpi, src_hsurf = c_lpi, c_hsurf
+                    src_lpi, src_hsurf, src_mh = c_lpi, c_hsurf, c_mh
                     src_sym_code, src_cb_hm = c_sym_code, c_cb_hm
 
                 cli = np.asarray(cli_list, dtype=int) if cli_list else np.empty((0,), dtype=int)
@@ -573,7 +573,7 @@ def build_weather_router(
                             ceil_arr=src_ceil, c_clcl=src_clcl, c_clcm=src_clcm,
                             c_clch=src_clch, c_cape=src_cape, c_htop_dc=src_htop_dc,
                             c_hbas_sc=src_hbas_sc, c_htop_sc=src_htop_sc,
-                            c_lpi=src_lpi, c_hsurf=src_hsurf,
+                            c_lpi=src_lpi, c_hsurf=src_hsurf, c_mh=src_mh,
                             classify_point_fn=_classify_point_core,
                             zoom=zoom,
                             pre_has_cape=_pre_any_cape,

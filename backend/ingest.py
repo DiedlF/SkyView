@@ -93,7 +93,7 @@ def _precompute_symbol_native_fields(arrays: dict, step: int | None = None, mode
     lpi = arrays.get("lpi_max", np.zeros_like(ww))
     hsurf = arrays["hsurf"]
 
-    cloud_type = classify_cloud_type(ww, clcl, clcm, clch, cape, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf)
+    cloud_type = classify_cloud_type(ww, clcl, clcm, clch, cape, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf, arrays.get("mh"))
     cb_hm = get_cloud_base(ceiling, hbas_sc).astype(np.int16)
 
     sym_code = np.zeros(ww.shape, dtype=np.int16)

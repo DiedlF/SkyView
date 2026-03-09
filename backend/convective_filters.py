@@ -3,6 +3,30 @@ from __future__ import annotations
 import numpy as np
 
 
+def convective_cloud_mask(
+    hbas_amsl: np.ndarray,
+    hsurf_amsl: np.ndarray,
+    mh_agl: np.ndarray | None,
+    *,
+    min_agl_m: float,
+    margin_m: float = 500.0,
+    hard_cap_agl_m: float = 6500.0,
+) -> np.ndarray:
+    """Return mask where convective cloud base is physically plausible."""
+    hbas = np.asarray(hbas_amsl, dtype=float)
+    hsurf = np.asarray(hsurf_amsl, dtype=float)
+
+    hbas_agl = hbas - hsurf
+    ok = np.isfinite(hbas_agl) & (hbas > 0.0) & (hbas_agl >= float(min_agl_m)) & (hbas_agl <= float(hard_cap_agl_m))
+
+    if mh_agl is not None:
+        mh = np.asarray(mh_agl, dtype=float)
+        mh_finite = np.isfinite(mh)
+        ok &= (~mh_finite) | (hbas_agl <= (mh + float(margin_m)))
+
+    return ok
+
+
 def filter_hbas_with_mh(
     hbas_amsl: np.ndarray,
     hsurf_amsl: np.ndarray,

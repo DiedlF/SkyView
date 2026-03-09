@@ -564,9 +564,9 @@ def _acquire_single_instance_or_exit(pid_file: str):
 
 # ─── Grid / Bbox helpers ───
 
-def classify_point(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=0.0):
+def classify_point(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=0.0, mh=None):
     """Backward-compatible wrapper around canonical scalar classifier."""
-    return classify_point_core(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf)
+    return classify_point_core(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf, mh)
 
 
 def load_data(run: str, step: int, model: str, keys: Optional[List[str]] = None) -> Dict[str, Any]:
