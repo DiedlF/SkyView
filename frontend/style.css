@@ -11,12 +11,12 @@
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-  height: 100vh;
+  min-height: var(--app-height, 100vh);
   overflow: hidden;
 }
 
 #map {
-  height: 100vh;
+  height: var(--app-height, 100vh);
   width: 100vw;
   touch-action: none; /* Allow Leaflet to handle all touch gestures including pinch-zoom */
 }
@@ -47,6 +47,27 @@ body {
   .leaflet-bottom.leaflet-left {
     bottom: 180px !important;
   }
+
+  body.keyboard-open .leaflet-bottom.leaflet-left {
+    bottom: 12px !important;
+  }
+
+  body.keyboard-open #time-controls {
+    bottom: 6px;
+    opacity: 0.18;
+    pointer-events: none;
+    transform: translateX(-50%) translateY(8px);
+  }
+
+  body.keyboard-open #feedback-btn {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  body.keyboard-open #layers {
+    max-height: min(42vh, 320px);
+    overflow-y: auto;
+  }
 }
 
 /* Info bar — inline below timeline */
@@ -76,7 +97,7 @@ body {
 /* Time controls bottom center */
 #time-controls {
   position: absolute;
-  bottom: 10px;
+  bottom: max(10px, env(safe-area-inset-bottom, 0px));
   left: 50%;
   transform: translateX(-50%);
   background: rgba(40,50,80,0.95);
@@ -88,6 +109,7 @@ body {
   max-width: 95vw;
   width: 700px;
   overflow: hidden;
+  transition: bottom 0.18s ease, opacity 0.18s ease, transform 0.18s ease;
 }
 
 /* Top toolbar row */
@@ -479,6 +501,35 @@ body {
   gap: 6px;
 }
 
+@media (max-width: 768px) {
+  body.marker-picker-open #marker-picker {
+    position: fixed;
+    left: 10px;
+    right: 10px;
+    bottom: max(10px, env(safe-area-inset-bottom, 0px));
+    z-index: 2400;
+    margin-top: 0;
+    padding: 10px;
+    background: rgba(20,20,20,0.96);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 12px;
+    box-shadow: 0 10px 32px rgba(0,0,0,0.45);
+    max-height: min(52vh, calc(var(--app-height, 100vh) - 24px));
+    overflow-y: auto;
+  }
+
+  body.marker-picker-open #layers {
+    z-index: 2390;
+  }
+
+  body.marker-picker-open #time-controls,
+  body.marker-picker-open #feedback-btn,
+  body.marker-picker-open .leaflet-bottom.leaflet-left {
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+
 #marker-search {
   background: rgba(255,255,255,0.08);
   color: #fff;
@@ -647,7 +698,7 @@ body {
   border-radius: 12px;
   width: 100%;
   max-width: 420px;
-  max-height: 90vh;
+  max-height: min(90vh, calc(var(--app-height, 100vh) - 32px));
   overflow-y: auto;
   box-shadow: 0 8px 32px rgba(0,0,0,0.5);
   color: white;
@@ -782,7 +833,7 @@ body {
   border-radius: 12px;
   width: 100%;
   max-width: 560px;
-  max-height: 90vh;
+  max-height: min(90vh, calc(var(--app-height, 100vh) - 32px));
   overflow-y: auto;
   box-shadow: 0 8px 32px rgba(0,0,0,0.5);
   color: white;

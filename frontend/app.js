@@ -16,6 +16,36 @@ let windEnabled = false;
 let windLevel = '10m';
 let modelCapabilities = {};  // Store model capabilities from API
 
+function updateViewportHeightVar() {
+  const vv = window.visualViewport;
+  const h = vv && Number.isFinite(vv.height) ? vv.height : window.innerHeight;
+  document.documentElement.style.setProperty('--app-height', `${Math.round(h)}px`);
+}
+
+function updateKeyboardOpenState() {
+  const vv = window.visualViewport;
+  const active = document.activeElement;
+  const inputFocused = !!active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName);
+  const keyboardLikelyOpen = !!(vv && inputFocused && (window.innerHeight - vv.height) > 120);
+  document.body.classList.toggle('keyboard-open', keyboardLikelyOpen);
+}
+
+function installMobileViewportHandlers() {
+  const refresh = () => {
+    updateViewportHeightVar();
+    updateKeyboardOpenState();
+  };
+  refresh();
+  window.addEventListener('resize', refresh, { passive: true });
+  window.addEventListener('orientationchange', refresh, { passive: true });
+  document.addEventListener('focusin', refresh);
+  document.addEventListener('focusout', () => setTimeout(refresh, 80));
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', refresh, { passive: true });
+    window.visualViewport.addEventListener('scroll', refresh, { passive: true });
+  }
+}
+
 function showGlobalError(msg) {
   let el = document.getElementById('global-error-banner');
   if (!el) {
@@ -1026,7 +1056,7 @@ async function saveSelectedMarker() {
   const s = markerSuggestions[selectedSuggestionIdx];
   try {
     await setMarkerProfile({ name: s.name, note: s.displayName || '', lat: s.lat, lon: s.lon });
-    document.getElementById('marker-picker').style.display = 'none';
+    closeMarkerPicker();
     await loadMarkerProfile();
     markApiSuccess();
   } catch (e) {
@@ -1297,25 +1327,35 @@ document.getElementById('layer-wind').addEventListener('change', (e) => {
   }
 });
 
+function openMarkerPicker() {
+  const panel = document.getElementById('marker-picker');
+  const input = document.getElementById('marker-search');
+  panel.style.display = 'block';
+  document.body.classList.add('marker-picker-open');
+  input.value = '';
+  markerSuggestions = [];
+  selectedSuggestionIdx = -1;
+  renderMarkerSuggestions();
+  setTimeout(() => input.focus(), 50);
+}
+
+function closeMarkerPicker() {
+  document.getElementById('marker-picker').style.display = 'none';
+  document.body.classList.remove('marker-picker-open');
+}
+
 document.getElementById('marker-picker-open').addEventListener('click', () => {
   if (!markerEditingEnabled) {
     alert('Marker editing is currently disabled (server auth secret missing). Using default marker Geitau.');
     return;
   }
   const panel = document.getElementById('marker-picker');
-  const input = document.getElementById('marker-search');
-  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-  if (panel.style.display === 'block') {
-    input.value = '';
-    markerSuggestions = [];
-    selectedSuggestionIdx = -1;
-    renderMarkerSuggestions();
-    setTimeout(() => input.focus(), 50);
-  }
+  if (panel.style.display === 'block') closeMarkerPicker();
+  else openMarkerPicker();
 });
 
 document.getElementById('marker-cancel').addEventListener('click', () => {
-  document.getElementById('marker-picker').style.display = 'none';
+  closeMarkerPicker();
 });
 
 document.getElementById('marker-confirm').addEventListener('click', () => {
@@ -1336,7 +1376,7 @@ document.getElementById('marker-use-location').addEventListener('click', () => {
           lat: pos.coords.latitude,
           lon: pos.coords.longitude,
         });
-        document.getElementById('marker-picker').style.display = 'none';
+        closeMarkerPicker();
         await loadMarkerProfile();
         markApiSuccess();
       } catch (e) {
@@ -2293,6 +2333,7 @@ if (langSelect) {
 }
 
 // Initial localization + load
+installMobileViewportHandlers();
 applyLocale(currentLang);
 loadTimesteps();
 loadMarkerProfile();
