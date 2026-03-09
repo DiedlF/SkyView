@@ -241,6 +241,7 @@ def build_weather_router(
             sym_code_native = _slice_array(d["sym_code"], li_native, lo_native) if "sym_code" in d else None
             cb_hm_native = _slice_array(d["cb_hm"], li_native, lo_native) if "cb_hm" in d else None
             ww_native = _slice_array(d["ww"], li_native, lo_native) if "ww" in d else None
+            htop_dc_native = _slice_array(d["htop_dc"], li_native, lo_native) if "htop_dc" in d else None
 
             native_symbols: List[dict] = []
             if sym_code_native is not None:
@@ -252,6 +253,9 @@ def build_weather_router(
                         sym = SYMBOL_CODE_TO_TYPE.get(code, "clear")
                         cbv = int(cb_hm_native[ii, jj]) if cb_hm_native is not None else -1
                         cb_hm = cbv if cbv >= 0 else None
+                        if sym == "blue_thermal" and htop_dc_native is not None and np.isfinite(htop_dc_native[ii, jj]):
+                            topv = float(htop_dc_native[ii, jj])
+                            cb_hm = int((topv + 50.0) / 100.0) if topv > 0 else None
                         label = str(min(cb_hm, 99)) if cb_hm is not None else None
                         max_ww = int(ww_native[ii, jj]) if (ww_native is not None and np.isfinite(ww_native[ii, jj])) else 0
                         native_symbols.append({
@@ -525,6 +529,10 @@ def build_weather_router(
                     else:
                         best_ii = int(cli_list[len(cli_list) // 2])
                         best_jj = int(clo_list[len(clo_list) // 2])
+
+                    if sym == "blue_thermal" and np.isfinite(src_htop_dc[best_ii, best_jj]):
+                        topv = float(src_htop_dc[best_ii, best_jj])
+                        cb_hm = int((topv + 50.0) / 100.0) if topv > 0 else None
 
                 else:
                     # ── Legacy fallback: classify from raw arrays ─────────────
