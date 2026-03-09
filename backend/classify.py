@@ -44,10 +44,26 @@ def classify_point(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ce
     if not np.isfinite(ceiling) or ceiling <= 0 or ceiling >= CEILING_VALID_MAX_METERS:
         return "clear"
     if ceiling < CEILING_LOW_MAX_METERS:
-        return "st" if np.isfinite(clcl) and clcl >= 30 else "clear"
-    if ceiling < CEILING_MID_MAX_METERS:
-        return "ac" if np.isfinite(clcm) and clcm >= 30 else "clear"
-    return "ci" if np.isfinite(clch) and clch >= 30 else "clear"
+        if np.isfinite(clcl) and clcl >= 30:
+            return "st"
+    elif ceiling < CEILING_MID_MAX_METERS:
+        if np.isfinite(clcm) and clcm >= 30:
+            return "ac"
+    else:
+        if np.isfinite(clch) and clch >= 30:
+            return "ci"
+
+    # Fallback: if a valid ceiling exists but the band-matched layer is below
+    # threshold, still emit the strongest remaining cloud layer instead of
+    # collapsing to clear. Prefer lower layers because they are operationally
+    # more relevant on the map.
+    if np.isfinite(clcl) and clcl >= 30:
+        return "st"
+    if np.isfinite(clcm) and clcm >= 30:
+        return "ac"
+    if np.isfinite(clch) and clch >= 30:
+        return "ci"
+    return "clear"
 
 
 def crop_to_bbox(arrays_dict, lat, lon, bbox):
@@ -127,6 +143,15 @@ def classify_cloud_type(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc
     cloud_type[low_band & np.isfinite(clcl) & (clcl >= 30)] = "st"
     cloud_type[mid_band & np.isfinite(clcm) & (clcm >= 30)] = "ac"
     cloud_type[high_band & np.isfinite(clch) & (clch >= 30)] = "ci"
+
+    # Fallback for cases where ceiling is valid but the band-matched layer does
+    # not clear the threshold while another cloud layer does.
+    unresolved = valid_ceiling & (cloud_type == "clear")
+    cloud_type[unresolved & np.isfinite(clcl) & (clcl >= 30)] = "st"
+    unresolved = valid_ceiling & (cloud_type == "clear")
+    cloud_type[unresolved & np.isfinite(clcm) & (clcm >= 30)] = "ac"
+    unresolved = valid_ceiling & (cloud_type == "clear")
+    cloud_type[unresolved & np.isfinite(clch) & (clch >= 30)] = "ci"
 
     # Log classification summary
     unique, counts = np.unique(cloud_type, return_counts=True)

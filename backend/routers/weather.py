@@ -116,6 +116,7 @@ def build_weather_router(
         symbol_keys = [
             "ww", "ceiling", "clcl", "clcm", "clch",
             "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hsurf", "mh",
+            "sym_code", "cb_hm",
         ]
         symbol_mode = (
             "precomputed" if zoom <= SYMBOL_MODE_PRECOMPUTED_MAX_ZOOM else

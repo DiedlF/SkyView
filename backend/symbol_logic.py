@@ -214,6 +214,14 @@ def aggregate_symbol_cell(
                 else:
                     sym = "ci" if np.isfinite(chosen_clch) and chosen_clch >= 30 else "clear"
 
+                if sym == "clear":
+                    if np.isfinite(chosen_clcl) and chosen_clcl >= 30:
+                        sym = "st"
+                    elif np.isfinite(chosen_clcm) and chosen_clcm >= 30:
+                        sym = "ac"
+                    elif np.isfinite(chosen_clch) and chosen_clch >= 30:
+                        sym = "ci"
+
                 cb_hm = int((chosen_ceil + 50) / 100) if sym != "clear" else None
 
     if cb_hm is not None and cb_hm > 99:
