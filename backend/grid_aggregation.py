@@ -7,6 +7,8 @@ from typing import Optional, Tuple
 
 import numpy as np
 
+from constants import WORLD_GRID_ANCHOR_LAT, WORLD_GRID_ANCHOR_LON
+
 
 def scatter_best_symbol(
     c_lat: np.ndarray,
@@ -181,14 +183,25 @@ class GridContext:
     eu: Optional[GridModelContext] = None
 
 
-def build_fixed_grid(lat: np.ndarray, lon: np.ndarray, lat_min: float, lon_min: float, lat_max: float, lon_max: float, cell_size: float, zoom: int):
-    """Build globally anchored fixed grid edges for the current viewport."""
-    anchor_lat = float(lat.min())
-    anchor_lon = float(lon.min())
-    if zoom >= 12:
-        anchor_lat -= cell_size / 2.0
-        anchor_lon -= cell_size / 2.0
+def build_fixed_grid(
+    lat: np.ndarray,
+    lon: np.ndarray,
+    lat_min: float,
+    lon_min: float,
+    lat_max: float,
+    lon_max: float,
+    cell_size: float,
+    zoom: int,
+):
+    """Build world-anchored fixed grid edges for the current viewport.
 
+    The anchor is intentionally independent of the model grid so pan/zoom within
+    z5–z11 stays visually stable across requests and across D2/EU blending.
+    """
+    del lat, lon, zoom  # policy is now world-anchored for all fixed-grid modes
+
+    anchor_lat = WORLD_GRID_ANCHOR_LAT
+    anchor_lon = WORLD_GRID_ANCHOR_LON
     lat_start = anchor_lat + np.floor((lat_min - anchor_lat) / cell_size) * cell_size
     lon_start = anchor_lon + np.floor((lon_min - anchor_lon) / cell_size) * cell_size
     lat_edges = np.arange(lat_start, lat_max + cell_size, cell_size)

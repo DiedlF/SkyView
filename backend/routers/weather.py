@@ -33,6 +33,11 @@ from constants import (
     EMAGRAM_D2_LEVELS_HPA,
     G0,
     LOW_ZOOM_GLOBAL_CACHE_MAX_ZOOM,
+    SYMBOL_MODE_FIXED_GRID_MAX_ZOOM,
+    SYMBOL_MODE_NATIVE_ZOOM,
+    SYMBOL_MODE_PRECOMPUTED_MAX_ZOOM,
+    WORLD_GRID_ANCHOR_LAT,
+    WORLD_GRID_ANCHOR_LON,
 )
 from grid_aggregation import build_grid_context, choose_cell_groups, scatter_cell_stats, scatter_best_symbol
 from grid_utils import bbox_indices as _bbox_indices, slice_array as _slice_array
@@ -112,12 +117,14 @@ def build_weather_router(
             "ww", "ceiling", "clcl", "clcm", "clch",
             "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hsurf", "mh",
         ]
-        run, step, model_used = resolve_time_with_cache_context(time, model)
-
-        is_low_zoom_global = zoom <= LOW_ZOOM_GLOBAL_CACHE_MAX_ZOOM
-
-        def _snap(v: float, q: float) -> float:
-            return round(round(v / q) * q, 5)
+        symbol_mode = (
+            "precomputed" if zoom <= SYMBOL_MODE_PRECOMPUTED_MAX_ZOOM else
+            ("fixed_grid" if zoom <= SYMBOL_MODE_FIXED_GRID_MAX_ZOOM else "native")
+        )
+        requested_model_for_mode = "icon_d2" if zoom == SYMBOL_MODE_NATIVE_ZOOM else model
+        run, step, model_used = resolve_time_with_cache_context(time, requested_model_for_mode)
+        is_low_zoom_global = symbol_mode == "precomputed"
+        is_native_zoom = symbol_mode == "native"
 
         bin_ids = symbols_bin_indices_for_bbox(req_lat_min, req_lon_min, req_lat_max, req_lon_max, cell_size) if is_low_zoom_global else []
 
@@ -130,19 +137,19 @@ def build_weather_router(
             lat_max = max(b[2] for b in bboxes)
             lon_max = max(b[3] for b in bboxes)
 
-        # Normalize high-zoom bbox keys to improve cache hit-rate across micro-pans.
         if is_low_zoom_global:
             bins_key = ";".join(f"{i}:{j}" for i, j in bin_ids)
             symbols_cache_key = f"{model_used}|{run}|{step}|z{zoom}|bins|{bins_key}"
-            cache_bbox = f"{req_lat_min:.4f},{req_lon_min:.4f},{req_lat_max:.4f},{req_lon_max:.4f}"
+        elif not is_native_zoom:
+            i0 = int(math.floor((req_lat_min - WORLD_GRID_ANCHOR_LAT) / cell_size))
+            i1 = int(math.floor((req_lat_max - WORLD_GRID_ANCHOR_LAT) / cell_size))
+            j0 = int(math.floor((req_lon_min - WORLD_GRID_ANCHOR_LON) / cell_size))
+            j1 = int(math.floor((req_lon_max - WORLD_GRID_ANCHOR_LON) / cell_size))
+            symbols_cache_key = f"{model_used}|{run}|{step}|z{zoom}|cells|{i0}:{i1}:{j0}:{j1}"
         else:
-            q = max(0.01, cell_size * 0.5)
-            cache_bbox = (
-                f"{_snap(lat_min,q):.4f},{_snap(lon_min,q):.4f},"
-                f"{_snap(lat_max,q):.4f},{_snap(lon_max,q):.4f}"
-            )
-            symbols_cache_key = f"{model_used}|{run}|{step}|z{zoom}|{cache_bbox}"
-        cached_symbols = symbols_cache_get(symbols_cache_key)
+            symbols_cache_key = None
+
+        cached_symbols = symbols_cache_get(symbols_cache_key) if symbols_cache_key else None
         served_from = None
         cache_load_ms = 0.0
 
@@ -183,6 +190,9 @@ def build_weather_router(
                 if is_low_zoom_global
                 else cached_symbols
             )
+            diag = dict(out_payload.get("diagnostics") or {})
+            diag["symbolMode"] = symbol_mode
+            out_payload["diagnostics"] = diag
             total_ms = (perf_counter() - t0) * 1000.0
             logger.info(
                 "/api/symbols rid=%s served=%s zoom=%s count=%s cacheLoadMs=%.2f totalMs=%.2f",
@@ -201,6 +211,87 @@ def build_weather_router(
         d2_lat_max = float(d.get("_latMax", np.max(lat)))
         d2_lon_min = float(d.get("_lonMin", np.min(lon)))
         d2_lon_max = float(d.get("_lonMax", np.max(lon)))
+
+        if is_native_zoom:
+            li_native, lo_native = _bbox_indices(lat, lon, req_lat_min, req_lon_min, req_lat_max, req_lon_max)
+            if li_native is not None and len(li_native) == 0:
+                return {
+                    "symbols": [], "run": run, "model": model_used, "validTime": d["validTime"],
+                    "cellSize": cell_size, "count": 0,
+                    "diagnostics": {
+                        "dataFreshnessMinutes": _freshness_minutes_from_run(run),
+                        "fallbackDecision": "primary_model_only",
+                        "requestedModel": model,
+                        "requestedTime": time,
+                        "sourceModel": model_used,
+                        "strictWindowHours": EU_STRICT_MAX_DELTA_HOURS,
+                        "euDataMissing": False,
+                        "euCells": 0,
+                        "d2Cells": 0,
+                        "euShare": 0.0,
+                        "timingsMs": {"load": round(t_load_ms, 2), "grid": 0.0, "aggregate": 0.0},
+                        "servedFrom": "computed",
+                        "symbolMode": "native",
+                    },
+                }
+
+            c_lat_native = lat[li_native] if li_native is not None else lat
+            c_lon_native = lon[lo_native] if lo_native is not None else lon
+            sym_code_native = _slice_array(d["sym_code"], li_native, lo_native) if "sym_code" in d else None
+            cb_hm_native = _slice_array(d["cb_hm"], li_native, lo_native) if "cb_hm" in d else None
+            ww_native = _slice_array(d["ww"], li_native, lo_native) if "ww" in d else None
+
+            native_symbols: List[dict] = []
+            if sym_code_native is not None:
+                for ii, plat in enumerate(c_lat_native):
+                    for jj, plon in enumerate(c_lon_native):
+                        code = int(sym_code_native[ii, jj])
+                        if code < 0:
+                            continue
+                        sym = SYMBOL_CODE_TO_TYPE.get(code, "clear")
+                        cbv = int(cb_hm_native[ii, jj]) if cb_hm_native is not None else -1
+                        cb_hm = cbv if cbv >= 0 else None
+                        label = str(min(cb_hm, 99)) if cb_hm is not None else None
+                        max_ww = int(ww_native[ii, jj]) if (ww_native is not None and np.isfinite(ww_native[ii, jj])) else 0
+                        native_symbols.append({
+                            "lat": round(float(plat), 4),
+                            "lon": round(float(plon), 4),
+                            "clickLat": round(float(plat), 4),
+                            "clickLon": round(float(plon), 4),
+                            "type": sym,
+                            "ww": max_ww,
+                            "cloudBase": cb_hm,
+                            "label": label,
+                            "clickable": True,
+                            "sourceModel": "icon_d2",
+                        })
+
+            result = {
+                "symbols": native_symbols,
+                "run": run,
+                "model": model_used,
+                "validTime": d["validTime"],
+                "cellSize": cell_size,
+                "count": len(native_symbols),
+                "diagnostics": {
+                    "dataFreshnessMinutes": _freshness_minutes_from_run(run),
+                    "fallbackDecision": "primary_model_only",
+                    "requestedModel": model,
+                    "requestedTime": time,
+                    "sourceModel": model_used,
+                    "strictWindowHours": EU_STRICT_MAX_DELTA_HOURS,
+                    "euDataMissing": False,
+                    "euCells": 0,
+                    "d2Cells": len(native_symbols),
+                    "euShare": 0.0,
+                    "timingsMs": {"load": round(t_load_ms, 2), "grid": 0.0, "aggregate": 0.0},
+                    "servedFrom": "computed",
+                    "symbolMode": "native",
+                },
+            }
+            total_ms = (perf_counter() - t0) * 1000.0
+            logger.info("/api/symbols rid=%s served=computed zoom=%s mode=native count=%s totalMs=%.2f", rid, zoom, result["count"], total_ms)
+            return result
 
         d_eu = None
         c_lat_eu = c_lon_eu = None
@@ -567,9 +658,11 @@ def build_weather_router(
                     "aggregate": round(t_agg_ms, 2),
                 },
                 "servedFrom": "computed",
+                "symbolMode": symbol_mode,
             },
         }
-        symbols_cache_set(symbols_cache_key, result)
+        if symbols_cache_key:
+            symbols_cache_set(symbols_cache_key, result)
 
         # Persist world-anchored bin payloads for low-zoom requests when the
         # request exactly matches a single bin. This enables stable pan-serving
