@@ -228,6 +228,7 @@ hbas_filter:
   enabled: true
   models:
     - icon-eu
+    - icon-d2
   margin_m: 500
   hard_cap_agl_m: 6500
 

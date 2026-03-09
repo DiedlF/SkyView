@@ -336,7 +336,7 @@ def build_weather_router(
             c_cb_hm = _slice_array(d["cb_hm"], li, lo) if "cb_hm" in d else None
 
         # Keep weather.py fallback classification aligned with ingest-time hbas filtering.
-        if model_used == "icon_eu" and c_hbas_sc is not None and c_hsurf is not None and c_mh is not None:
+        if c_hbas_sc is not None and c_hsurf is not None and c_mh is not None:
             c_hbas_sc, _ = filter_hbas_with_mh(c_hbas_sc, c_hsurf, c_mh, margin_m=500.0, hard_cap_agl_m=6500.0)
 
         eu_data_missing = False
