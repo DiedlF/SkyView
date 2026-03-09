@@ -5,6 +5,7 @@ import os
 import sys
 import math
 import asyncio
+import re
 
 # ─── Auto-load .marker_auth_secret.env (and any other *.env files in backend dir) ───
 # This ensures secrets are available regardless of how the server is launched
@@ -2260,6 +2261,243 @@ async def api_admin_logs(
     return await asyncio.to_thread(_collect_logs_payload)
 
 
+def _parse_iso_utc(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _fmt_iso(dt: Optional[datetime]) -> Optional[str]:
+    if dt is None:
+        return None
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _human_error_fingerprint(line: str) -> str:
+    s = (line or "").strip()
+    s = re.sub(r"rid=[A-Za-z0-9_-]+", "rid=*", s)
+    s = re.sub(r"0x[0-9a-fA-F]+", "0x*", s)
+    s = re.sub(r"\b\d{4,}\b", "#", s)
+    s = re.sub(r"\b\d+\b", "#", s)
+    s = re.sub(r"/[^\s\"']+", "/…", s)
+    s = re.sub(r"\s+", " ", s)
+    return s[:220]
+
+
+def _extract_log_timestamp(line: str) -> Optional[datetime]:
+    if not line:
+        return None
+    prefix = line[:19]
+    try:
+        return datetime.strptime(prefix, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+def _collect_recent_error_groups(limit_per_file: int = 1200, max_groups: int = 20) -> list[dict[str, Any]]:
+    logs_dir = os.path.join(SCRIPT_DIR, 'logs')
+    files = sorted(glob.glob(os.path.join(logs_dir, '*.log')) + glob.glob(os.path.join(logs_dir, '*.out')))
+    groups: dict[str, dict[str, Any]] = {}
+    now = datetime.now(timezone.utc)
+    keywords = ('error', 'exception', 'traceback', 'critical', 'failed')
+    for fp in files:
+        basename = os.path.basename(fp)
+        source = 'ingest' if basename.lower().startswith('ingest') else ('stdout' if basename.lower().endswith('.out') else 'backend')
+        for line in _tail_lines(fp, limit=limit_per_file):
+            lo = line.lower()
+            if not any(k in lo for k in keywords):
+                continue
+            ts = _extract_log_timestamp(line)
+            bucket = _human_error_fingerprint(line)
+            row = groups.setdefault(bucket, {
+                'fingerprint': bucket,
+                'count': 0,
+                'count10m': 0,
+                'count1h': 0,
+                'count24h': 0,
+                'latestSeen': None,
+                'firstSeen': None,
+                'sample': line.strip()[:400],
+                'sources': set(),
+                'status': 'historical',
+            })
+            row['count'] += 1
+            row['sources'].add(source)
+            if ts is not None:
+                age_s = (now - ts).total_seconds()
+                if age_s <= 600:
+                    row['count10m'] += 1
+                if age_s <= 3600:
+                    row['count1h'] += 1
+                if age_s <= 86400:
+                    row['count24h'] += 1
+                if row['latestSeen'] is None or ts > row['latestSeen']:
+                    row['latestSeen'] = ts
+                    row['sample'] = line.strip()[:400]
+                if row['firstSeen'] is None or ts < row['firstSeen']:
+                    row['firstSeen'] = ts
+            else:
+                row['sample'] = row['sample'] or line.strip()[:400]
+    out = []
+    for row in groups.values():
+        if row['count10m'] > 0:
+            row['status'] = 'active'
+        elif row['count1h'] > 0 or row['count24h'] > 0:
+            row['status'] = 'recent'
+        row['sources'] = sorted(row['sources'])
+        row['latestSeen'] = _fmt_iso(row['latestSeen'])
+        row['firstSeen'] = _fmt_iso(row['firstSeen'])
+        out.append(row)
+    out.sort(key=lambda r: (r['count10m'], r['count1h'], r['count24h'], r['count']), reverse=True)
+    return out[:max_groups]
+
+
+def _usage_daily_series(days: int = 30) -> list[dict[str, Any]]:
+    try:
+        with open(USAGE_STATS_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        return []
+    daily = data.get('daily', {}) if isinstance(data, dict) else {}
+    rows = []
+    for day, row in sorted(daily.items()):
+        rows.append({
+            'day': day,
+            'visits': int((row or {}).get('visits') or 0),
+            'uniqueVisitors': int((row or {}).get('uniqueVisitors') or 0),
+        })
+    return rows[-days:]
+
+
+def _compute_simple_delta(series: list[float]) -> Optional[float]:
+    vals = [float(v) for v in series if v is not None]
+    if len(vals) < 2:
+        return None
+    mid = len(vals) // 2
+    if mid == 0 or mid == len(vals):
+        return None
+    prev = sum(vals[:mid]) / max(len(vals[:mid]), 1)
+    curr = sum(vals[mid:]) / max(len(vals[mid:]), 1)
+    if prev == 0:
+        return None
+    return (curr - prev) / prev
+
+
+def _summarize_symbol_diagnostics(storage: dict[str, Any], status: dict[str, Any]) -> dict[str, Any]:
+    latest_model = (((status.get('models') or {}).get('mergedPrimary') or {}).get('model')) or (((status.get('ingest') or {}).get('latestModel')))
+    latest_run = (((status.get('models') or {}).get('mergedPrimary') or {}).get('d2Run')) or (((status.get('ingest') or {}).get('latestRun')))
+    diag: dict[str, Any] = {
+        'latestModel': latest_model,
+        'latestRun': latest_run,
+        'cache': {
+            'symbols': status.get('cache', {}).get('symbols', {}),
+            'lowZoom': status.get('symbolsLowZoomCache', {}),
+        },
+        'precomputeByZoom': [],
+        'blendCounters': {
+            'blended': int((((status.get('fallback') or {}).get('symbolsBlended')) or 0)),
+            'd2Only': None,
+            'euOnly': None,
+        },
+        'topSymbolClasses': [],
+        'computeLatencyByZoom': [],
+        'notes': [],
+    }
+    if not latest_model or not latest_run:
+        diag['notes'].append('No latest run available for symbol diagnostics.')
+        return diag
+    base = os.path.join(DATA_DIR, _model_dir_name(latest_model), str(latest_run))
+    zoom_map: dict[int, dict[str, Any]] = {}
+    class_counts: dict[str, int] = {}
+    for fp in glob.glob(os.path.join(base, '_symbols_z*.json')):
+        name = os.path.basename(fp)
+        m = re.match(r'_symbols_z(\d+)_(\d{3})(?:_b-?\d+_-?\d+)?\.json$', name)
+        if not m:
+            continue
+        zoom = int(m.group(1))
+        row = zoom_map.setdefault(zoom, {'zoom': zoom, 'files': 0, 'steps': set(), 'bins': 0, 'latestUpdatedAt': None, 'sampleCount': None})
+        row['files'] += 1
+        row['steps'].add(int(m.group(2)))
+        if '_b' in name:
+            row['bins'] += 1
+        try:
+            st = os.path.getmtime(fp)
+            iso = _fmt_iso(datetime.fromtimestamp(st, tz=timezone.utc))
+            if row['latestUpdatedAt'] is None or (iso and iso > row['latestUpdatedAt']):
+                row['latestUpdatedAt'] = iso
+        except Exception:
+            pass
+        if row['sampleCount'] is None:
+            try:
+                with open(fp, 'r', encoding='utf-8') as f:
+                    payload = json.load(f)
+                syms = payload.get('symbols', []) if isinstance(payload, dict) else []
+                row['sampleCount'] = len(syms)
+                for s in syms[:200]:
+                    cls = str((s or {}).get('symbol') or (s or {}).get('type') or 'unknown')
+                    class_counts[cls] = class_counts.get(cls, 0) + 1
+            except Exception:
+                pass
+    for zoom, row in sorted(zoom_map.items()):
+        row['stepCount'] = len(row.pop('steps'))
+        diag['precomputeByZoom'].append(row)
+    if not diag['precomputeByZoom']:
+        diag['notes'].append('No symbol precompute files found on disk for the latest run.')
+    diag['topSymbolClasses'] = [
+        {'symbolClass': k, 'count': v}
+        for k, v in sorted(class_counts.items(), key=lambda item: item[1], reverse=True)[:8]
+    ]
+    return diag
+
+
+def _summarize_data_integrity(storage: dict[str, Any], status: dict[str, Any], recent_errors: list[dict[str, Any]]) -> dict[str, Any]:
+    expected = {'icon_d2': 48, 'icon_eu': 92}
+    models = []
+    issues = []
+    for mk, exp in expected.items():
+        m = (storage.get('models', {}) or {}).get(mk, {}) or {}
+        steps = m.get('latestRunFullyIngestedSteps')
+        missing = None if steps is None else max(exp - int(steps), 0)
+        coverage = None if steps is None else round(min(int(steps), exp) / exp, 3)
+        row = {
+            'model': mk,
+            'latestRun': m.get('latestRun'),
+            'expectedSteps': exp,
+            'actualSteps': steps,
+            'missingSteps': missing,
+            'coverage': coverage,
+            'freshnessMinutesSinceFullIngest': m.get('freshnessMinutesSinceFullIngest'),
+            'latestRunFullyIngestedAt': m.get('latestRunFullyIngestedAt'),
+            'latestRunAvailableAt': m.get('latestRunAvailableAt'),
+        }
+        models.append(row)
+        if missing:
+            issues.append(f"{mk} latest run missing {missing} step(s)")
+        if not m.get('latestRun'):
+            issues.append(f"{mk} has no detected run")
+    hbas_related = sum(1 for r in recent_errors if 'hbas' in (r.get('fingerprint') or '').lower() or 'hbas' in (r.get('sample') or '').lower())
+    symbol_diag = _summarize_symbol_diagnostics(storage, status)
+    return {
+        'models': models,
+        'issues': issues,
+        'hbasRelatedErrorGroups': hbas_related,
+        'symbolPrecomputeByZoom': symbol_diag.get('precomputeByZoom', []),
+        'keyVariableAvailability': {
+            'hbas_sc': 'unknown',
+            'htop_dc': 'unknown',
+            'cape_ml': 'unknown',
+            'lpi_max': 'unknown',
+        },
+        'nanFractions': [],
+        'notes': [
+            'Key-variable availability and NaN fractions remain best-effort until ingest publishes explicit integrity counters.'
+        ],
+    }
+
+
 def _pct(values: List[float], p: float) -> Optional[float]:
     if not values:
         return None
@@ -2278,26 +2516,27 @@ async def api_admin_overview_metrics():
     storage = await api_admin_storage()
     status = await api_status()
 
-    # Reliability: endpoint error counters + top failing endpoints
     endpoint_rows = []
     for path, m in request_metrics.items():
         total = int(m.get("count", 0))
         e4 = int(m.get("errors4xx", 0))
         e5 = int(m.get("errors5xx", 0))
+        err_total = e4 + e5
         endpoint_rows.append({
             "path": path,
             "requests": total,
             "errors4xx": e4,
             "errors5xx": e5,
-            "errorTotal": e4 + e5,
+            "errorTotal": err_total,
+            "errorRate": (err_total / total) if total else None,
             "lastSeen": m.get("lastSeen"),
         })
-    top_failing = sorted(endpoint_rows, key=lambda r: (r["errorTotal"], r["errors5xx"]), reverse=True)[:10]
+    top_failing = sorted(endpoint_rows, key=lambda r: (r["errorTotal"], r["errors5xx"], r["requests"]), reverse=True)[:10]
+    traffic_errors = sorted(endpoint_rows, key=lambda r: (r["requests"], r["errorTotal"], r["errors5xx"]), reverse=True)[:15]
 
-    # Ingest failure streak: consecutive latest runs with incomplete coverage
     streak = 0
     expected_steps = {"icon_d2": 48, "icon_eu": 92}
-    for mk, mdir in (("icon_d2", "icon-d2"), ("icon_eu", "icon-eu")):
+    for mk in ("icon_d2", "icon_eu"):
         runs = (storage.get("models", {}).get(mk, {}) or {}).get("runs", []) or []
         for r in runs:
             npz = int(r.get("npzFiles") or 0)
@@ -2305,7 +2544,6 @@ async def api_admin_overview_metrics():
                 break
             streak += 1
 
-    # Performance: per-endpoint latencies and slow buckets
     endpoint_perf = []
     for path, m in request_metrics.items():
         lats = list(m.get("latencyMs", []))
@@ -2343,7 +2581,6 @@ async def api_admin_overview_metrics():
         })
     cache_efficiency_by_layer.sort(key=lambda r: r["requests"], reverse=True)
 
-    # Capacity trends
     total_bytes = int(storage.get("totalBytes") or 0)
     est_tile_bytes = int((((status.get("cache") or {}).get("server") or {}).get("estTileBytes") or 0))
     _sample_capacity(total_bytes, est_tile_bytes)
@@ -2361,7 +2598,6 @@ async def api_admin_overview_metrics():
         except Exception:
             pass
 
-    # Product usage
     total_feature = sum(int(v) for v in feature_usage_counters.values())
     feature_split = []
     for k, v in feature_usage_counters.items():
@@ -2372,15 +2608,26 @@ async def api_admin_overview_metrics():
     usage7 = get_usage_stats(USAGE_STATS_FILE, days=7)
     usage30 = get_usage_stats(USAGE_STATS_FILE, days=30)
     markers = get_marker_stats(MARKERS_FILE)
+    usage_series = _usage_daily_series(30)
 
     phase_recent = list(overlay_phase_recent)
     def _phase_pct(field: str, pct: float):
         return _pct([float(r.get(field, 0.0)) for r in phase_recent], pct)
 
+    recent_errors = _collect_recent_error_groups()
+    symbol_diag = _summarize_symbol_diagnostics(storage, status)
+    integrity = _summarize_data_integrity(storage, status, recent_errors)
+
+    phase_totals = [r.get('totalMs') for r in overlay_phase_series if r.get('totalMs') is not None]
+    visit_series = [r.get('visits') for r in usage_series]
+    unique_series = [r.get('uniqueVisitors') for r in usage_series]
+
     return {
         "reliability": {
             "globalErrors": dict(api_error_counters),
             "topFailingEndpoints": top_failing,
+            "endpointTrafficErrors": traffic_errors,
+            "recentErrors": recent_errors,
             "ingestFailureStreak": streak,
             "fallback": dict(app_state.fallback_stats),
         },
@@ -2395,6 +2642,11 @@ async def api_admin_overview_metrics():
                 "totalMs": _phase_pct("totalMs", 0.95),
             },
             "cacheEfficiencyByLayer": cache_efficiency_by_layer,
+            "kpiTrends": {
+                "overlayTotalMsDelta": _compute_simple_delta(phase_totals),
+                "visitsDelta": _compute_simple_delta(visit_series),
+                "uniqueVisitorsDelta": _compute_simple_delta(unique_series),
+            },
         },
         "capacity": {
             "totalBytes": total_bytes,
@@ -2412,6 +2664,11 @@ async def api_admin_overview_metrics():
             "markerActive24h": markers.get("activeLast24h", 0),
             "markerActive7d": markers.get("activeLast7d", 0),
             "markerActive30d": markers.get("activeLast30d", 0),
+            "usageDaily": usage_series,
+        },
+        "engineering": {
+            "symbolDiagnostics": symbol_diag,
+            "dataIntegrity": integrity,
         },
         "serverHealth": _read_server_health(),
         "updatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
