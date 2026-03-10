@@ -1188,6 +1188,22 @@ async function loadOverlay() {
       if (reqId !== overlayRequestSeq) return;
 
       const tileUrl = `/api/overlay_tile/{z}/{x}/{y}.png?${params.toString()}`;
+      const overlayTileRetryState = new Map();
+      const overlayTileRetryTimers = new Map();
+      const overlayRetryDelaysMs = [500, 1500, 4000];
+      const clearOverlayRetryTimer = (key) => {
+        const id = overlayTileRetryTimers.get(key);
+        if (id != null) {
+          clearTimeout(id);
+          overlayTileRetryTimers.delete(key);
+        }
+      };
+      const clearAllOverlayRetryTimers = () => {
+        for (const id of overlayTileRetryTimers.values()) clearTimeout(id);
+        overlayTileRetryTimers.clear();
+        overlayTileRetryState.clear();
+      };
+
       overlayLayer = L.tileLayer(tileUrl, {
         tileSize: 256,
         opacity: overlayOpacityForLayer(effectiveOverlay),
@@ -1198,18 +1214,63 @@ async function loadOverlay() {
         zIndex: 250,
       }).addTo(map);
 
-      // Retry transient tile failures once with a cache-buster.
-      overlayLayer.on('tileerror', (ev) => {
+      overlayLayer.on('tileloadstart', (ev) => {
         try {
+          const coords = ev && ev.coords;
+          const key = coords ? `${coords.z}/${coords.x}/${coords.y}` : null;
+          if (!key) return;
           const t = ev && ev.tile;
-          if (!t || t.dataset.retryOnce === '1') return;
-          t.dataset.retryOnce = '1';
-          const base = t.src.split('#')[0].split('?')[0];
-          const q = t.src.includes('?') ? '&' : '?';
-          t.src = `${base}${q}${params.toString()}&_rt=${Date.now()}`;
+          if (t) t.dataset.overlayTileKey = key;
+          clearOverlayRetryTimer(key);
         } catch (_e) {
           // no-op
         }
+      });
+
+      overlayLayer.on('tileload', (ev) => {
+        try {
+          const t = ev && ev.tile;
+          const key = (t && t.dataset && t.dataset.overlayTileKey) || null;
+          if (!key) return;
+          clearOverlayRetryTimer(key);
+          overlayTileRetryState.delete(key);
+        } catch (_e) {
+          // no-op
+        }
+      });
+
+      // Retry transient tile failures with capped exponential backoff and jitter.
+      overlayLayer.on('tileerror', (ev) => {
+        try {
+          const t = ev && ev.tile;
+          const coords = ev && ev.coords;
+          const key = (t && t.dataset && t.dataset.overlayTileKey) || (coords ? `${coords.z}/${coords.x}/${coords.y}` : null);
+          if (!t || !key) return;
+
+          const attempt = overlayTileRetryState.get(key) || 0;
+          if (attempt >= overlayRetryDelaysMs.length) return;
+
+          overlayTileRetryState.set(key, attempt + 1);
+          clearOverlayRetryTimer(key);
+
+          const baseDelay = overlayRetryDelaysMs[attempt];
+          const jitter = Math.floor(Math.random() * 250);
+          const timerId = setTimeout(() => {
+            overlayTileRetryTimers.delete(key);
+            if (!map.hasLayer(overlayLayer)) return;
+            const base = t.src.split('#')[0].split('?')[0];
+            const q = t.src.includes('?') ? '&' : '?';
+            t.src = `${base}${q}${params.toString()}&_rt=${Date.now()}&_rtry=${attempt + 1}`;
+          }, baseDelay + jitter);
+
+          overlayTileRetryTimers.set(key, timerId);
+        } catch (_e) {
+          // no-op
+        }
+      });
+
+      overlayLayer.on('remove', () => {
+        clearAllOverlayRetryTimers();
       });
 
       // Best-effort prewarm: viewport + 1-ring tiles after layer/time switch.
