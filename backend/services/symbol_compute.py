@@ -248,7 +248,7 @@ def compute_symbols_payload(
                     c_sym_code_eu = _slice_array(d_eu["sym_code"], li_eu, lo_eu) if "sym_code" in d_eu else None
                     c_cb_hm_eu = _slice_array(d_eu["cb_hm"], li_eu, lo_eu) if "cb_hm" in d_eu else None
 
-    if symbol_mode == "native" and (c_sym_code is None or c_cb_hm is None or (d_eu is not None and (c_sym_code_eu is None or c_cb_hm_eu is None))):
+    if symbol_mode == "native":
         d2_symbols = _compute_native_symbols_from_points(
             src_lat=c_lat,
             src_lon=c_lon,
