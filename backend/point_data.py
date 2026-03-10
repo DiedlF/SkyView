@@ -196,7 +196,6 @@ def build_overlay_values(
     li: np.ndarray,
     lo: np.ndarray,
     ww_max: int,
-    ceil_cell: np.ndarray,
     wind_level: str,
     zoom: int | None,
     lat: float,
@@ -281,8 +280,8 @@ def build_overlay_values(
             ov[tk] = round(_to_celsius(v), 1)
 
     # ── Cloud heights ─────────────────────────────────────────────────────────
-    ceil_vals = ceil_cell[(ceil_cell > 0) & (ceil_cell < 20_000)] if ceil_cell.size else np.array([])
-    ov["ceiling"] = round(float(np.min(ceil_vals)), 0) if len(ceil_vals) > 0 else None
+    ceiling = _safe_get(d, "ceiling", i0, j0)
+    ov["ceiling"] = round(ceiling, 0) if (ceiling is not None and 0 < ceiling < 20_000) else None
 
     hbas = _safe_get(d, "hbas_sc", i0, j0)
     ov["cloud_base"] = round(hbas, 0) if (hbas is not None and hbas > 0) else None

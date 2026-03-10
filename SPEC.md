@@ -248,12 +248,19 @@ Returns available forecast timesteps across all models.
 ```
 
 ### GET /api/point
-Returns detailed forecast for a specific point.
+Returns point information for a clicked location. A response can include a
+symbol and/or wind values and/or one selected overlay value.
 
 **Query params:**
 - `lat`, `lon` (float): Coordinates
 - `time` (string): ISO timestamp or forecast hour
 - `model` (string, optional): Force specific model
+- `wind_level` (string, optional): Wind source (`10m`, `gust10m`, or pressure level like `850`)
+- `include_symbol` (bool, optional): Include symbol/cloud classification data
+- `include_wind` (bool, optional): Include wind speed/direction in `overlay_values`
+- `include_overlay` (bool, optional): Include one overlay value in `overlay_values`
+- `overlay_key` (string, optional): Overlay identifier (for example `ceiling`, `rain`, `climb_rate`)
+- `zoom` (int, optional): Current map zoom, used for a few derived point values
 
 **Response:**
 ```json
@@ -261,21 +268,56 @@ Returns detailed forecast for a specific point.
   "lat": 47.6836,
   "lon": 11.961,
   "ww": 2,
-  "wwName": "Partly cloudy",
+  "symbol": "cu_hum",
   "cloudType": "cu_hum",
-  "cloudTypeName": "Cumulus humilis",
-  "cloudBase": 1500,
-  "cloudBaseHm": 15,
+  "cloudTypeName": "Cu_Hum",
   "clcl": 35.2,
   "clcm": 5.1,
   "clch": 0.0,
-  "cape": 320.5,
-  "htopDc": 1800,
-  "lpi": 0.0,
+  "clct": 40.3,
+  "cape_ml": 320.5,
+  "htop_dc": 1800.0,
+  "hbas_sc": 1500.0,
+  "htop_sc": 2600.0,
+  "lpi_max": 0.0,
+  "ceiling": 1500.0,
+  "values": {
+    "ww": 2,
+    "clcl": 35.2,
+    "clcm": 5.1,
+    "clch": 0.0,
+    "clct": 40.3,
+    "cape_ml": 320.5,
+    "htop_dc": 1800.0,
+    "hbas_sc": 1500.0,
+    "htop_sc": 2600.0,
+    "lpi_max": 0.0,
+    "ceiling": 1500.0
+  },
+  "overlay_values": {
+    "wind_speed": 12.4,
+    "wind_dir": 230,
+    "ceiling": 1500.0
+  },
   "validTime": "2026-02-09T12:00:00Z",
-  "model": "icon-d2"
+  "run": "2026020906",
+  "model": "icon_d2",
+  "sourceModel": "icon_d2",
+  "diagnostics": {
+    "dataFreshnessMinutes": 42,
+    "fallbackDecision": "primary_model_only",
+    "requestedModel": null,
+    "requestedTime": "latest",
+    "sourceModel": "icon_d2",
+    "euDataMissing": false
+  }
 }
 ```
+
+**Notes:**
+- `overlay_values` is sparse: it only includes requested wind values and/or the selected overlay.
+- `cloudBaseHm` has been removed from the point payload.
+- Point overlay `ceiling` now comes directly from the clicked grid point; no separate `ceil_cell` path is used.
 
 ### GET /api/overlay
 Generates PNG overlay for specified layer type.

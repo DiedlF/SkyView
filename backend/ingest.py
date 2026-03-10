@@ -26,7 +26,7 @@ from datetime import datetime, timedelta, timezone
 import time
 from logging_config import setup_logging
 from constants import ICON_EU_STEP_3H_START
-from classify import classify_cloud_type, get_cloud_base
+from classify import classify_clouds_and_bases
 from convective_filters import filter_hbas_with_mh
 
 logger = setup_logging(__name__, level="INFO", log_name="ingest")
@@ -93,8 +93,7 @@ def _precompute_symbol_native_fields(arrays: dict, step: int | None = None, mode
     lpi = arrays.get("lpi_max", np.zeros_like(ww))
     hsurf = arrays["hsurf"]
 
-    cloud_type = classify_cloud_type(ww, clcl, clcm, clch, cape, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf, arrays.get("mh"))
-    cb_hm = get_cloud_base(ceiling, hbas_sc).astype(np.int16)
+    cloud_type, cb_hm = classify_clouds_and_bases(ww, clcl, clcm, clch, cape, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf, arrays.get("mh"))
 
     sym_code = np.zeros(ww.shape, dtype=np.int16)
     m = _symbol_code_map()

@@ -17,14 +17,35 @@ from constants import (
 logger = setup_logging(__name__, level="WARNING")
 
 
-def classify_point(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=0.0, mh=None):
-    """Canonical scalar cloud-type classification.
+def _meters_to_hm_scalar(value: float) -> int | None:
+    if not np.isfinite(value) or value <= 0:
+        return None
+    hm = int(np.floor(max(float(value), 0.0) / 100.0))
+    if hm > 150:
+        return None
+    return hm
 
-    Inputs use AMSL for htop_dc/hbas_sc; AGL thresholds are applied via hsurf.
+
+def _meters_to_hm_array(values: np.ndarray) -> np.ndarray:
+    base_hm = np.full(values.shape, -1, dtype=np.int16)
+    finite = np.isfinite(values) & (values > 0)
+    if np.any(finite):
+        vals = np.floor(np.maximum(values[finite], 0) / 100)
+        vals = np.clip(vals, 0, 32767).astype(np.int16)
+        base_hm[finite] = vals
+    base_hm[base_hm > 150] = -1
+    return base_hm
+
+
+def classify_point_with_base(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=0.0, mh=None):
+    """Canonical scalar symbol/base decision.
+
+    Returns (cloud_type, cb_hm). Inputs use AMSL for htop_dc/hbas_sc;
+    AGL thresholds are applied via hsurf.
     """
     ww = 0.0
     if not (np.isfinite(ww) and ww <= 3):
-        return "clear"
+        return "clear", None
 
     is_conv = np.isfinite(cape_ml) and (cape_ml > CAPE_CONV_THRESHOLD)
     if is_conv:
@@ -36,38 +57,46 @@ def classify_point(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ce
         )[0])
 
         if (not conv_cloud_ok or clcl < 5) and np.isfinite(htop_dc_agl) and htop_dc_agl >= AGL_CONV_MIN_METERS:
-            return "blue_thermal"
+            return "blue_thermal", _meters_to_hm_scalar(htop_dc)
         if conv_cloud_ok:
+            cb_hm = _meters_to_hm_scalar(hbas_sc)
             if (lpi > LPI_CB_THRESHOLD) or ((cloud_depth > CLOUD_DEPTH_CB_THRESHOLD) and (cape_ml > CAPE_CB_STRONG_THRESHOLD)):
-                return "cb"
+                return "cb", cb_hm
             if cloud_depth > CLOUD_DEPTH_CU_CON_THRESHOLD:
-                return "cu_con"
-            return "cu_hum"
-        return "clear"
+                return "cu_con", cb_hm
+            return "cu_hum", cb_hm
+        return "clear", None
 
-    if not np.isfinite(ceiling) or ceiling <= 0 or ceiling >= CEILING_VALID_MAX_METERS:
-        return "clear"
+    valid_ceiling = np.isfinite(ceiling) and (ceiling > 0) and (ceiling < CEILING_VALID_MAX_METERS)
+    if not valid_ceiling:
+        return "clear", None
+
+    cb_hm = _meters_to_hm_scalar(ceiling)
     if ceiling < CEILING_LOW_MAX_METERS:
         if np.isfinite(clcl) and clcl >= 30:
-            return "st"
+            return "st", cb_hm
     elif ceiling < CEILING_MID_MAX_METERS:
         if np.isfinite(clcm) and clcm >= 30:
-            return "ac"
+            return "ac", cb_hm
     else:
         if np.isfinite(clch) and clch >= 30:
-            return "ci"
+            return "ci", cb_hm
 
     # Fallback: if a valid ceiling exists but the band-matched layer is below
     # threshold, still emit the strongest remaining cloud layer instead of
     # collapsing to clear. Prefer lower layers because they are operationally
     # more relevant on the map.
     if np.isfinite(clcl) and clcl >= 30:
-        return "st"
+        return "st", cb_hm
     if np.isfinite(clcm) and clcm >= 30:
-        return "ac"
+        return "ac", cb_hm
     if np.isfinite(clch) and clch >= 30:
-        return "ci"
-    return "clear"
+        return "ci", cb_hm
+    return "clear", None
+
+
+def classify_point(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=0.0, mh=None):
+    return classify_point_with_base(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf, mh)[0]
 
 
 def crop_to_bbox(arrays_dict, lat, lon, bbox):
@@ -96,33 +125,30 @@ def crop_to_bbox(arrays_dict, lat, lon, bbox):
     return cropped, lat[li], lon[lo]
 
 
-def classify_cloud_type(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=None, mh=None):
-    """Classify cloud type for ww<=3 grid points.
+def classify_clouds_and_bases(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=None, mh=None):
+    """Classify grid-point cloud type and cb_hm together.
 
-    Non-convective class uses ceiling band + min layer cloud cover:
-    - st: ceiling < CEILING_LOW_MAX_METERS and clcl >= 30
-    - ac: 2000 <= ceiling < CEILING_MID_MAX_METERS and clcm >= 30
-    - ci: ceiling >= 7000 and clch >= 30
-    otherwise clear.
+    Returns (cloud_type, cb_hm) where cb_hm is the label height in hectometers
+    matched to the chosen symbol semantics.
     """
     height, width = ww.shape
     logger.debug(f"Classifying cloud types for grid: {height}x{width}")
 
     cloud_type = np.full((height, width), "clear", dtype=object)
+    cb_hm = np.full((height, width), -1, dtype=np.int16)
     mask = (ww <= 3) & np.isfinite(ww)
-    is_convective = (cape_ml > CAPE_CONV_THRESHOLD)
+    is_convective = np.isfinite(cape_ml) & (cape_ml > CAPE_CONV_THRESHOLD)
 
-    # Convective
-    conv_mask = mask & is_convective
-    cloud_depth = np.maximum(0, htop_sc - hbas_sc)
+    cloud_depth = np.maximum(0, np.where(
+        np.isfinite(htop_sc) & np.isfinite(hbas_sc),
+        htop_sc - hbas_sc,
+        0.0,
+    ))
 
-    # hbas_sc / htop_dc are AMSL; convert to AGL using hsurf when available.
     if hsurf is None:
         hsurf = np.zeros_like(hbas_sc)
     htop_dc_agl = htop_dc - hsurf
 
-    # Unified convective plausibility: cloud-forming convection requires a
-    # physically plausible convective cloud base; blue thermals use htop_dc.
     conv_cloud_ok = convective_cloud_mask(
         hbas_sc,
         hsurf,
@@ -131,62 +157,74 @@ def classify_cloud_type(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc
     )
     blue_ok = np.isfinite(htop_dc_agl) & (htop_dc_agl >= AGL_CONV_MIN_METERS)
 
+    conv_mask = mask & is_convective
+    hbas_hm = _meters_to_hm_array(hbas_sc)
+    ceil_hm = _meters_to_hm_array(ceiling)
+    htop_dc_hm = _meters_to_hm_array(htop_dc)
+
     blue_mask = conv_mask & ((~conv_cloud_ok) | (clcl < 5)) & blue_ok
     cloud_type[blue_mask] = "blue_thermal"
-    cloud_type[conv_mask & conv_cloud_ok & ((lpi > LPI_CB_THRESHOLD) | ((cloud_depth > CLOUD_DEPTH_CB_THRESHOLD) & (cape_ml > CAPE_CB_STRONG_THRESHOLD))) & (cloud_type != "blue_thermal")] = "cb"
+    cb_hm[blue_mask] = htop_dc_hm[blue_mask]
+
+    cb_mask = conv_mask & conv_cloud_ok & ((lpi > LPI_CB_THRESHOLD) | ((cloud_depth > CLOUD_DEPTH_CB_THRESHOLD) & (cape_ml > CAPE_CB_STRONG_THRESHOLD))) & (cloud_type != "blue_thermal")
+    cloud_type[cb_mask] = "cb"
+    cb_hm[cb_mask] = hbas_hm[cb_mask]
+
     cu_con_mask = conv_mask & conv_cloud_ok & (cloud_depth > CLOUD_DEPTH_CU_CON_THRESHOLD) & (cloud_type != "cb") & (cloud_type != "blue_thermal")
     cloud_type[cu_con_mask] = "cu_con"
+    cb_hm[cu_con_mask] = hbas_hm[cu_con_mask]
+
     cu_hum_mask = conv_mask & conv_cloud_ok & (cloud_type == "clear")
     cloud_type[cu_hum_mask] = "cu_hum"
+    cb_hm[cu_hum_mask] = hbas_hm[cu_hum_mask]
 
-    # Non-convective (ceiling band + min layer cloud cover)
     strat_mask = mask & ~is_convective
     valid_ceiling = strat_mask & np.isfinite(ceiling) & (ceiling > 0) & (ceiling < CEILING_VALID_MAX_METERS)
 
     low_band = valid_ceiling & (ceiling < CEILING_LOW_MAX_METERS)
     mid_band = valid_ceiling & (ceiling >= CEILING_LOW_MAX_METERS) & (ceiling < CEILING_MID_MAX_METERS)
-    high_band = valid_ceiling & (ceiling >= 7000)
+    high_band = valid_ceiling & (ceiling >= CEILING_MID_MAX_METERS)
 
-    cloud_type[low_band & np.isfinite(clcl) & (clcl >= 30)] = "st"
-    cloud_type[mid_band & np.isfinite(clcm) & (clcm >= 30)] = "ac"
-    cloud_type[high_band & np.isfinite(clch) & (clch >= 30)] = "ci"
+    st_mask = low_band & np.isfinite(clcl) & (clcl >= 30)
+    ac_mask = mid_band & np.isfinite(clcm) & (clcm >= 30)
+    ci_mask = high_band & np.isfinite(clch) & (clch >= 30)
 
-    # Fallback for cases where ceiling is valid but the band-matched layer does
-    # not clear the threshold while another cloud layer does.
-    unresolved = valid_ceiling & (cloud_type == "clear")
-    cloud_type[unresolved & np.isfinite(clcl) & (clcl >= 30)] = "st"
-    unresolved = valid_ceiling & (cloud_type == "clear")
-    cloud_type[unresolved & np.isfinite(clcm) & (clcm >= 30)] = "ac"
-    unresolved = valid_ceiling & (cloud_type == "clear")
-    cloud_type[unresolved & np.isfinite(clch) & (clch >= 30)] = "ci"
+    cloud_type[st_mask] = "st"
+    cb_hm[st_mask] = ceil_hm[st_mask]
+    cloud_type[ac_mask] = "ac"
+    cb_hm[ac_mask] = ceil_hm[ac_mask]
+    cloud_type[ci_mask] = "ci"
+    cb_hm[ci_mask] = ceil_hm[ci_mask]
 
-    # Log classification summary
+    unresolved = valid_ceiling & (cloud_type == "clear")
+    st_fallback = unresolved & np.isfinite(clcl) & (clcl >= 30)
+    cloud_type[st_fallback] = "st"
+    cb_hm[st_fallback] = ceil_hm[st_fallback]
+
+    unresolved = valid_ceiling & (cloud_type == "clear")
+    ac_fallback = unresolved & np.isfinite(clcm) & (clcm >= 30)
+    cloud_type[ac_fallback] = "ac"
+    cb_hm[ac_fallback] = ceil_hm[ac_fallback]
+
+    unresolved = valid_ceiling & (cloud_type == "clear")
+    ci_fallback = unresolved & np.isfinite(clch) & (clch >= 30)
+    cloud_type[ci_fallback] = "ci"
+    cb_hm[ci_fallback] = ceil_hm[ci_fallback]
+
     unique, counts = np.unique(cloud_type, return_counts=True)
     summary = dict(zip(unique, counts))
     logger.debug(f"Cloud type distribution: {summary}")
 
-    return cloud_type
+    return cloud_type, cb_hm
+
+
+def classify_cloud_type(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=None, mh=None):
+    return classify_clouds_and_bases(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf, mh)[0]
 
 
 def get_cloud_base(ceiling, hbas_sc):
-    """Cloud base in hectometers. -1 if invalid.
-
-    Priority:
-    - If hbas_sc > 0 (convective cloud formed): use hbas_sc directly.
-    - Else if ceiling is valid (finite, >0, <CEILING_VALID_MAX_METERS): use ceiling
-      (stratiform base).
-    - Else: return -1 (no valid base).
-    """
+    """Legacy helper; prefer classify_clouds_and_bases for new code."""
     hbas_valid = np.isfinite(hbas_sc) & (hbas_sc > 0)
-    ceil_valid  = np.isfinite(ceiling) & (ceiling > 0) & (ceiling < CEILING_VALID_MAX_METERS)
+    ceil_valid = np.isfinite(ceiling) & (ceiling > 0) & (ceiling < CEILING_VALID_MAX_METERS)
     base = np.where(hbas_valid, hbas_sc, np.where(ceil_valid, ceiling, np.nan))
-
-    base_hm = np.full(base.shape, -1, dtype=np.int16)
-    finite = np.isfinite(base)
-    if np.any(finite):
-        vals = np.floor(np.maximum(base[finite], 0) / 100)
-        vals = np.clip(vals, 0, 32767).astype(np.int16)
-        base_hm[finite] = vals
-
-    base_hm[base_hm > 150] = -1
-    return base_hm
+    return _meters_to_hm_array(base)
