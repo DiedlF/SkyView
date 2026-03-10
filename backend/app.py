@@ -1755,6 +1755,8 @@ async def api_overlay_tile(
                     "X-Source-Model": source_model_hdr,
                     "X-Fallback-Decision": "blended_d2_eu" if source_model_hdr == "blended" else "primary_model_only",
                     "X-Data-Freshness-Minutes": str(_freshness_minutes_from_run(run)),
+                    "X-Overlay-Layer": layer,
+                    "X-Overlay-Computed": "1" if cfg.get("computed") else "0",
                 },
             ),
         )
@@ -1874,6 +1876,17 @@ async def api_overlay_tile(
         total_ms=total_ms,
     )
 
+    if total_ms >= 150.0:
+        logger.info(
+            "/api/overlay_tile layer=%s z=%s x=%s y=%s cache=MISS source=%s computed=%s eu=%s "
+            "loadMs=%.2f sourceMs=%.2f colorizeMs=%.2f encodeMs=%.2f totalMs=%.2f",
+            layer, z, x, y,
+            source_model_hdr,
+            bool(cfg.get("computed")),
+            bool(eu_fb is not None),
+            t_load_ms, t_source_ms, t_colorize_ms, t_encode_ms, total_ms,
+        )
+
     return Response(
         content=png,
         media_type="image/png",
@@ -1886,6 +1899,8 @@ async def api_overlay_tile(
                 "X-Source-Model": source_model_hdr,
                 "X-Fallback-Decision": "blended_d2_eu" if source_model_hdr == "blended" else "primary_model_only",
                 "X-Data-Freshness-Minutes": str(_freshness_minutes_from_run(run)),
+                "X-Overlay-Layer": layer,
+                "X-Overlay-Computed": "1" if cfg.get("computed") else "0",
             },
         ),
     )

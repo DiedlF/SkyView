@@ -1125,8 +1125,10 @@ async function prewarmOverlayTiles(params) {
   }
 
   // Limit prewarm burst size to avoid spiking backend/network.
-  const limited = urls.slice(0, 36);
-  const concurrency = 6;
+  // Climb-rate (CAPE) is already sensitive to bursty cold-tile loads, so prewarm less aggressively.
+  const isCapeClimb = params.get('layer') === 'climb_rate_cape';
+  const limited = urls.slice(0, isCapeClimb ? 12 : 36);
+  const concurrency = isCapeClimb ? 3 : 6;
   let idx = 0;
   const workers = Array.from({ length: concurrency }, async () => {
     while (idx < limited.length) {
