@@ -83,7 +83,6 @@ def build_weather_router(
         t_grid_ms = 0.0
         t_agg_ms = 0.0
         cell_size = CELL_SIZES_BY_ZOOM[zoom]
-        _cd_cfg = _load_coverage_damping_cfg()
 
         parts = bbox.split(",")
         if len(parts) != 4:
