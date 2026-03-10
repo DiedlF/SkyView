@@ -73,10 +73,10 @@ jobs:
               echo "[deploy] skipping service restart (no backend/unit changes)"
             fi
 
-            # Health check gate (up to ~60s)
+            # Health check gate (up to ~120s)
             echo "[deploy] health check /api/status"
             ok=0
-            for i in $(seq 1 20); do
+            for i in $(seq 1 40); do
               if curl -fsS http://127.0.0.1:8501/api/status >/dev/null; then
                 ok=1
                 break
@@ -85,6 +85,10 @@ jobs:
             done
             if [ "$ok" -ne 1 ]; then
               echo "[deploy] health check failed"
+              echo "[deploy] listening sockets around 8501:"
+              sudo ss -ltnp | grep 8501 || true
+              echo "[deploy] recent journal logs:"
+              sudo journalctl -u skyview -n 80 --no-pager || true
               sudo systemctl status skyview --no-pager || true
               exit 1
             fi
