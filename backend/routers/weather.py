@@ -25,10 +25,7 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from cache_state import symbols_cache_get, symbols_cache_set
-from classify import classify_point as _classify_point_core
 from constants import (
-    CAPE_CONV_THRESHOLD,
-    CEILING_VALID_MAX_METERS,
     CELL_SIZES_BY_ZOOM,
     EMAGRAM_D2_LEVELS_HPA,
     G0,
@@ -38,7 +35,7 @@ from constants import (
     WORLD_GRID_ANCHOR_LAT,
     WORLD_GRID_ANCHOR_LON,
 )
-from grid_aggregation import build_grid_context, choose_cell_groups, scatter_cell_stats, scatter_best_symbol
+from grid_aggregation import build_grid_context, choose_cell_groups
 from grid_utils import bbox_indices as _bbox_indices, slice_array as _slice_array
 from services.symbol_ops import (
     filter_symbols_to_bbox,
@@ -48,9 +45,8 @@ from services.symbol_ops import (
     symbols_bin_bbox,
     symbols_bin_indices_for_bbox,
 )
-from symbol_logic import SYMBOL_CODE_RANK_LUT, SYMBOL_CODE_TO_TYPE, aggregate_symbol_cell
 from convective_filters import filter_hbas_with_mh
-from weather_codes import ww_to_symbol, ww_severity_rank
+from services.symbol_compute import compute_symbols_payload
 
 
 def _load_coverage_damping_cfg() -> dict:
@@ -201,474 +197,38 @@ def build_weather_router(
             )
             return out_payload
 
-        t_load0 = perf_counter()
-        d = load_data(run, step, model_used, keys=symbol_keys)
-        t_load_ms += (perf_counter() - t_load0) * 1000.0
-
-        lat = d["lat"]
-        lon = d["lon"]
-        d2_lat_min = float(d.get("_latMin", np.min(lat)))
-        d2_lat_max = float(d.get("_latMax", np.max(lat)))
-        d2_lon_min = float(d.get("_lonMin", np.min(lon)))
-        d2_lon_max = float(d.get("_lonMax", np.max(lon)))
-
-        if is_native_zoom:
-            li_native, lo_native = _bbox_indices(lat, lon, req_lat_min, req_lon_min, req_lat_max, req_lon_max)
-            if li_native is not None and len(li_native) == 0:
-                return {
-                    "symbols": [], "run": run, "model": model_used, "validTime": d["validTime"],
-                    "cellSize": cell_size, "count": 0,
-                    "diagnostics": {
-                        "dataFreshnessMinutes": _freshness_minutes_from_run(run),
-                        "fallbackDecision": "primary_model_only",
-                        "requestedModel": model,
-                        "requestedTime": time,
-                        "sourceModel": model_used,
-                        "strictWindowHours": EU_STRICT_MAX_DELTA_HOURS,
-                        "euDataMissing": False,
-                        "euCells": 0,
-                        "d2Cells": 0,
-                        "euShare": 0.0,
-                        "timingsMs": {"load": round(t_load_ms, 2), "grid": 0.0, "aggregate": 0.0},
-                        "servedFrom": "computed",
-                        "symbolMode": "native",
-                    },
-                }
-
-            c_lat_native = lat[li_native] if li_native is not None else lat
-            c_lon_native = lon[lo_native] if lo_native is not None else lon
-            sym_code_native = _slice_array(d["sym_code"], li_native, lo_native) if "sym_code" in d else None
-            cb_hm_native = _slice_array(d["cb_hm"], li_native, lo_native) if "cb_hm" in d else None
-            ww_native = _slice_array(d["ww"], li_native, lo_native) if "ww" in d else None
-            htop_dc_native = _slice_array(d["htop_dc"], li_native, lo_native) if "htop_dc" in d else None
-
-            native_symbols: List[dict] = []
-            if sym_code_native is not None:
-                for ii, plat in enumerate(c_lat_native):
-                    for jj, plon in enumerate(c_lon_native):
-                        code = int(sym_code_native[ii, jj])
-                        if code < 0:
-                            continue
-                        sym = SYMBOL_CODE_TO_TYPE.get(code, "clear")
-                        cbv = int(cb_hm_native[ii, jj]) if cb_hm_native is not None else -1
-                        cb_hm = cbv if cbv >= 0 else None
-                        if sym == "blue_thermal" and htop_dc_native is not None and np.isfinite(htop_dc_native[ii, jj]):
-                            topv = float(htop_dc_native[ii, jj])
-                            cb_hm = int((topv + 50.0) / 100.0) if topv > 0 else None
-                        label = str(min(cb_hm, 99)) if cb_hm is not None else None
-                        max_ww = int(ww_native[ii, jj]) if (ww_native is not None and np.isfinite(ww_native[ii, jj])) else 0
-                        native_symbols.append({
-                            "lat": round(float(plat), 4),
-                            "lon": round(float(plon), 4),
-                            "clickLat": round(float(plat), 4),
-                            "clickLon": round(float(plon), 4),
-                            "type": sym,
-                            "ww": max_ww,
-                            "cloudBase": cb_hm,
-                            "label": label,
-                            "clickable": True,
-                            "sourceModel": "icon_d2",
-                        })
-
-            result = {
-                "symbols": native_symbols,
-                "run": run,
-                "model": model_used,
-                "validTime": d["validTime"],
-                "cellSize": cell_size,
-                "count": len(native_symbols),
-                "diagnostics": {
-                    "dataFreshnessMinutes": _freshness_minutes_from_run(run),
-                    "fallbackDecision": "primary_model_only",
-                    "requestedModel": model,
-                    "requestedTime": time,
-                    "sourceModel": model_used,
-                    "strictWindowHours": EU_STRICT_MAX_DELTA_HOURS,
-                    "euDataMissing": False,
-                    "euCells": 0,
-                    "d2Cells": len(native_symbols),
-                    "euShare": 0.0,
-                    "timingsMs": {"load": round(t_load_ms, 2), "grid": 0.0, "aggregate": 0.0},
-                    "servedFrom": "computed",
-                    "symbolMode": "native",
-                },
-            }
-            total_ms = (perf_counter() - t0) * 1000.0
-            logger.info("/api/symbols rid=%s served=computed zoom=%s mode=native count=%s totalMs=%.2f", rid, zoom, result["count"], total_ms)
-            return result
-
-        d_eu = None
-        c_lat_eu = c_lon_eu = None
-        ww_eu = ceil_arr_eu = c_clcl_eu = c_clcm_eu = c_clch_eu = None
-        c_cape_eu = c_htop_dc_eu = c_hbas_sc_eu = c_htop_sc_eu = c_lpi_eu = c_hsurf_eu = c_mh_eu = None
-        c_sym_code_eu = c_cb_hm_eu = None
-
-        pad = cell_size
-        li, lo = _bbox_indices(lat, lon, lat_min - pad, lon_min - pad, lat_max + pad, lon_max + pad)
-        if li is not None and len(li) == 0:
-            c_lat = np.array([], dtype=float)
-            c_lon = np.array([], dtype=float)
-            ww = np.zeros((0, 0), dtype=float)
-            ceil_arr = np.zeros((0, 0), dtype=float)
-            c_clcl = c_clcm = c_clch = c_cape = c_htop_dc = np.zeros((0, 0), dtype=float)
-            c_hbas_sc = c_htop_sc = c_lpi = c_hsurf = c_mh = np.zeros((0, 0), dtype=float)
-            c_sym_code = c_cb_hm = None
-        else:
-            c_lat = lat[li] if li is not None else lat
-            c_lon = lon[lo] if lo is not None else lon
-            ww = _slice_array(d["ww"], li, lo)
-            ceil_arr = _slice_array(d["ceiling"], li, lo)
-            c_clcl = _slice_array(d["clcl"], li, lo) if "clcl" in d else np.zeros_like(ww)
-            c_clcm = _slice_array(d["clcm"], li, lo) if "clcm" in d else np.zeros_like(ww)
-            c_clch = _slice_array(d["clch"], li, lo) if "clch" in d else np.zeros_like(ww)
-            c_cape = _slice_array(d["cape_ml"], li, lo) if "cape_ml" in d else np.zeros_like(ww)
-            c_htop_dc = _slice_array(d["htop_dc"], li, lo) if "htop_dc" in d else np.zeros_like(ww)
-            c_hbas_sc = _slice_array(d["hbas_sc"], li, lo) if "hbas_sc" in d else np.zeros_like(ww)
-            c_htop_sc = _slice_array(d["htop_sc"], li, lo) if "htop_sc" in d else np.zeros_like(ww)
-            c_lpi = (
-                _slice_array(d["lpi_max"], li, lo) if "lpi_max" in d
-                else (_slice_array(d["lpi"], li, lo) if "lpi" in d else np.zeros_like(ww))
-            )
-            c_hsurf = _slice_array(d["hsurf"], li, lo) if "hsurf" in d else np.zeros_like(ww)
-            c_mh = _slice_array(d["mh"], li, lo) if "mh" in d else np.zeros_like(ww)
-            c_sym_code = _slice_array(d["sym_code"], li, lo) if "sym_code" in d else None
-            c_cb_hm = _slice_array(d["cb_hm"], li, lo) if "cb_hm" in d else None
-
-        # Keep weather.py fallback classification aligned with ingest-time hbas filtering.
-        if c_hbas_sc is not None and c_hsurf is not None and c_mh is not None:
-            c_hbas_sc, _ = filter_hbas_with_mh(c_hbas_sc, c_hsurf, c_mh, margin_m=500.0, hard_cap_agl_m=6500.0)
-
-        eu_data_missing = False
-        if model_used == "icon_d2":
-            # Cheap EU-skip gate: if viewport is well inside D2 and D2 signal density is high,
-            # skip EU fallback entirely for this request.
-            bbox_inside_d2 = (
-                lat_min >= d2_lat_min and lat_max <= d2_lat_max
-                and lon_min >= d2_lon_min and lon_max <= d2_lon_max
-            )
-            finite_ratio = float(np.mean(np.isfinite(ww))) if ww.size else 0.0
-            allow_eu_fallback = not (bbox_inside_d2 and finite_ratio >= 0.995)
-
-            needs_eu_for_coverage = (
-                (lat_min - pad) < d2_lat_min or (lat_max + pad) > d2_lat_max
-                or (lon_min - pad) < d2_lon_min or (lon_max + pad) > d2_lon_max
-            )
-            needs_eu_for_signal = bool(ww.size) and bool(np.any(~np.isfinite(ww)))
-            if allow_eu_fallback and (needs_eu_for_coverage or needs_eu_for_signal):
-                try:
-                    eu_fb = _load_eu_data_strict(time, symbol_keys)
-                    if eu_fb is not None and eu_fb.get("missing"):
-                        eu_data_missing = True
-                        eu_fb = None
-                    if eu_fb is not None:
-                        d_eu = eu_fb["data"]
-                        lat_eu = d_eu["lat"]
-                        lon_eu = d_eu["lon"]
-                        li_eu, lo_eu = _bbox_indices(lat_eu, lon_eu, lat_min - pad, lon_min - pad, lat_max + pad, lon_max + pad)
-                        if not (li_eu is not None and len(li_eu) == 0):
-                            c_lat_eu = lat_eu[li_eu] if li_eu is not None else lat_eu
-                            c_lon_eu = lon_eu[lo_eu] if lo_eu is not None else lon_eu
-                            ww_eu = _slice_array(d_eu["ww"], li_eu, lo_eu)
-                            ceil_arr_eu = _slice_array(d_eu["ceiling"], li_eu, lo_eu)
-                            c_clcl_eu = _slice_array(d_eu["clcl"], li_eu, lo_eu) if "clcl" in d_eu else np.zeros_like(ww_eu)
-                            c_clcm_eu = _slice_array(d_eu["clcm"], li_eu, lo_eu) if "clcm" in d_eu else np.zeros_like(ww_eu)
-                            c_clch_eu = _slice_array(d_eu["clch"], li_eu, lo_eu) if "clch" in d_eu else np.zeros_like(ww_eu)
-                            c_cape_eu = _slice_array(d_eu["cape_ml"], li_eu, lo_eu) if "cape_ml" in d_eu else np.zeros_like(ww_eu)
-                            c_htop_dc_eu = _slice_array(d_eu["htop_dc"], li_eu, lo_eu) if "htop_dc" in d_eu else np.zeros_like(ww_eu)
-                            c_hbas_sc_eu = _slice_array(d_eu["hbas_sc"], li_eu, lo_eu) if "hbas_sc" in d_eu else np.zeros_like(ww_eu)
-                            c_htop_sc_eu = _slice_array(d_eu["htop_sc"], li_eu, lo_eu) if "htop_sc" in d_eu else np.zeros_like(ww_eu)
-                            c_lpi_eu = (
-                                _slice_array(d_eu["lpi_max"], li_eu, lo_eu) if "lpi_max" in d_eu
-                                else (_slice_array(d_eu["lpi"], li_eu, lo_eu) if "lpi" in d_eu else np.zeros_like(ww_eu))
-                            )
-                            c_hsurf_eu = _slice_array(d_eu["hsurf"], li_eu, lo_eu) if "hsurf" in d_eu else np.zeros_like(ww_eu)
-                            c_mh_eu = _slice_array(d_eu["mh"], li_eu, lo_eu) if "mh" in d_eu else np.zeros_like(ww_eu)
-                            c_hbas_sc_eu, _ = filter_hbas_with_mh(c_hbas_sc_eu, c_hsurf_eu, c_mh_eu, margin_m=500.0, hard_cap_agl_m=6500.0)
-                            c_sym_code_eu = _slice_array(d_eu["sym_code"], li_eu, lo_eu) if "sym_code" in d_eu else None
-                            c_cb_hm_eu = _slice_array(d_eu["cb_hm"], li_eu, lo_eu) if "cb_hm" in d_eu else None
-                except Exception:
-                    d_eu = None
-
-        t_grid0 = perf_counter()
-        ctx = build_grid_context(
-            lat=lat, lon=lon, c_lat=c_lat, c_lon=c_lon,
-            lat_min=lat_min, lon_min=lon_min, lat_max=lat_max, lon_max=lon_max,
-            cell_size=cell_size, zoom=zoom,
-            d2_lat_min=d2_lat_min, d2_lat_max=d2_lat_max,
-            d2_lon_min=d2_lon_min, d2_lon_max=d2_lon_max,
-            c_lat_eu=c_lat_eu if d_eu is not None else None,
-            c_lon_eu=c_lon_eu if d_eu is not None else None,
+        t_comp0 = perf_counter()
+        result = compute_symbols_payload(
+            zoom=zoom,
+            bbox=f"{lat_min},{lon_min},{lat_max},{lon_max}",
+            time=time,
+            model=model,
+            symbol_mode=symbol_mode,
+            resolve_time_with_cache_context=resolve_time_with_cache_context,
+            load_data=load_data,
+            load_eu_data_strict=_load_eu_data_strict,
+            freshness_minutes_from_run=_freshness_minutes_from_run,
+            strict_window_hours=EU_STRICT_MAX_DELTA_HOURS,
+            load_coverage_damping_cfg=_load_coverage_damping_cfg,
         )
-        t_grid_ms += (perf_counter() - t_grid0) * 1000.0
+        t_agg_ms += (perf_counter() - t_comp0) * 1000.0
 
-        # P0: always compute pre-pass — provides cell_max_ww / cell_any_cape /
-        # cell_any_ceil for O(1) per-cell fast-paths and EU-fallback gate.
-        _pre_d2: Any = scatter_cell_stats(
-            c_lat, c_lon, ctx, ww, c_cape, ceil_arr,
-            CAPE_CONV_THRESHOLD, CEILING_VALID_MAX_METERS,
-        )
-
-        _pre_eu: Any = None
-        if d_eu is not None and c_lat_eu is not None and ww_eu is not None:
-            _pre_eu = scatter_cell_stats(
-                c_lat_eu, c_lon_eu, ctx, ww_eu, c_cape_eu, ceil_arr_eu,
-                CAPE_CONV_THRESHOLD, CEILING_VALID_MAX_METERS,
-            )
-
-        # P1: vectorised per-cell best-symbol pre-scatter — O(N_grid) once,
-        # then O(1) lookup per cell in the loop (eliminates all np.ix_ calls
-        # in the fast path).
-        _best_sym_d2 = _best_cb_d2 = _best_lat_d2 = _best_lon_d2 = None
-        if c_sym_code is not None and c_cb_hm is not None:
-            _best_sym_d2, _best_cb_d2, _best_lat_d2, _best_lon_d2 = scatter_best_symbol(
-                c_lat, c_lon, ctx, c_sym_code, c_cb_hm, SYMBOL_CODE_RANK_LUT,
-                coverage_damping_enabled=_cd_cfg["enabled"],
-                coverage_min_fraction=_cd_cfg["min_fraction"],
-                coverage_rank_tolerance=_cd_cfg["rank_tolerance"],
-            )
-
-        _best_sym_eu = _best_cb_eu = _best_lat_eu = _best_lon_eu = None
-        if c_sym_code_eu is not None and c_cb_hm_eu is not None and c_lat_eu is not None and c_lon_eu is not None:
-            _best_sym_eu, _best_cb_eu, _best_lat_eu, _best_lon_eu = scatter_best_symbol(
-                c_lat_eu, c_lon_eu, ctx, c_sym_code_eu, c_cb_hm_eu, SYMBOL_CODE_RANK_LUT,
-                coverage_damping_enabled=_cd_cfg["enabled"],
-                coverage_min_fraction=_cd_cfg["min_fraction"],
-                coverage_rank_tolerance=_cd_cfg["rank_tolerance"],
-            )
-
-        t_agg0 = perf_counter()
-        symbols: List[dict] = []
-        used_eu_any = used_d2_any = False
-        used_eu_cells = used_d2_cells = 0
-
-        lat_edges = ctx.lat_edges
-        lon_edges = ctx.lon_edges
-
-        for i in range(ctx.lat_cell_count):
-            for j in range(ctx.lon_cell_count):
-                lat_lo, lat_hi = lat_edges[i], lat_edges[i + 1]
-                lon_lo, lon_hi = lon_edges[j], lon_edges[j + 1]
-                lat_c = (lat_lo + lat_hi) / 2
-                lon_c = (lon_lo + lon_hi) / 2
-
-                if lat_hi < lat_min or lat_lo > lat_max or lon_hi < lon_min or lon_lo > lon_max:
-                    continue
-
-                in_d2_domain = bool(ctx.in_d2_grid[i, j]) if ctx.in_d2_grid.size else False
-                use_eu, cli_list, clo_list = choose_cell_groups(
-                    ctx, i, j, prefer_eu=((not in_d2_domain) and (ctx.eu is not None)),
-                )
-
-                if use_eu:
-                    used_eu_any = True
-                    src_lat, src_lon = c_lat_eu, c_lon_eu
-                    src_ww, src_ceil = ww_eu, ceil_arr_eu
-                    src_clcl, src_clcm, src_clch = c_clcl_eu, c_clcm_eu, c_clch_eu
-                    src_cape, src_htop_dc = c_cape_eu, c_htop_dc_eu
-                    src_hbas_sc, src_htop_sc = c_hbas_sc_eu, c_htop_sc_eu
-                    src_lpi, src_hsurf, src_mh = c_lpi_eu, c_hsurf_eu, c_mh_eu
-                    src_sym_code, src_cb_hm = c_sym_code_eu, c_cb_hm_eu
-                else:
-                    src_lat, src_lon = c_lat, c_lon
-                    src_ww, src_ceil = ww, ceil_arr
-                    src_clcl, src_clcm, src_clch = c_clcl, c_clcm, c_clch
-                    src_cape, src_htop_dc = c_cape, c_htop_dc
-                    src_hbas_sc, src_htop_sc = c_hbas_sc, c_htop_sc
-                    src_lpi, src_hsurf, src_mh = c_lpi, c_hsurf, c_mh
-                    src_sym_code, src_cb_hm = c_sym_code, c_cb_hm
-
-                cli = np.asarray(cli_list, dtype=int) if cli_list else np.empty((0,), dtype=int)
-                clo = np.asarray(clo_list, dtype=int) if clo_list else np.empty((0,), dtype=int)
-
-                # Signal-based EU fallback for D2-selected cells with no finite ww
-                if (not use_eu) and (ctx.eu is not None) and len(cli) > 0 and len(clo) > 0:
-                    if np.isnan(_pre_d2[0][i, j]):
-                        use_eu = True
-                        used_eu_any = True
-                        src_lat, src_lon = c_lat_eu, c_lon_eu
-                        src_ww, src_ceil = ww_eu, ceil_arr_eu
-                        src_clcl, src_clcm, src_clch = c_clcl_eu, c_clcm_eu, c_clch_eu
-                        src_cape, src_htop_dc = c_cape_eu, c_htop_dc_eu
-                        src_hbas_sc, src_htop_sc = c_hbas_sc_eu, c_htop_sc_eu
-                        src_lpi, src_hsurf = c_lpi_eu, c_hsurf_eu
-                        src_sym_code, src_cb_hm = c_sym_code_eu, c_cb_hm_eu
-                        cli_list = ctx.eu.lat_groups[i]
-                        clo_list = ctx.eu.lon_groups[j]
-                        cli = np.asarray(cli_list, dtype=int) if cli_list else np.empty((0,), dtype=int)
-                        clo = np.asarray(clo_list, dtype=int) if clo_list else np.empty((0,), dtype=int)
-
-                if len(cli) == 0 or len(clo) == 0:
-                    continue
-
-                # ── Shared pre-pass lookup (available for both paths) ─────────
-                _pre = _pre_eu if (use_eu and _pre_eu is not None) else _pre_d2
-                _pre_max_ww  = float(_pre[0][i, j])
-                _pre_any_cape = bool(_pre[1][i, j])
-                _pre_any_ceil = bool(_pre[2][i, j])
-                max_ww = int(_pre_max_ww) if np.isfinite(_pre_max_ww) else 0
-
-                # ── P0/P1: fast path — ingest-precomputed sym_code / cb_hm ───
-                # O(1) lookup into pre-scattered arrays; zero np.ix_() calls.
-                _best_sym = _best_sym_eu if use_eu else _best_sym_d2
-                _best_cb  = _best_cb_eu  if use_eu else _best_cb_d2
-                _best_li  = _best_lat_eu if use_eu else _best_lat_d2
-                _best_lj  = _best_lon_eu if use_eu else _best_lon_d2
-
-                if _best_sym is not None and src_sym_code is not None and src_cb_hm is not None:
-                    code = int(_best_sym[i, j])
-                    sym  = SYMBOL_CODE_TO_TYPE.get(code, "clear")
-                    vcb  = int(_best_cb[i, j])
-                    cb_hm = vcb if vcb >= 0 else None
-
-                    # Representative point for clickLat/clickLon
-                    li_idx = int(_best_li[i, j])
-                    lj_idx = int(_best_lj[i, j])
-                    if li_idx >= 0 and lj_idx >= 0:
-                        best_ii, best_jj = li_idx, lj_idx
-                    else:
-                        best_ii = int(cli_list[len(cli_list) // 2])
-                        best_jj = int(clo_list[len(clo_list) // 2])
-
-                    if sym == "blue_thermal" and np.isfinite(src_htop_dc[best_ii, best_jj]):
-                        topv = float(src_htop_dc[best_ii, best_jj])
-                        cb_hm = int((topv + 50.0) / 100.0) if topv > 0 else None
-
-                else:
-                    # ── Legacy fallback: classify from raw arrays ─────────────
-                    # P0: clear fast-path (no sig-wx, no CAPE, no ceiling)
-                    if np.isnan(_pre_max_ww) or (_pre_max_ww <= 3 and not _pre_any_cape and not _pre_any_ceil):
-                        sym, cb_hm = "clear", None
-                        best_ii = int(cli_list[len(cli_list) // 2])
-                        best_jj = int(clo_list[len(clo_list) // 2])
-
-                    # P0: sig-wx fast-path — extract only ww, skip classification
-                    elif np.isfinite(_pre_max_ww) and _pre_max_ww > 10:
-                        cell_ww_only = src_ww[np.ix_(cli, clo)]
-                        sig_mask = np.isfinite(cell_ww_only) & (cell_ww_only > 10)
-                        if np.any(sig_mask):
-                            i_loc, j_loc = np.where(sig_mask)
-                            ww_vals = cell_ww_only[i_loc, j_loc].astype(int)
-                            k = max(
-                                range(len(ww_vals)),
-                                key=lambda idx: (ww_severity_rank(int(ww_vals[idx])), int(ww_vals[idx])),
-                            )
-                            sym = ww_to_symbol(int(ww_vals[k])) or "clear"
-                            best_ii = int(cli[int(i_loc[k])])
-                            best_jj = int(clo[int(j_loc[k])])
-                            max_ww  = int(ww_vals[k])
-                        else:
-                            sym = ww_to_symbol(max_ww) or "clear"
-                            best_ii = int(cli_list[len(cli_list) // 2])
-                            best_jj = int(clo_list[len(clo_list) // 2])
-                        cb_hm = None
-
-                    else:
-                        # Full cloud classification (cape or ceiling present)
-                        # P2: aggregate_symbol_cell now uses strided arrays only.
-                        cell_ww = src_ww[np.ix_(cli, clo)]
-                        max_ww  = int(np.nanmax(cell_ww)) if np.any(np.isfinite(cell_ww)) else 0
-                        sym, cb_hm, best_ii, best_jj = aggregate_symbol_cell(
-                            cli=cli, clo=clo, cell_ww=cell_ww,
-                            ceil_arr=src_ceil, c_clcl=src_clcl, c_clcm=src_clcm,
-                            c_clch=src_clch, c_cape=src_cape, c_htop_dc=src_htop_dc,
-                            c_hbas_sc=src_hbas_sc, c_htop_sc=src_htop_sc,
-                            c_lpi=src_lpi, c_hsurf=src_hsurf, c_mh=src_mh,
-                            classify_point_fn=_classify_point_core,
-                            zoom=zoom,
-                            pre_has_cape=_pre_any_cape,
-                            pre_has_ceil=_pre_any_ceil,
-                        )
-
-                label = None
-                if cb_hm is not None:
-                    cb_hm = min(cb_hm, 99)
-                    label = str(cb_hm)
-
-                plot_lat = float(lat_c)
-                plot_lon = float(lon_c)
-                rep_lat = float(src_lat[best_ii])
-                rep_lon = float(src_lon[best_jj])
-
-                source_model = "icon_eu" if (use_eu or model_used == "icon_eu") else "icon_d2"
-                if source_model == "icon_eu":
-                    used_eu_any = True
-                    used_eu_cells += 1
-                else:
-                    used_d2_any = True
-                    used_d2_cells += 1
-
-                symbols.append({
-                    "lat": round(plot_lat, 4),
-                    "lon": round(plot_lon, 4),
-                    "clickLat": round(rep_lat, 4),
-                    "clickLon": round(rep_lon, 4),
-                    "type": sym,
-                    "ww": max_ww,
-                    "cloudBase": cb_hm,
-                    "label": label,
-                    "clickable": True,
-                    "sourceModel": source_model,
-                })
-
-        t_agg_ms += (perf_counter() - t_agg0) * 1000.0
-
-        if used_eu_any and used_d2_any:
+        if result.get("diagnostics", {}).get("euCells") and result.get("diagnostics", {}).get("d2Cells"):
             fallback_stats["symbolsBlended"] += 1
 
-        effective_run = run
-        effective_valid_time = d["validTime"]
-        total_cells = used_eu_cells + used_d2_cells
-        eu_share = (used_eu_cells / total_cells) if total_cells else 0.0
-        significant_blend = used_eu_cells >= 3 and eu_share >= 0.03
-
-        if used_eu_any and not used_d2_any:
-            resolved_model = "icon_eu"
-            if d_eu is not None:
-                effective_run = d_eu.get("_run", run)
-                effective_valid_time = d_eu.get("validTime", d["validTime"])
-            fallback_decision = "eu_only_in_viewport"
-        elif used_eu_any and used_d2_any and significant_blend:
-            resolved_model = "ICON-D2 + EU"
-            fallback_decision = "blended_d2_eu"
-        elif used_eu_any and used_d2_any:
-            resolved_model = model_used
-            fallback_decision = "primary_model_with_eu_assist"
-        else:
-            resolved_model = model_used
-            fallback_decision = "primary_model_only"
-
         _set_fallback_current(
-            "symbols", fallback_decision,
-            source_model=resolved_model, detail={"requestedTime": time},
+            "symbols",
+            result.get("diagnostics", {}).get("fallbackDecision", "primary_model_only"),
+            source_model=result.get("model"),
+            detail={"requestedTime": time},
         )
 
-        result: Dict[str, Any] = {
-            "symbols": symbols,
-            "run": effective_run,
-            "model": resolved_model,
-            "validTime": effective_valid_time,
-            "cellSize": cell_size,
-            "count": len(symbols),
-            "diagnostics": {
-                "dataFreshnessMinutes": _freshness_minutes_from_run(effective_run),
-                "fallbackDecision": fallback_decision,
-                "requestedModel": model,
-                "requestedTime": time,
-                "sourceModel": resolved_model,
-                "strictWindowHours": EU_STRICT_MAX_DELTA_HOURS,
-                "euDataMissing": eu_data_missing,
-                "euCells": used_eu_cells,
-                "d2Cells": used_d2_cells,
-                "euShare": round(eu_share, 4),
-                "timingsMs": {
-                    "load": round(t_load_ms, 2),
-                    "grid": round(t_grid_ms, 2),
-                    "aggregate": round(t_agg_ms, 2),
-                },
-                "servedFrom": "computed",
-                "symbolMode": symbol_mode,
-            },
+        result.setdefault("diagnostics", {})["timingsMs"] = {
+            "load": round(t_load_ms, 2),
+            "grid": round(t_grid_ms, 2),
+            "aggregate": round(t_agg_ms, 2),
         }
+
         if symbols_cache_key:
             symbols_cache_set(symbols_cache_key, result)
 
