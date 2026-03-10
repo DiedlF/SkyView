@@ -57,6 +57,8 @@ def _compute_native_symbols_from_points(
     src_lpi: np.ndarray,
     src_hsurf: np.ndarray,
     src_mh: np.ndarray,
+    src_sym_code: np.ndarray | None = None,
+    src_cb_hm: np.ndarray | None = None,
     source_model: str = "icon_d2",
 ) -> list[dict]:
     symbols: list[dict] = []
@@ -65,7 +67,12 @@ def _compute_native_symbols_from_points(
             ww_v = float(src_ww[ii, jj]) if np.isfinite(src_ww[ii, jj]) else np.nan
             max_ww = int(ww_v) if np.isfinite(ww_v) else 0
 
-            if np.isfinite(ww_v) and ww_v > 10:
+            if src_sym_code is not None and src_cb_hm is not None:
+                code = int(src_sym_code[ii, jj]) if np.isfinite(src_sym_code[ii, jj]) else 0
+                sym = SYMBOL_CODE_TO_TYPE.get(code, "clear")
+                raw_cb = int(src_cb_hm[ii, jj]) if np.isfinite(src_cb_hm[ii, jj]) else -1
+                cb_hm = raw_cb if raw_cb >= 0 else None
+            elif np.isfinite(ww_v) and ww_v > 10:
                 sym = ww_to_symbol(int(ww_v)) or "clear"
                 cb_hm = None
             else:
@@ -252,6 +259,8 @@ def compute_symbols_payload(
             src_lpi=c_lpi,
             src_hsurf=c_hsurf,
             src_mh=c_mh,
+            src_sym_code=c_sym_code,
+            src_cb_hm=c_cb_hm,
             source_model=model_used,
         )
         native_symbols = d2_symbols
@@ -285,6 +294,8 @@ def compute_symbols_payload(
                     src_lpi=c_lpi_eu,
                     src_hsurf=c_hsurf_eu,
                     src_mh=c_mh_eu,
+                    src_sym_code=c_sym_code_eu,
+                    src_cb_hm=c_cb_hm_eu,
                     source_model="icon_eu",
                 )
                 d2_keys = {(s["lat"], s["lon"]) for s in d2_symbols}
