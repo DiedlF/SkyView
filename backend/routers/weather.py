@@ -46,22 +46,7 @@ from services.symbol_ops import (
     symbols_bin_indices_for_bbox,
 )
 from convective_filters import filter_hbas_with_mh
-from services.symbol_compute import compute_symbols_payload
-
-
-def _load_coverage_damping_cfg() -> dict:
-    cfg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ingest_config.yaml")
-    out = {"enabled": False, "min_fraction": 0.15, "rank_tolerance": 1}
-    try:
-        with open(cfg_path, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-        cd = ((cfg.get("symbol_aggregation") or {}).get("coverage_damping") or {})
-        out["enabled"] = bool(cd.get("enabled", out["enabled"]))
-        out["min_fraction"] = float(cd.get("min_fraction", out["min_fraction"]))
-        out["rank_tolerance"] = int(cd.get("rank_tolerance", out["rank_tolerance"]))
-    except Exception:
-        pass
-    return out
+from services.symbol_compute import compute_symbols_payload, load_coverage_damping_cfg
 
 
 def build_weather_router(
@@ -209,7 +194,7 @@ def build_weather_router(
             load_eu_data_strict=_load_eu_data_strict,
             freshness_minutes_from_run=_freshness_minutes_from_run,
             strict_window_hours=EU_STRICT_MAX_DELTA_HOURS,
-            load_coverage_damping_cfg=_load_coverage_damping_cfg,
+            load_coverage_damping_cfg=load_coverage_damping_cfg,
         )
         t_agg_ms += (perf_counter() - t_comp0) * 1000.0
 

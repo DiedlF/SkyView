@@ -8,8 +8,7 @@ import numpy as np
 
 import app
 from constants import LOW_ZOOM_GLOBAL_BBOX, CELL_SIZES_BY_ZOOM
-from routers.weather import _load_coverage_damping_cfg
-from services.symbol_compute import compute_symbols_payload
+from services.symbol_compute import compute_symbols_payload, load_coverage_damping_cfg
 from services.symbol_ops import symbols_bin_bbox, symbols_bin_indices_for_bbox, save_symbols_precomputed_bin
 
 
@@ -40,7 +39,7 @@ def _compute_symbols_payload_direct(*, api_model: str, valid_time: str, zoom: in
         load_eu_data_strict=app._load_eu_data_strict,
         freshness_minutes_from_run=app._freshness_minutes_from_run,
         strict_window_hours=app.EU_STRICT_MAX_DELTA_HOURS,
-        load_coverage_damping_cfg=_load_coverage_damping_cfg,
+        load_coverage_damping_cfg=load_coverage_damping_cfg,
     )
 
 

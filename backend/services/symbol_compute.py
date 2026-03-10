@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional
+import os
 
 import numpy as np
+import yaml
 
 from classify import classify_point as _classify_point_core
 from constants import (
@@ -16,6 +18,21 @@ from grid_aggregation import build_grid_context, choose_cell_groups, scatter_cel
 from grid_utils import bbox_indices as _bbox_indices, slice_array as _slice_array
 from symbol_logic import SYMBOL_CODE_RANK_LUT, SYMBOL_CODE_TO_TYPE, aggregate_symbol_cell
 from weather_codes import ww_to_symbol, ww_severity_rank
+
+def load_coverage_damping_cfg() -> dict:
+    cfg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ingest_config.yaml")
+    out = {"enabled": False, "min_fraction": 0.15, "rank_tolerance": 1}
+    try:
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        cd = ((cfg.get("symbol_aggregation") or {}).get("coverage_damping") or {})
+        out["enabled"] = bool(cd.get("enabled", out["enabled"]))
+        out["min_fraction"] = float(cd.get("min_fraction", out["min_fraction"]))
+        out["rank_tolerance"] = int(cd.get("rank_tolerance", out["rank_tolerance"]))
+    except Exception:
+        pass
+    return out
+
 
 SYMBOL_KEYS: list[str] = [
     "ww", "ceiling", "clcl", "clcm", "clch",
