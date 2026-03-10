@@ -7,7 +7,7 @@ import os
 import numpy as np
 import yaml
 
-from classify import classify_point as _classify_point_core
+from classify import classify_point as _classify_point_core, classify_point_with_base
 from constants import (
     CAPE_CONV_THRESHOLD,
     CEILING_VALID_MAX_METERS,
@@ -39,6 +39,82 @@ SYMBOL_KEYS: list[str] = [
     "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hsurf", "mh",
     "sym_code", "cb_hm",
 ]
+
+
+def _compute_native_symbols_from_points(
+    *,
+    src_lat: np.ndarray,
+    src_lon: np.ndarray,
+    src_ww: np.ndarray,
+    src_ceil: np.ndarray,
+    src_clcl: np.ndarray,
+    src_clcm: np.ndarray,
+    src_clch: np.ndarray,
+    src_cape: np.ndarray,
+    src_htop_dc: np.ndarray,
+    src_hbas_sc: np.ndarray,
+    src_htop_sc: np.ndarray,
+    src_lpi: np.ndarray,
+    src_hsurf: np.ndarray,
+    src_mh: np.ndarray,
+    src_sym_code: Optional[np.ndarray] = None,
+    src_cb_hm: Optional[np.ndarray] = None,
+    source_model: str = "icon_d2",
+) -> list[dict]:
+    symbols: list[dict] = []
+    for ii in range(len(src_lat)):
+        for jj in range(len(src_lon)):
+            ww_v = float(src_ww[ii, jj]) if np.isfinite(src_ww[ii, jj]) else np.nan
+            max_ww = int(ww_v) if np.isfinite(ww_v) else 0
+
+            sym = "clear"
+            cb_hm = None
+            if src_sym_code is not None and src_cb_hm is not None and np.isfinite(src_sym_code[ii, jj]):
+                code = int(src_sym_code[ii, jj])
+                sym = SYMBOL_CODE_TO_TYPE.get(code, "clear")
+                if np.isfinite(src_cb_hm[ii, jj]):
+                    vcb = int(src_cb_hm[ii, jj])
+                    cb_hm = vcb if vcb >= 0 else None
+
+            if sym == "clear":
+                if np.isfinite(ww_v) and ww_v > 10:
+                    sym = ww_to_symbol(int(ww_v)) or "clear"
+                    cb_hm = None
+                else:
+                    sym, cb_hm = classify_point_with_base(
+                        clcl=float(src_clcl[ii, jj]) if np.isfinite(src_clcl[ii, jj]) else 0.0,
+                        clcm=float(src_clcm[ii, jj]) if np.isfinite(src_clcm[ii, jj]) else 0.0,
+                        clch=float(src_clch[ii, jj]) if np.isfinite(src_clch[ii, jj]) else 0.0,
+                        cape_ml=float(src_cape[ii, jj]) if np.isfinite(src_cape[ii, jj]) else 0.0,
+                        htop_dc=float(src_htop_dc[ii, jj]) if np.isfinite(src_htop_dc[ii, jj]) else 0.0,
+                        hbas_sc=float(src_hbas_sc[ii, jj]) if np.isfinite(src_hbas_sc[ii, jj]) else 0.0,
+                        htop_sc=float(src_htop_sc[ii, jj]) if np.isfinite(src_htop_sc[ii, jj]) else 0.0,
+                        lpi=float(src_lpi[ii, jj]) if np.isfinite(src_lpi[ii, jj]) else 0.0,
+                        ceiling=float(src_ceil[ii, jj]) if np.isfinite(src_ceil[ii, jj]) else 0.0,
+                        hsurf=float(src_hsurf[ii, jj]) if np.isfinite(src_hsurf[ii, jj]) else 0.0,
+                        mh=float(src_mh[ii, jj]) if np.isfinite(src_mh[ii, jj]) else None,
+                    )
+            if sym == "clear":
+                continue
+            label = None
+            if cb_hm is not None:
+                cb_hm = min(cb_hm, 99)
+                label = str(cb_hm)
+            lat_v = float(src_lat[ii])
+            lon_v = float(src_lon[jj])
+            symbols.append({
+                "lat": round(lat_v, 4),
+                "lon": round(lon_v, 4),
+                "clickLat": round(lat_v, 4),
+                "clickLon": round(lon_v, 4),
+                "type": sym,
+                "ww": max_ww,
+                "cloudBase": cb_hm,
+                "label": label,
+                "clickable": True,
+                "sourceModel": source_model,
+            })
+    return symbols
 
 
 def compute_symbols_payload(
@@ -171,6 +247,102 @@ def compute_symbols_payload(
                     c_hbas_sc_eu, _ = filter_hbas_with_mh(c_hbas_sc_eu, c_hsurf_eu, c_mh_eu, margin_m=500.0, hard_cap_agl_m=6500.0)
                     c_sym_code_eu = _slice_array(d_eu["sym_code"], li_eu, lo_eu) if "sym_code" in d_eu else None
                     c_cb_hm_eu = _slice_array(d_eu["cb_hm"], li_eu, lo_eu) if "cb_hm" in d_eu else None
+
+    if symbol_mode == "native" and (c_sym_code is None or c_cb_hm is None or (d_eu is not None and (c_sym_code_eu is None or c_cb_hm_eu is None))):
+        d2_symbols = _compute_native_symbols_from_points(
+            src_lat=c_lat,
+            src_lon=c_lon,
+            src_ww=ww,
+            src_ceil=ceil_arr,
+            src_clcl=c_clcl,
+            src_clcm=c_clcm,
+            src_clch=c_clch,
+            src_cape=c_cape,
+            src_htop_dc=c_htop_dc,
+            src_hbas_sc=c_hbas_sc,
+            src_htop_sc=c_htop_sc,
+            src_lpi=c_lpi,
+            src_hsurf=c_hsurf,
+            src_mh=c_mh,
+            src_sym_code=c_sym_code,
+            src_cb_hm=c_cb_hm,
+            source_model=model_used,
+        )
+        native_symbols = d2_symbols
+        fallback_decision = "native_point_fallback_d2"
+        resolved_model = model_used
+        effective_run = run
+        effective_valid_time = d["validTime"]
+        eu_count = 0
+        d2_count = len(d2_symbols)
+
+        if d_eu is not None and c_lat_eu is not None and c_lon_eu is not None:
+            d2_lon_min_cov = float(np.min(c_lon)) if len(c_lon) else lon_min
+            d2_lon_max_cov = float(np.max(c_lon)) if len(c_lon) else lon_max
+            d2_lat_min_cov = float(np.min(c_lat)) if len(c_lat) else lat_min
+            d2_lat_max_cov = float(np.max(c_lat)) if len(c_lat) else lat_max
+            d2_interior_ok = bool(np.all(np.isfinite(ww))) if ww.size else False
+            need_eu_mix = (not d2_interior_ok) or (lat_min < d2_lat_min_cov) or (lat_max > d2_lat_max_cov) or (lon_min < d2_lon_min_cov) or (lon_max > d2_lon_max_cov)
+            if need_eu_mix:
+                eu_symbols = _compute_native_symbols_from_points(
+                    src_lat=c_lat_eu,
+                    src_lon=c_lon_eu,
+                    src_ww=ww_eu,
+                    src_ceil=ceil_arr_eu,
+                    src_clcl=c_clcl_eu,
+                    src_clcm=c_clcm_eu,
+                    src_clch=c_clch_eu,
+                    src_cape=c_cape_eu,
+                    src_htop_dc=c_htop_dc_eu,
+                    src_hbas_sc=c_hbas_sc_eu,
+                    src_htop_sc=c_htop_sc_eu,
+                    src_lpi=c_lpi_eu,
+                    src_hsurf=c_hsurf_eu,
+                    src_mh=c_mh_eu,
+                    src_sym_code=c_sym_code_eu,
+                    src_cb_hm=c_cb_hm_eu,
+                    source_model="icon_eu",
+                )
+                d2_keys = {(s["lat"], s["lon"]) for s in d2_symbols}
+                eu_only = [s for s in eu_symbols if (s["lat"], s["lon"]) not in d2_keys]
+                if eu_only:
+                    native_symbols = d2_symbols + eu_only
+                    eu_count = len(eu_only)
+                    d2_count = len(d2_symbols)
+                    fallback_decision = "native_point_fallback_blended"
+                    resolved_model = "ICON-D2 + EU"
+                elif not d2_symbols and eu_symbols:
+                    native_symbols = eu_symbols
+                    eu_count = len(eu_symbols)
+                    d2_count = 0
+                    fallback_decision = "native_point_fallback_eu"
+                    resolved_model = "icon_eu"
+                    effective_run = d_eu.get("_run", run)
+                    effective_valid_time = d_eu.get("validTime", d["validTime"])
+
+        total_native = eu_count + d2_count
+        return {
+            "symbols": native_symbols,
+            "run": effective_run,
+            "model": resolved_model,
+            "validTime": effective_valid_time,
+            "cellSize": cell_size,
+            "count": len(native_symbols),
+            "diagnostics": {
+                "dataFreshnessMinutes": freshness_minutes_from_run(effective_run),
+                "fallbackDecision": fallback_decision,
+                "requestedModel": model,
+                "requestedTime": time,
+                "sourceModel": resolved_model,
+                "strictWindowHours": strict_window_hours,
+                "euDataMissing": eu_data_missing,
+                "euCells": eu_count,
+                "d2Cells": d2_count,
+                "euShare": (round(eu_count / total_native, 4) if total_native else 0.0),
+                "servedFrom": "computed",
+                "symbolMode": symbol_mode,
+            },
+        }
 
     ctx = build_grid_context(
         lat=lat, lon=lon, c_lat=c_lat, c_lon=c_lon,

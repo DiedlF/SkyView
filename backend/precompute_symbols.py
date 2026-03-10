@@ -83,11 +83,6 @@ async def _run(model: str, run: str, zooms: list[int], steps_filter: set[int] | 
         print("Unsupported mode. Use --mode direct or --mode http.")
         return 2
 
-    symbols_endpoint = _resolve_symbols_endpoint() if mode == "direct" else None
-    if mode == "direct" and symbols_endpoint is None:
-        print("Could not resolve /api/symbols endpoint for direct mode.")
-        return 2
-
     for step, path in _iter_steps(run_dir):
         if steps_filter and step not in steps_filter:
             continue

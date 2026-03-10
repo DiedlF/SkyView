@@ -11,15 +11,13 @@ from __future__ import annotations
 import asyncio
 import json
 import math
-import os
 import threading
 import uuid
 from collections import OrderedDict
 from time import perf_counter
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 import numpy as np
-import yaml
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
@@ -45,7 +43,6 @@ from services.symbol_ops import (
     symbols_bin_bbox,
     symbols_bin_indices_for_bbox,
 )
-from convective_filters import filter_hbas_with_mh
 from services.symbol_compute import compute_symbols_payload, load_coverage_damping_cfg
 
 
