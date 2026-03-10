@@ -100,10 +100,8 @@ def aggregate_symbol_cell(
     # Adaptive stride for representative-point selection (P2: used for
     # detection too — the pre-pass pre_has_cape / pre_has_ceil guards
     # us against false-negative classification at low zoom).
-    if zoom >= 11:
+    if zoom >= 10:
         stride = 1
-    elif zoom >= 9:
-        stride = 2
     else:
         stride = 3
 
