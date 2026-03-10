@@ -437,6 +437,26 @@ def compute_symbols_payload(
                 else:
                     best_ii = int(cli_list[len(cli_list) // 2])
                     best_jj = int(clo_list[len(clo_list) // 2])
+
+                # Keep precomputed symbol selection fast, but validate/repair the
+                # displayed altitude from the unified point logic so stale
+                # sym_code/cb_hm pairs cannot produce inconsistent labels.
+                if sym in {"st", "ac", "ci", "cu_hum", "cu_con", "cb", "blue_thermal"}:
+                    recomputed_sym, recomputed_cb_hm = classify_point_with_base(
+                        clcl=float(src_clcl[best_ii, best_jj]) if np.isfinite(src_clcl[best_ii, best_jj]) else 0.0,
+                        clcm=float(src_clcm[best_ii, best_jj]) if np.isfinite(src_clcm[best_ii, best_jj]) else 0.0,
+                        clch=float(src_clch[best_ii, best_jj]) if np.isfinite(src_clch[best_ii, best_jj]) else 0.0,
+                        cape_ml=float(src_cape[best_ii, best_jj]) if np.isfinite(src_cape[best_ii, best_jj]) else 0.0,
+                        htop_dc=float(src_htop_dc[best_ii, best_jj]) if np.isfinite(src_htop_dc[best_ii, best_jj]) else 0.0,
+                        hbas_sc=float(src_hbas_sc[best_ii, best_jj]) if np.isfinite(src_hbas_sc[best_ii, best_jj]) else 0.0,
+                        htop_sc=float(src_htop_sc[best_ii, best_jj]) if np.isfinite(src_htop_sc[best_ii, best_jj]) else 0.0,
+                        lpi=float(src_lpi[best_ii, best_jj]) if np.isfinite(src_lpi[best_ii, best_jj]) else 0.0,
+                        ceiling=float(src_ceil[best_ii, best_jj]) if np.isfinite(src_ceil[best_ii, best_jj]) else 0.0,
+                        hsurf=float(src_hsurf[best_ii, best_jj]) if np.isfinite(src_hsurf[best_ii, best_jj]) else 0.0,
+                        mh=float(src_mh[best_ii, best_jj]) if np.isfinite(src_mh[best_ii, best_jj]) else None,
+                    )
+                    if recomputed_sym == sym:
+                        cb_hm = recomputed_cb_hm
             else:
                 if np.isnan(pre_max_ww) or (pre_max_ww <= 3 and not pre_any_cape and not pre_any_ceil):
                     sym, cb_hm = "clear", None
