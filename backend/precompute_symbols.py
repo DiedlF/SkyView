@@ -5,6 +5,7 @@ import os
 import argparse
 import asyncio
 import numpy as np
+from starlette.requests import Request
 
 import app
 from constants import LOW_ZOOM_GLOBAL_BBOX, CELL_SIZES_BY_ZOOM
@@ -25,7 +26,31 @@ def _iter_steps(run_dir: str):
             yield int(f[:-4]), os.path.join(run_dir, f)
 
 
-async def _run(model: str, run: str, zooms: list[int], steps_filter: set[int] | None = None, mode: str = "http"):
+def _resolve_symbols_endpoint():
+    for route in app.app.routes:
+        if getattr(route, "path", None) == "/api/symbols":
+            return getattr(route, "endpoint", None)
+    return None
+
+
+async def _call_symbols_direct(endpoint, *, zoom: int, bbox: str, valid_time: str, model: str):
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": "/api/symbols",
+        "raw_path": b"/api/symbols",
+        "query_string": b"",
+        "headers": [],
+        "client": ("127.0.0.1", 0),
+        "server": ("127.0.0.1", 8501),
+    }
+    request = Request(scope)
+    return await endpoint(request=request, zoom=zoom, bbox=bbox, time=str(valid_time), model=model)
+
+
+async def _run(model: str, run: str, zooms: list[int], steps_filter: set[int] | None = None, mode: str = "direct"):
     api_model = _model_api_name(model)
     run_dir = os.path.join(app.DATA_DIR, _model_dir_name(model), run)
     if not os.path.isdir(run_dir):
@@ -60,8 +85,13 @@ async def _run(model: str, run: str, zooms: list[int], steps_filter: set[int] | 
             cs,
         )
 
-    if mode != "http":
-        print("Unsupported mode. Use --mode http against a running backend.")
+    if mode not in {"direct", "http"}:
+        print("Unsupported mode. Use --mode direct or --mode http.")
+        return 2
+
+    symbols_endpoint = _resolve_symbols_endpoint() if mode == "direct" else None
+    if mode == "direct" and symbols_endpoint is None:
+        print("Could not resolve /api/symbols endpoint for direct mode.")
         return 2
 
     for step, path in _iter_steps(run_dir):
@@ -82,15 +112,25 @@ async def _run(model: str, run: str, zooms: list[int], steps_filter: set[int] | 
                 for bi, bj in bins_by_zoom.get(int(zoom), []):
                     b = symbols_bin_bbox(bi, bj, cs)
                     bbox = f"{b[0]},{b[1]},{b[2]},{b[3]}"
-                    base_url = os.environ.get("SKYVIEW_PRECOMPUTE_BASE_URL", "http://127.0.0.1:8501")
-                    import requests
-                    resp = requests.get(
-                        f"{base_url}/api/symbols",
-                        params={"zoom": zoom, "bbox": bbox, "time": str(valid_time), "model": api_model},
-                        timeout=60,
-                    )
-                    if resp.status_code != 200:
-                        raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
+                    params = {"zoom": zoom, "bbox": bbox, "time": str(valid_time), "model": api_model}
+                    if mode == "direct":
+                        _ = await _call_symbols_direct(
+                            symbols_endpoint,
+                            zoom=zoom,
+                            bbox=bbox,
+                            valid_time=str(valid_time),
+                            model=api_model,
+                        )
+                    else:
+                        base_url = os.environ.get("SKYVIEW_PRECOMPUTE_BASE_URL", "http://127.0.0.1:8501")
+                        import requests
+                        resp = requests.get(
+                            f"{base_url}/api/symbols",
+                            params=params,
+                            timeout=60,
+                        )
+                        if resp.status_code != 200:
+                            raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
                     done += 1
         except Exception as e:
             print(f"precompute failed {model} {run} step={step}: {e}")
@@ -104,7 +144,7 @@ def main():
     p.add_argument("--run", required=True)
     p.add_argument("--zooms", default="5,6,7,8,9")
     p.add_argument("--steps", default="", help="Optional comma-separated steps, e.g. 15 or 1,2,3")
-    p.add_argument("--mode", default="http", choices=["http"], help="Use the running backend API over HTTP")
+    p.add_argument("--mode", default="direct", choices=["direct", "http"], help="direct = in-process ASGI app call, http = running backend API")
     args = p.parse_args()
 
     zooms = [int(x) for x in args.zooms.split(",") if x.strip()]
