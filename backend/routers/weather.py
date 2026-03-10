@@ -169,6 +169,8 @@ def build_weather_router(
             )
             diag = dict(out_payload.get("diagnostics") or {})
             diag["symbolMode"] = symbol_mode
+            if served_from is not None:
+                diag["servedFrom"] = served_from
             out_payload["diagnostics"] = diag
             total_ms = (perf_counter() - t0) * 1000.0
             logger.info(

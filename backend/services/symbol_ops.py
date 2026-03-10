@@ -219,8 +219,7 @@ def filter_symbols_to_bbox(
         d2Cells=d2_cells,
         euShare=round(eu_share, 4),
     )
-    if "servedFrom" not in diag:
-        diag["servedFrom"] = "cache"
+    diag["servedFrom"] = "cache"
     out["diagnostics"] = diag
     return out
 
