@@ -453,10 +453,25 @@ def compute_symbols_payload(
                     best_ii = int(cli_list[len(cli_list) // 2])
                     best_jj = int(clo_list[len(clo_list) // 2])
 
-                # Keep precomputed symbol selection fast, but validate/repair the
-                # displayed altitude from the unified point logic so stale
-                # sym_code/cb_hm pairs cannot produce inconsistent labels.
+                # For aggregated modes, keep the fast winning symbol-class choice
+                # but derive a stable displayed altitude from all points in the
+                # cell that share that winning symbol code. This avoids cb_hm
+                # jitter caused by arbitrary representative-point tie breaks.
                 if sym in {"st", "ac", "ci", "cu_hum", "cu_con", "cb", "blue_thermal"}:
+                    cell_codes = src_sym_code[np.ix_(cli, clo)]
+                    same_code_mask = np.isfinite(cell_codes) & (cell_codes.astype(np.int16) == code)
+                    if np.any(same_code_mask):
+                        cell_cb_vals = src_cb_hm[np.ix_(cli, clo)]
+                        valid_cb = cell_cb_vals[same_code_mask]
+                        valid_cb = valid_cb[np.isfinite(valid_cb) & (valid_cb >= 0)]
+                        if valid_cb.size:
+                            cb_hm = int(np.rint(np.median(valid_cb)))
+                        else:
+                            cb_hm = None
+
+                    # Keep semantic repair as a fallback for stale/invalid
+                    # precomputed cb_hm, but only if the selected representative
+                    # point still agrees on the symbol family.
                     recomputed_sym, recomputed_cb_hm = classify_point_with_base(
                         clcl=float(src_clcl[best_ii, best_jj]) if np.isfinite(src_clcl[best_ii, best_jj]) else 0.0,
                         clcm=float(src_clcm[best_ii, best_jj]) if np.isfinite(src_clcm[best_ii, best_jj]) else 0.0,
@@ -470,7 +485,7 @@ def compute_symbols_payload(
                         hsurf=float(src_hsurf[best_ii, best_jj]) if np.isfinite(src_hsurf[best_ii, best_jj]) else 0.0,
                         mh=float(src_mh[best_ii, best_jj]) if np.isfinite(src_mh[best_ii, best_jj]) else None,
                     )
-                    if recomputed_sym == sym:
+                    if cb_hm is None and recomputed_sym == sym:
                         cb_hm = recomputed_cb_hm
             else:
                 if np.isnan(pre_max_ww) or (pre_max_ww <= 3 and not pre_any_cape and not pre_any_ceil):
