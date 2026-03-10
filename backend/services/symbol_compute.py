@@ -57,8 +57,6 @@ def _compute_native_symbols_from_points(
     src_lpi: np.ndarray,
     src_hsurf: np.ndarray,
     src_mh: np.ndarray,
-    src_sym_code: Optional[np.ndarray] = None,
-    src_cb_hm: Optional[np.ndarray] = None,
     source_model: str = "icon_d2",
 ) -> list[dict]:
     symbols: list[dict] = []
@@ -67,33 +65,23 @@ def _compute_native_symbols_from_points(
             ww_v = float(src_ww[ii, jj]) if np.isfinite(src_ww[ii, jj]) else np.nan
             max_ww = int(ww_v) if np.isfinite(ww_v) else 0
 
-            sym = "clear"
-            cb_hm = None
-            if src_sym_code is not None and src_cb_hm is not None and np.isfinite(src_sym_code[ii, jj]):
-                code = int(src_sym_code[ii, jj])
-                sym = SYMBOL_CODE_TO_TYPE.get(code, "clear")
-                if np.isfinite(src_cb_hm[ii, jj]):
-                    vcb = int(src_cb_hm[ii, jj])
-                    cb_hm = vcb if vcb >= 0 else None
-
-            if sym == "clear":
-                if np.isfinite(ww_v) and ww_v > 10:
-                    sym = ww_to_symbol(int(ww_v)) or "clear"
-                    cb_hm = None
-                else:
-                    sym, cb_hm = classify_point_with_base(
-                        clcl=float(src_clcl[ii, jj]) if np.isfinite(src_clcl[ii, jj]) else 0.0,
-                        clcm=float(src_clcm[ii, jj]) if np.isfinite(src_clcm[ii, jj]) else 0.0,
-                        clch=float(src_clch[ii, jj]) if np.isfinite(src_clch[ii, jj]) else 0.0,
-                        cape_ml=float(src_cape[ii, jj]) if np.isfinite(src_cape[ii, jj]) else 0.0,
-                        htop_dc=float(src_htop_dc[ii, jj]) if np.isfinite(src_htop_dc[ii, jj]) else 0.0,
-                        hbas_sc=float(src_hbas_sc[ii, jj]) if np.isfinite(src_hbas_sc[ii, jj]) else 0.0,
-                        htop_sc=float(src_htop_sc[ii, jj]) if np.isfinite(src_htop_sc[ii, jj]) else 0.0,
-                        lpi=float(src_lpi[ii, jj]) if np.isfinite(src_lpi[ii, jj]) else 0.0,
-                        ceiling=float(src_ceil[ii, jj]) if np.isfinite(src_ceil[ii, jj]) else 0.0,
-                        hsurf=float(src_hsurf[ii, jj]) if np.isfinite(src_hsurf[ii, jj]) else 0.0,
-                        mh=float(src_mh[ii, jj]) if np.isfinite(src_mh[ii, jj]) else None,
-                    )
+            if np.isfinite(ww_v) and ww_v > 10:
+                sym = ww_to_symbol(int(ww_v)) or "clear"
+                cb_hm = None
+            else:
+                sym, cb_hm = classify_point_with_base(
+                    clcl=float(src_clcl[ii, jj]) if np.isfinite(src_clcl[ii, jj]) else 0.0,
+                    clcm=float(src_clcm[ii, jj]) if np.isfinite(src_clcm[ii, jj]) else 0.0,
+                    clch=float(src_clch[ii, jj]) if np.isfinite(src_clch[ii, jj]) else 0.0,
+                    cape_ml=float(src_cape[ii, jj]) if np.isfinite(src_cape[ii, jj]) else 0.0,
+                    htop_dc=float(src_htop_dc[ii, jj]) if np.isfinite(src_htop_dc[ii, jj]) else 0.0,
+                    hbas_sc=float(src_hbas_sc[ii, jj]) if np.isfinite(src_hbas_sc[ii, jj]) else 0.0,
+                    htop_sc=float(src_htop_sc[ii, jj]) if np.isfinite(src_htop_sc[ii, jj]) else 0.0,
+                    lpi=float(src_lpi[ii, jj]) if np.isfinite(src_lpi[ii, jj]) else 0.0,
+                    ceiling=float(src_ceil[ii, jj]) if np.isfinite(src_ceil[ii, jj]) else 0.0,
+                    hsurf=float(src_hsurf[ii, jj]) if np.isfinite(src_hsurf[ii, jj]) else 0.0,
+                    mh=float(src_mh[ii, jj]) if np.isfinite(src_mh[ii, jj]) else None,
+                )
             if sym == "clear":
                 continue
             label = None
@@ -264,8 +252,6 @@ def compute_symbols_payload(
             src_lpi=c_lpi,
             src_hsurf=c_hsurf,
             src_mh=c_mh,
-            src_sym_code=c_sym_code,
-            src_cb_hm=c_cb_hm,
             source_model=model_used,
         )
         native_symbols = d2_symbols
@@ -299,8 +285,6 @@ def compute_symbols_payload(
                     src_lpi=c_lpi_eu,
                     src_hsurf=c_hsurf_eu,
                     src_mh=c_mh_eu,
-                    src_sym_code=c_sym_code_eu,
-                    src_cb_hm=c_cb_hm_eu,
                     source_model="icon_eu",
                 )
                 d2_keys = {(s["lat"], s["lon"]) for s in d2_symbols}
