@@ -37,10 +37,14 @@ def symbols_bin_span(cell_size: float) -> float:
 def symbols_bin_indices_for_bbox(lat_min: float, lon_min: float, lat_max: float, lon_max: float, cell_size: float):
     span = symbols_bin_span(cell_size)
     lat0, lon0 = -90.0, -180.0
+    # Treat the max edges as exclusive so a bbox that lands exactly on a bin
+    # boundary does not spuriously include the next bin.
+    lat_max_in = math.nextafter(float(lat_max), float("-inf"))
+    lon_max_in = math.nextafter(float(lon_max), float("-inf"))
     i0 = int(math.floor((lat_min - lat0) / span))
-    i1 = int(math.floor((lat_max - lat0) / span))
+    i1 = int(math.floor((lat_max_in - lat0) / span))
     j0 = int(math.floor((lon_min - lon0) / span))
-    j1 = int(math.floor((lon_max - lon0) / span))
+    j1 = int(math.floor((lon_max_in - lon0) / span))
     out = []
     for i in range(i0, i1 + 1):
         for j in range(j0, j1 + 1):
