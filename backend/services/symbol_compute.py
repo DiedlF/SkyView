@@ -132,7 +132,11 @@ def compute_symbols_payload(
         raise ValueError("bbox: lat_min,lon_min,lat_max,lon_max")
     req_lat_min, req_lon_min, req_lat_max, req_lon_max = map(float, parts)
     lat_min, lon_min, lat_max, lon_max = req_lat_min, req_lon_min, req_lat_max, req_lon_max
-    pad = cell_size * 0.5
+    # For aggregated symbol modes, load at least one full cell around the
+    # request so every visible world-fixed aggregation cell sees its complete
+    # native candidate set. Half-cell padding can clip edge cells differently
+    # across tiny pans, causing z10/z11 winner fluctuations.
+    pad = cell_size if symbol_mode != "native" else (cell_size * 0.5)
 
     requested_model_for_mode = "icon_d2" if symbol_mode == "native" else model
     run, step, model_used = resolve_time_with_cache_context(time, requested_model_for_mode)
