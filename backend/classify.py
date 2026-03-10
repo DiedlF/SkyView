@@ -20,7 +20,7 @@ logger = setup_logging(__name__, level="WARNING")
 def _meters_to_hm_scalar(value: float) -> int | None:
     if not np.isfinite(value) or value <= 0:
         return None
-    hm = int(np.floor(max(float(value), 0.0) / 100.0))
+    hm = int(np.floor((max(float(value), 0.0) + 50.0) / 100.0))
     if hm > 150:
         return None
     return hm
@@ -30,7 +30,7 @@ def _meters_to_hm_array(values: np.ndarray) -> np.ndarray:
     base_hm = np.full(values.shape, -1, dtype=np.int16)
     finite = np.isfinite(values) & (values > 0)
     if np.any(finite):
-        vals = np.floor(np.maximum(values[finite], 0) / 100)
+        vals = np.floor((np.maximum(values[finite], 0) + 50.0) / 100.0)
         vals = np.clip(vals, 0, 32767).astype(np.int16)
         base_hm[finite] = vals
     base_hm[base_hm > 150] = -1
@@ -82,16 +82,8 @@ def classify_point_with_base(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_s
         if np.isfinite(clch) and clch >= 30:
             return "ci", cb_hm
 
-    # Fallback: if a valid ceiling exists but the band-matched layer is below
-    # threshold, still emit the strongest remaining cloud layer instead of
-    # collapsing to clear. Prefer lower layers because they are operationally
-    # more relevant on the map.
-    if np.isfinite(clcl) and clcl >= 30:
-        return "st", cb_hm
-    if np.isfinite(clcm) and clcm >= 30:
-        return "ac", cb_hm
-    if np.isfinite(clch) and clch >= 30:
-        return "ci", cb_hm
+    # Ceiling context wins for stratiform classification. If the band-matched
+    # layer does not clear threshold, do not fall back to another band.
     return "clear", None
 
 
