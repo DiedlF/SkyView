@@ -21,8 +21,6 @@ def _meters_to_hm_scalar(value: float) -> int | None:
     if not np.isfinite(value) or value <= 0:
         return None
     hm = int(np.floor((max(float(value), 0.0) + 50.0) / 100.0))
-    if hm > 150:
-        return None
     return hm
 
 
@@ -33,7 +31,6 @@ def _meters_to_hm_array(values: np.ndarray) -> np.ndarray:
         vals = np.floor((np.maximum(values[finite], 0) + 50.0) / 100.0)
         vals = np.clip(vals, 0, 32767).astype(np.int16)
         base_hm[finite] = vals
-    base_hm[base_hm > 150] = -1
     return base_hm
 
 
