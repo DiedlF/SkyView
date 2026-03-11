@@ -600,12 +600,24 @@ function parseRunToDate(run) {
 
 // Update info panel zoom/grid
 const CELL_KM = {5:200, 6:110, 7:55, 8:28, 9:13, 10:7, 11:3, 12:2};
+function updateInfoPanel() {
+  const info = document.getElementById('overlay-substep-info');
+  const sep = document.getElementById('overlay-substep-sep');
+  if (!info || !sep) return;
+  const layer = getEffectiveOverlayLayer();
+  const active = overlaySupportsSubsteps(layer) && overlaySubstepMinutes > 0;
+  info.style.display = active ? '' : 'none';
+  sep.style.display = active ? '' : 'none';
+  if (active) info.textContent = `Overlay substep: +${overlaySubstepMinutes} min`;
+}
+
 function updateZoom() {
   const z = map.getZoom();
   document.getElementById('zoom-grid').textContent = `Z${z}, ${CELL_KM[z] || 2}km`;
 }
 map.on('zoomend', updateZoom);
 updateZoom(); // initial
+updateInfoPanel();
 
 // Load model capabilities
 async function loadModelCapabilities() {
@@ -1503,6 +1515,7 @@ if (precipType) {
   precipType.addEventListener('change', () => {
     if (currentOverlay === 'precip') {
       updateLegend();
+      updateInfoPanel();
       loadOverlay();
     }
   });
@@ -1513,6 +1526,7 @@ if (cloudsType) {
   cloudsType.addEventListener('change', () => {
     if (currentOverlay === 'clouds') {
       updateLegend();
+      updateInfoPanel();
       loadOverlay();
     }
   });
@@ -1776,7 +1790,7 @@ const nowcastClose = document.getElementById('nowcast-close');
 const nowcastTitle = document.getElementById('nowcast-title');
 const nowcastBody = document.getElementById('nowcast-body');
 let emagramState = { open: false, lat: null, lon: null, model: '', zoom: null, loading: false, reqId: 0, allowedIndices: [] };
-let meteogramState = { open: false, lat: null, lon: null, model: '', abortCtrl: null };
+let meteogramState = { open: false, lat: null, lon: null, model: '', abortCtrl: null, chartTemp: null, chartPrecip: null, chartWind: null };
 let nowcastState = { open: false, lat: null, lon: null, model: '', abortCtrl: null, chartA: null, chartB: null };
 const emagramCache = new Map();
 const meteogramCache = new Map();
@@ -1826,6 +1840,9 @@ function closeMeteogram() {
     try { meteogramState.abortCtrl.abort(); } catch {}
     meteogramState.abortCtrl = null;
   }
+  if (meteogramState.chartTemp) { try { meteogramState.chartTemp.destroy(); } catch {} meteogramState.chartTemp = null; }
+  if (meteogramState.chartPrecip) { try { meteogramState.chartPrecip.destroy(); } catch {} meteogramState.chartPrecip = null; }
+  if (meteogramState.chartWind) { try { meteogramState.chartWind.destroy(); } catch {} meteogramState.chartWind = null; }
   if (meteogramOverlay) meteogramOverlay.style.display = 'none';
 }
 
@@ -2218,6 +2235,28 @@ function chartSeriesValues(series, key) {
   });
 }
 
+function formatChartValue(v, decimals = 0, suffix = '') {
+  return (v == null || !Number.isFinite(Number(v))) ? '—' : `${Number(v).toFixed(decimals)}${suffix}`;
+}
+
+function bindHoverReadout(chart, sourceSeries, formatter) {
+  if (!chart) return;
+  const update = () => {
+    const idx = chart.cursor?.idx;
+    if (idx == null || idx < 0 || idx >= sourceSeries.length) return;
+    const el = document.getElementById('chart-hover-readout');
+    if (!el) return;
+    el.textContent = formatter(sourceSeries[idx]);
+  };
+  const orig = chart.setCursor?.bind(chart);
+  if (!orig) return;
+  chart.setCursor = function(opts, fireHook) {
+    const out = orig(opts, fireHook);
+    try { update(); } catch (_e) {}
+    return out;
+  };
+}
+
 function renderNowcastCharts(series) {
   if (!window.uPlot || !Array.isArray(series) || !series.length) return false;
   const chartAEl = document.getElementById('nowcast-chart-a');
@@ -2233,6 +2272,7 @@ function renderNowcastCharts(series) {
     height: 220,
     tzDate: ts => new Date(ts * 1000),
     scales: { x: { time: true } },
+    sync: { key: 'skyview-nowcast-sync' },
     axes: [
       { stroke: 'rgba(255,255,255,0.55)', grid: { stroke: 'rgba(255,255,255,0.08)' } },
       { stroke: 'rgba(255,255,255,0.55)', grid: { stroke: 'rgba(255,255,255,0.08)' } },
@@ -2262,6 +2302,13 @@ function renderNowcastCharts(series) {
       { label: 'Thickness', stroke: '#ffa657', width: 2 },
     ],
   }, [xs, chartSeriesValues(series, 'hbasSc'), chartSeriesValues(series, 'cloudThickness')], chartBEl);
+
+  const readoutFmt = (row) => {
+    const t = String(row.validTime || '').slice(11, 16);
+    return `${t} · CAPE ${formatChartValue(row.capeMl, 0)} J/kg · CIN ${formatChartValue(row.cinMl, 0)} J/kg · LPI ${formatChartValue(row.lpi, 1)} · hbas ${formatChartValue(row.hbasSc, 0, ' m')} · thick ${formatChartValue(row.cloudThickness, 0, ' m')}`;
+  };
+  bindHoverReadout(nowcastState.chartA, series, readoutFmt);
+  bindHoverReadout(nowcastState.chartB, series, readoutFmt);
   return true;
 }
 
@@ -2294,7 +2341,13 @@ async function openMeteogramAt(lat, lon, model = 'icon_d2') {
     const glat = (p.gridLat ?? lat);
     const glon = (p.gridLon ?? lon);
     if (meteogramTitle) meteogramTitle.textContent = `Meteogram · ${glat}, ${glon} · ${String(modelUsed).toUpperCase().replace('_','-')} · Run ${runUsed}`;
-    meteogramBody.innerHTML = renderMeteogramSvg(data.series || []);
+    meteogramBody.innerHTML = `
+      <div class="nowcast-meta">Point ${glat}, ${glon} · run ${runUsed}</div>
+      <div id="chart-hover-readout" class="nowcast-meta">Hover a chart to inspect values.</div>
+      <div id="meteogram-chart-temp" class="nowcast-chart"></div>
+      <div id="meteogram-chart-precip" class="nowcast-chart"></div>
+      <div id="meteogram-chart-wind" class="nowcast-chart"></div>`;
+    renderMeteogramCharts(data.series || []);
   } catch (e) {
     if (e && (e.name === 'AbortError' || String(e.message || '').toLowerCase().includes('aborted'))) {
       return;
@@ -2329,6 +2382,7 @@ async function openNowcastAt(lat, lon, model = 'icon_d2') {
     if (nowcastTitle) nowcastTitle.textContent = `Nowcast 12h · ${p.gridLat ?? lat}, ${p.gridLon ?? lon}`;
     nowcastBody.innerHTML = `
       <div class="nowcast-meta">15-minute D2 point series for the next 12 hours.</div>
+      <div id="chart-hover-readout" class="nowcast-meta">Hover a chart to inspect values.</div>
       <div id="nowcast-chart-a" class="nowcast-chart"></div>
       <div id="nowcast-chart-b" class="nowcast-chart"></div>
       <div class="nowcast-hint">Panels: Energy (CAPE/CIN/LPI) and cloud development (hbas_sc/cloud thickness).</div>`;
@@ -2363,6 +2417,69 @@ function emagramSetLoadingUI(isLoading) {
     nextBtn.style.cursor = (isLoading || atEnd) ? 'default' : 'pointer';
   }
   if (st) st.textContent = isLoading ? 'loading…' : '';
+}
+
+function renderMeteogramCharts(series) {
+  if (!window.uPlot || !Array.isArray(series) || !series.length) return false;
+  const tempEl = document.getElementById('meteogram-chart-temp');
+  const precipEl = document.getElementById('meteogram-chart-precip');
+  const windEl = document.getElementById('meteogram-chart-wind');
+  if (!tempEl || !precipEl || !windEl) return false;
+
+  const xs = series.map((r) => Date.parse(r.validTime) / 1000);
+  const commonOpts = {
+    width: Math.max(320, Math.min(760, tempEl.clientWidth || 640)),
+    height: 200,
+    tzDate: ts => new Date(ts * 1000),
+    scales: { x: { time: true } },
+    sync: { key: 'skyview-meteogram-sync' },
+    axes: [
+      { stroke: 'rgba(255,255,255,0.55)', grid: { stroke: 'rgba(255,255,255,0.08)' } },
+      { stroke: 'rgba(255,255,255,0.55)', grid: { stroke: 'rgba(255,255,255,0.08)' } },
+    ],
+    legend: { show: true },
+    cursor: { drag: { x: false, y: false } },
+  };
+
+  if (meteogramState.chartTemp) { try { meteogramState.chartTemp.destroy(); } catch {} }
+  if (meteogramState.chartPrecip) { try { meteogramState.chartPrecip.destroy(); } catch {} }
+  if (meteogramState.chartWind) { try { meteogramState.chartWind.destroy(); } catch {} }
+
+  const tempSeries = chartSeriesValues(series, 't2mC');
+  const dewSeries = chartSeriesValues(series, 'dewpoint2mC');
+  const precipSeries = chartSeriesValues(series, 'precipRateTotal');
+  const windSeries = series.map((r) => {
+    const first = Array.isArray(r.windLevels) ? r.windLevels.find(w => w && w.pressureHpa === 850) : null;
+    return first?.speedKt ?? null;
+  });
+
+  meteogramState.chartTemp = new uPlot({
+    ...commonOpts,
+    title: 'Temperature',
+    series: [{}, { label: 'T2m', stroke: '#ffb86b', width: 2 }, { label: 'Dewpoint', stroke: '#79c0ff', width: 2 }],
+  }, [xs, tempSeries, dewSeries], tempEl);
+
+  meteogramState.chartPrecip = new uPlot({
+    ...commonOpts,
+    title: 'Precipitation',
+    series: [{}, { label: 'Rate', stroke: '#58a6ff', width: 2, fill: 'rgba(88,166,255,0.18)' }],
+  }, [xs, precipSeries], precipEl);
+
+  meteogramState.chartWind = new uPlot({
+    ...commonOpts,
+    title: 'Wind 850 hPa',
+    series: [{}, { label: 'Speed', stroke: '#7ee787', width: 2 }],
+  }, [xs, windSeries], windEl);
+
+  const readoutFmt = (row, idx) => {
+    const t = String(row.validTime || '').slice(11, 16);
+    const w = windSeries[idx];
+    return `${t} · T ${formatChartValue(row.t2mC, 1, ' °C')} · Td ${formatChartValue(row.dewpoint2mC, 1, ' °C')} · Precip ${formatChartValue(row.precipRateTotal, 2, ' mm/h')} · Wind850 ${formatChartValue(w, 1, ' kt')}`;
+  };
+  bindHoverReadout(meteogramState.chartTemp, series, (row) => readoutFmt(row, meteogramState.chartTemp.cursor.idx));
+  bindHoverReadout(meteogramState.chartPrecip, series, (row) => readoutFmt(row, meteogramState.chartPrecip.cursor.idx));
+  bindHoverReadout(meteogramState.chartWind, series, (row) => readoutFmt(row, meteogramState.chartWind.cursor.idx));
+  return true;
 }
 
 function emagramCacheKey({ lat, lon, model, zoom, time }) {

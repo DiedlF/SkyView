@@ -813,11 +813,11 @@ def build_weather_router(
                 vt = base_dt + timedelta(minutes=int(minute))
                 if horizon_limit is not None and vt > horizon_limit:
                     continue
-                hbas_v = hbas_map.get(minute)
-                htop_v = htop_map.get(minute)
-                conv_thickness = None
-                if hbas_v is not None and htop_v is not None:
-                    conv_thickness = max(0.0, float(htop_v) - float(hbas_v))
+                hbas_raw = hbas_map.get(minute)
+                htop_raw = htop_map.get(minute)
+                hbas_v = 0.0 if hbas_raw is None else float(hbas_raw)
+                htop_v = 0.0 if htop_raw is None else float(htop_raw)
+                conv_thickness = max(0.0, htop_v - hbas_v)
                 out.append({
                     "validTime": vt.isoformat().replace("+00:00", "Z"),
                     "run": run_i,
@@ -825,8 +825,8 @@ def build_weather_router(
                     "substepMinutes": int(minute),
                     "capeMl": cape_map.get(minute),
                     "cinMl": cin_map.get(minute),
-                    "hbasSc": hbas_map.get(minute),
-                    "htopSc": htop_map.get(minute),
+                    "hbasSc": hbas_v,
+                    "htopSc": htop_v,
                     "cloudThickness": conv_thickness,
                     "lpi": lpi_map.get(minute),
                 })
