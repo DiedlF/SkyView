@@ -434,21 +434,29 @@ def _extract_nominal_hour_from_filename(filepath: str) -> int | None:
     return int(m.group(1))
 
 
+def _first_scalar_like(v):
+    arr = np.asarray(v)
+    if arr.size == 0:
+        return None
+    if arr.size == 1:
+        try:
+            return arr.item()
+        except Exception:
+            return arr.reshape(-1)[0]
+    return arr.reshape(-1)[0]
+
+
 def _dataset_valid_hour_and_minute(ds) -> tuple[int | None, int | None]:
     if "valid_time" in ds.coords:
-        v = ds.coords["valid_time"].values
-        if hasattr(v, "item"):
-            v = v.item()
-        if hasattr(v, "hour") and hasattr(v, "minute"):
+        v = _first_scalar_like(ds.coords["valid_time"].values)
+        if v is not None and hasattr(v, "hour") and hasattr(v, "minute"):
             return int(v.hour), int(v.minute)
         text = str(v)
         m = re.search(r'[T ](\d{2}):(\d{2})', text)
         if m:
             return int(m.group(1)), int(m.group(2))
     if "step" in ds.coords:
-        v = ds.coords["step"].values
-        if hasattr(v, "item"):
-            v = v.item()
+        v = _first_scalar_like(ds.coords["step"].values)
         text = str(v)
         m = re.search(r'(\d+)', text)
         if m:
