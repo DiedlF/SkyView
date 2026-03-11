@@ -121,6 +121,7 @@ def build_point_router(
         include_symbol: bool = Query(True),
         include_wind: bool = Query(False),
         overlay_key: Optional[str] = Query(None),
+        substep: int = Query(0, ge=0, le=45),
     ):
         run, step, model_used = resolve_time_with_cache_context(time, model)
 
@@ -133,13 +134,15 @@ def build_point_router(
             need_overlay=need_overlay,
             ov=ov,
         )
-        d = load_data(run, step, model_used, keys=req_keys)
+        substep_minutes = substep if substep in (0, 15, 30, 45) else 0
+        d = load_data(run, step, model_used, keys=req_keys, substep_minutes=substep_minutes)
         fallback_decision = "primary_model_only"
 
         cache_key = (
             model_used,
             run,
             int(step),
+            int(substep_minutes),
             round(float(lat), 4),
             round(float(lon), 4),
             str(wind_level),
@@ -280,6 +283,7 @@ def build_point_router(
         result["lat"] = round(float(lat_arr[li0]), 4)
         result["lon"] = round(float(lon_arr[lo0]), 4)
         result["validTime"] = d["validTime"]
+        result["substepMinutes"] = int(d.get("_substepMinutes", 0) or 0)
         result["run"] = run
         result["model"] = model_used
         result["sourceModel"] = model_used

@@ -14,6 +14,7 @@ import math
 import threading
 import uuid
 from collections import OrderedDict
+from datetime import datetime, timedelta
 from time import perf_counter
 from typing import List, Optional
 
@@ -712,5 +713,127 @@ def build_weather_router(
         while len(meteogram_cache) > METEOGRAM_CACHE_MAX_ITEMS:
             meteogram_cache.popitem(last=False)
         return payload
+
+    @router.get("/api/nowcast_point")
+    async def api_nowcast_point(
+        lat: float = Query(..., ge=-90, le=90),
+        lon: float = Query(..., ge=-180, le=180),
+        model: Optional[str] = Query("icon_d2"),
+        hours: int = Query(24, ge=1, le=24),
+    ):
+        m = (model or "icon_d2").replace("-", "_")
+        if m != "icon_d2":
+            raise HTTPException(400, "api_nowcast_point currently supports model=icon_d2 only")
+
+        merged = get_merged_timeline()
+        if not merged or not merged.get("steps"):
+            raise HTTPException(404, "No timeline available")
+        steps = [s for s in merged.get("steps", []) if s.get("model") == "icon_d2"]
+        if not steps:
+            raise HTTPException(404, "No timeline for model=icon_d2")
+
+        wanted_keys = [
+            "lat", "lon", "cape_ml", "cin_ml", "hbas_sc", "htop_sc", "lpi",
+            "cape_ml_substeps", "cape_ml_substep_minutes",
+            "cin_ml_substeps", "cin_ml_substep_minutes",
+            "hbas_sc_substeps", "hbas_sc_substep_minutes",
+            "htop_sc_substeps", "htop_sc_substep_minutes",
+            "lpi_substeps", "lpi_substep_minutes",
+        ]
+
+        out = []
+        grid_point = None
+        start_vt = None
+        horizon_limit = None
+
+        for s in steps:
+            run_i, step_i, model_i = s.get("run"), int(s.get("step")), s.get("model")
+            try:
+                d = load_data(run_i, step_i, model_i, keys=wanted_keys)
+            except Exception:
+                continue
+
+            lat_arr = d.get("lat")
+            lon_arr = d.get("lon")
+            if lat_arr is None or lon_arr is None or len(lat_arr) == 0 or len(lon_arr) == 0:
+                continue
+
+            ii = int(np.argmin(np.abs(lat_arr - lat)))
+            jj = int(np.argmin(np.abs(lon_arr - lon)))
+            if grid_point is None:
+                grid_point = {
+                    "requestedLat": round(float(lat), 5), "requestedLon": round(float(lon), 5),
+                    "gridLat": round(float(lat_arr[ii]), 5), "gridLon": round(float(lon_arr[jj]), 5),
+                    "i": ii, "j": jj,
+                }
+
+            base_vt = d.get("validTime") or s.get("validTime")
+            try:
+                base_dt = datetime.fromisoformat(str(base_vt).replace("Z", "+00:00"))
+            except Exception:
+                continue
+            if start_vt is None:
+                start_vt = base_dt
+                horizon_limit = start_vt + timedelta(hours=int(hours))
+            if horizon_limit is not None and base_dt > horizon_limit:
+                continue
+
+            def _scalar(key: str):
+                arr = d.get(key)
+                if arr is None:
+                    return None
+                try:
+                    val = float(arr[ii, jj])
+                    return val if np.isfinite(val) else None
+                except Exception:
+                    return None
+
+            def _collect_series(key: str):
+                arr = d.get(f"{key}_substeps")
+                mins = d.get(f"{key}_substep_minutes")
+                if arr is None or mins is None:
+                    return {0: _scalar(key)}
+                out_map = {}
+                for idx, minute in enumerate(np.asarray(mins).tolist()):
+                    try:
+                        val = float(arr[idx, ii, jj])
+                        out_map[int(minute)] = val if np.isfinite(val) else None
+                    except Exception:
+                        out_map[int(minute)] = None
+                return out_map
+
+            cape_map = _collect_series("cape_ml")
+            cin_map = _collect_series("cin_ml")
+            hbas_map = _collect_series("hbas_sc")
+            htop_map = _collect_series("htop_sc")
+            lpi_map = _collect_series("lpi")
+            all_minutes = sorted(set(cape_map) | set(cin_map) | set(hbas_map) | set(htop_map) | set(lpi_map) | {0})
+
+            for minute in all_minutes:
+                vt = base_dt + timedelta(minutes=int(minute))
+                if horizon_limit is not None and vt > horizon_limit:
+                    continue
+                hbas_v = hbas_map.get(minute)
+                htop_v = htop_map.get(minute)
+                conv_thickness = None
+                if hbas_v is not None and htop_v is not None:
+                    conv_thickness = max(0.0, float(htop_v) - float(hbas_v))
+                out.append({
+                    "validTime": vt.isoformat().replace("+00:00", "Z"),
+                    "run": run_i,
+                    "step": step_i,
+                    "substepMinutes": int(minute),
+                    "capeMl": cape_map.get(minute),
+                    "cinMl": cin_map.get(minute),
+                    "hbasSc": hbas_map.get(minute),
+                    "htopSc": htop_map.get(minute),
+                    "cloudThickness": conv_thickness,
+                    "lpi": lpi_map.get(minute),
+                })
+
+        if not out:
+            raise HTTPException(404, "No nowcast data available")
+        out.sort(key=lambda r: r.get("validTime") or "")
+        return {"point": grid_point, "count": len(out), "hours": int(hours), "series": out}
 
     return router

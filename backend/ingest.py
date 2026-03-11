@@ -455,8 +455,12 @@ def _dataset_valid_hour_and_minute(ds) -> tuple[int | None, int | None]:
     return None, None
 
 
+def _spatial_datasets(datasets):
+    return [d for d in datasets if "latitude" in d.coords and "longitude" in d.coords and d.data_vars]
+
+
 def _select_spatial_dataset(datasets, filepath: str):
-    spatial = [d for d in datasets if "latitude" in d.coords and "longitude" in d.coords and d.data_vars]
+    spatial = _spatial_datasets(datasets)
     if not spatial:
         return None
 
@@ -479,6 +483,38 @@ def _select_spatial_dataset(datasets, filepath: str):
     if zero_minute:
         return zero_minute[0]
     return spatial[0]
+
+
+def _reduce_dataset_to_2d(ds, filepath: str):
+    var = list(ds.data_vars.values())[0]
+    lat = ds.coords["latitude"].values
+    lon = ds.coords["longitude"].values
+
+    if lat.ndim > 1:
+        lat = lat[:, 0]
+    if lon.ndim > 1:
+        lon = lon[0, :]
+
+    data = np.squeeze(var.values)
+    while data.ndim > 2:
+        data = data[0]
+
+    if data.shape != (len(lat), len(lon)):
+        raise ValueError(
+            f"Shape mismatch after reduction: data={data.shape}, "
+            f"lat={len(lat)}, lon={len(lon)} in {filepath}"
+        )
+    return data, lat, lon
+
+
+def _crop_field(data, lat, lon, bounds=None):
+    if bounds:
+        lat_min, lat_max, lon_min, lon_max = bounds
+        eps = 0.001
+        lat_mask = (lat >= lat_min - eps) & (lat <= lat_max + eps)
+        lon_mask = (lon >= lon_min - eps) & (lon <= lon_max + eps)
+        return data[np.ix_(lat_mask, lon_mask)], lat[lat_mask], lon[lon_mask]
+    return data, lat, lon
 
 
 def load_grib(filepath, bounds=None):
@@ -507,40 +543,51 @@ def load_grib(filepath, bounds=None):
     if ds is None:
         raise ValueError(f"No spatial dataset found in {filepath}")
 
-    var = list(ds.data_vars.values())[0]
-    lat = ds.coords["latitude"].values
-    lon = ds.coords["longitude"].values
+    data, lat, lon = _reduce_dataset_to_2d(ds, filepath)
+    return _crop_field(data, lat, lon, bounds)
 
-    # Guard: cfgrib may return 2-D lat/lon for curvilinear grids; extract 1-D axes.
-    if lat.ndim > 1:
-        lat = lat[:, 0]
-    if lon.ndim > 1:
-        lon = lon[0, :]
 
-    data = var.values
+def load_grib_with_substeps(filepath, bounds=None):
+    """Load GRIB2 and also return quarter-hour stacked substeps when present.
 
-    # Reduce to exactly 2-D (lat × lon).
-    # squeeze() removes all size-1 dims; the while loop handles any residual dims
-    # that survive squeeze (e.g. step dim for accumulated/max fields, or
-    # isobaricInhPa when cfgrib doesn't drop it for single-level pressure files).
-    data = np.squeeze(data)
-    while data.ndim > 2:
-        data = data[0]
+    Returns (data_2d, lat_1d, lon_1d, substeps_3d|None, minutes_list|None)
+    where substeps_3d has shape (N, lat, lon).
+    """
+    datasets = cfgrib.open_datasets(filepath)
+    if not datasets:
+        raise ValueError(f"No datasets in {filepath}")
 
-    if data.shape != (len(lat), len(lon)):
-        raise ValueError(
-            f"Shape mismatch after reduction: data={data.shape}, "
-            f"lat={len(lat)}, lon={len(lon)} in {filepath}"
-        )
+    spatial = _spatial_datasets(datasets)
+    if not spatial:
+        raise ValueError(f"No spatial dataset found in {filepath}")
 
-    if bounds:
-        lat_min, lat_max, lon_min, lon_max = bounds
-        eps = 0.001
-        lat_mask = (lat >= lat_min - eps) & (lat <= lat_max + eps)
-        lon_mask = (lon >= lon_min - eps) & (lon <= lon_max + eps)
-        return data[np.ix_(lat_mask, lon_mask)], lat[lat_mask], lon[lon_mask]
+    selected = _select_spatial_dataset(datasets, filepath)
+    data, lat, lon = _reduce_dataset_to_2d(selected, filepath)
+    data, lat, lon = _crop_field(data, lat, lon, bounds)
 
-    return data, lat, lon
+    var_name = _guess_var_name_from_path(filepath)
+    nominal_hour = _extract_nominal_hour_from_filename(filepath)
+    if var_name not in MULTI_MESSAGE_HOURLY_SELECT_VARS or nominal_hour is None:
+        return data, lat, lon, None, None
+
+    substep_entries = []
+    for ds in spatial:
+        hour, minute = _dataset_valid_hour_and_minute(ds)
+        if hour != nominal_hour or minute is None:
+            continue
+        s_data, s_lat, s_lon = _reduce_dataset_to_2d(ds, filepath)
+        s_data, s_lat, s_lon = _crop_field(s_data, s_lat, s_lon, bounds)
+        if s_data.shape != data.shape:
+            continue
+        substep_entries.append((int(minute), s_data))
+
+    if not substep_entries:
+        return data, lat, lon, None, None
+
+    substep_entries.sort(key=lambda item: item[0])
+    minutes = [m for m, _ in substep_entries]
+    stacked = np.stack([arr for _, arr in substep_entries], axis=0)
+    return data, lat, lon, stacked, minutes
 
 
 def get_bounds_for_model(model, config):
@@ -671,8 +718,24 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
             return False
 
         try:
-            data, lat, lon = _parse_grib_from_bytes(grib_bytes, bounds)
-            arrays[key] = data.astype(np.float32)
+            if model == "icon-d2" and key in MULTI_MESSAGE_HOURLY_SELECT_VARS:
+                fd, tmp_path = tempfile.mkstemp(suffix=".grib2")
+                try:
+                    with os.fdopen(fd, "wb") as f:
+                        f.write(grib_bytes)
+                    data, lat, lon, substeps, minutes = load_grib_with_substeps(tmp_path, bounds)
+                finally:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                arrays[key] = data.astype(np.float32)
+                if substeps is not None and minutes:
+                    arrays[f"{key}_substeps"] = substeps.astype(np.float32)
+                    arrays[f"{key}_substep_minutes"] = np.asarray(minutes, dtype=np.int16)
+            else:
+                data, lat, lon = _parse_grib_from_bytes(grib_bytes, bounds)
+                arrays[key] = data.astype(np.float32)
             if lat_1d is None and key in {t[0] for t in var_tasks}:
                 lat_1d = lat.astype(np.float32)
                 lon_1d = lon.astype(np.float32)

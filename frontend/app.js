@@ -12,6 +12,7 @@ let windAbortCtrl = null;
 let overlayPrewarmCtrl = null;
 let overlayObjectUrl = null;
 let currentOverlay = 'none';
+let overlaySubstepMinutes = 0;
 let windEnabled = false;
 let windLevel = '10m';
 let modelCapabilities = {};  // Store model capabilities from API
@@ -830,7 +831,8 @@ async function loadPoint(lat, lon, time, model, windLvl = '10m', zoom = null) {
     const overlayParam = (overlayKey && overlayKey !== 'none') ? `&overlay_key=${encodeURIComponent(overlayKey)}` : '';
     const includeWind = windEnabled ? '&include_wind=1' : '&include_wind=0';
     const includeSymbol = '&include_symbol=1';
-    const res = await fetch(`/api/point?lat=${lat}&lon=${lon}&time=${encodeURIComponent(time)}${modelParam}${windParam}${zoomParam}${includeOverlay}${overlayParam}${includeWind}${includeSymbol}`);
+    const substepParam = (overlaySupportsSubsteps(overlayKey) && overlaySubstepMinutes > 0) ? `&substep=${overlaySubstepMinutes}` : '';
+    const res = await fetch(`/api/point?lat=${lat}&lon=${lon}&time=${encodeURIComponent(time)}${modelParam}${windParam}${zoomParam}${includeOverlay}${overlayParam}${includeWind}${includeSymbol}${substepParam}`);
     if (!res.ok) await throwHttpError(res, 'API');
     const data = await res.json();
 
@@ -1092,6 +1094,21 @@ function overlayOpacityForLayer(layer) {
   return 0.6;
 }
 
+function overlaySupportsSubsteps(layer) {
+  return ['thermals', 'cloud_base', 'conv_thickness'].includes(layer);
+}
+
+function cycleOverlaySubstep(delta) {
+  const layer = getEffectiveOverlayLayer();
+  if (!overlaySupportsSubsteps(layer)) return;
+  const allowed = [0, 15, 30, 45];
+  const idx = allowed.indexOf(overlaySubstepMinutes);
+  const next = (idx + delta + allowed.length) % allowed.length;
+  overlaySubstepMinutes = allowed[next];
+  updateInfoPanel();
+  loadOverlay();
+}
+
 function lonLatToTile(lat, lon, z) {
   const n = 2 ** z;
   const x = Math.floor((lon + 180) / 360 * n);
@@ -1183,6 +1200,7 @@ async function loadOverlay() {
         clientClass,
       });
       if (overlayStep && overlayStep.model) params.append('model', overlayStep.model);
+      if (overlaySupportsSubsteps(effectiveOverlay) && overlaySubstepMinutes > 0) params.append('substep', String(overlaySubstepMinutes));
 
       // Ignore stale responses that arrive out of order
       if (reqId !== overlayRequestSeq) return;
@@ -1472,7 +1490,9 @@ document.getElementById('wind-level').addEventListener('change', (e) => {
 document.querySelectorAll('input[name="overlay"]').forEach(radio => {
   radio.addEventListener('change', (e) => {
     currentOverlay = e.target.value;
+    if (!overlaySupportsSubsteps(getEffectiveOverlayLayer())) overlaySubstepMinutes = 0;
     updateLegend();
+    updateInfoPanel();
     loadOverlay();
   });
 });
@@ -1515,6 +1535,13 @@ map.on('click', (e) => {
   const curModel = curStep?.model || null;
   loadPoint(e.latlng.lat, e.latlng.lng, curTime, curModel, windLevel, map.getZoom());
 });
+
+map.getContainer().addEventListener('wheel', (e) => {
+  const layer = getEffectiveOverlayLayer();
+  if (!e.shiftKey || !overlaySupportsSubsteps(layer)) return;
+  e.preventDefault();
+  cycleOverlaySubstep(e.deltaY > 0 ? 1 : -1);
+}, { passive: false });
 
 // Timeline controls
 const timeline = document.getElementById('timeline');
@@ -2165,6 +2192,27 @@ function renderMeteogramSvg(series) {
   return svg;
 }
 
+function renderNowcastTable(series) {
+  if (!Array.isArray(series) || !series.length) return '<div style="opacity:.75">No short-term nowcast data.</div>';
+  const rows = series.slice(0, 96).map((r) => {
+    const t = String(r.validTime || '').slice(11, 16);
+    const cape = (r.capeMl == null) ? '—' : Number(r.capeMl).toFixed(0);
+    const hbas = (r.hbasSc == null) ? '—' : Number(r.hbasSc).toFixed(0);
+    const thick = (r.cloudThickness == null) ? '—' : Number(r.cloudThickness).toFixed(0);
+    const lpi = (r.lpi == null) ? '—' : Number(r.lpi).toFixed(1);
+    const cin = (r.cinMl == null) ? '—' : Number(r.cinMl).toFixed(0);
+    return `<tr><td>${t}</td><td>${cape}</td><td>${hbas}</td><td>${thick}</td><td>${lpi}</td><td>${cin}</td></tr>`;
+  }).join('');
+  return `
+    <div style="margin-top:10px;opacity:.9;font-size:12px">Nowcast (15 min · next 24h)</div>
+    <div style="max-height:220px;overflow:auto;border:1px solid rgba(255,255,255,.15);border-radius:8px;margin-top:6px">
+      <table style="width:100%;border-collapse:collapse;font-size:11px">
+        <thead><tr><th style="text-align:left">Time</th><th>CAPE</th><th>hbas</th><th>thick</th><th>LPI</th><th>CIN</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
 async function openMeteogramAt(lat, lon, model = 'icon_d2') {
   if (!meteogramOverlay || !meteogramBody) return;
   const key = `${Number(lat).toFixed(4)}|${Number(lon).toFixed(4)}|${model || ''}`;
@@ -2194,7 +2242,17 @@ async function openMeteogramAt(lat, lon, model = 'icon_d2') {
     const glat = (p.gridLat ?? lat);
     const glon = (p.gridLon ?? lon);
     if (meteogramTitle) meteogramTitle.textContent = `Meteogram · ${glat}, ${glon} · ${String(modelUsed).toUpperCase().replace('_','-')} · Run ${runUsed}`;
-    meteogramBody.innerHTML = renderMeteogramSvg(data.series || []);
+    let nowcastHtml = '';
+    try {
+      const nres = await fetch(`/api/nowcast_point?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&model=icon_d2&hours=24`, { signal: abortCtrl.signal });
+      if (nres.ok) {
+        const ndata = await nres.json();
+        nowcastHtml = renderNowcastTable(ndata.series || []);
+      }
+    } catch (_e) {
+      // best effort
+    }
+    meteogramBody.innerHTML = renderMeteogramSvg(data.series || []) + nowcastHtml;
   } catch (e) {
     if (e && (e.name === 'AbortError' || String(e.message || '').toLowerCase().includes('aborted'))) {
       return;

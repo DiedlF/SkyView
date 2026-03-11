@@ -570,7 +570,7 @@ def classify_point(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ce
     return classify_point_core(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf, mh)
 
 
-def load_data(run: str, step: int, model: str, keys: Optional[List[str]] = None) -> Dict[str, Any]:
+def load_data(run: str, step: int, model: str, keys: Optional[List[str]] = None, substep_minutes: int = 0) -> Dict[str, Any]:
     """Load .npz data for a given run/step/model (service-backed)."""
     return load_step_data(
         data_dir=DATA_DIR,
@@ -581,6 +581,7 @@ def load_data(run: str, step: int, model: str, keys: Optional[List[str]] = None)
         cache_max_items=DATA_CACHE_MAX_ITEMS,
         keys=keys,
         logger=logger,
+        substep_minutes=substep_minutes,
     )
 
 
@@ -1149,6 +1150,7 @@ async def api_overlay(
     time: str = Query("latest"),
     model: Optional[str] = Query(None),
     width: int = Query(400, ge=50, le=1200),
+    substep: int = Query(0, ge=0, le=45),
 ):
     layer = _normalize_overlay_layer(layer)
     if layer not in OVERLAY_CONFIGS:
@@ -1163,8 +1165,9 @@ async def api_overlay(
     # Determine which keys to load based on layer
     overlay_keys = build_overlay_keys(cfg)
 
+    substep_minutes = substep if substep in (0, 15, 30, 45) else 0
     run, step, model_used = resolve_time_with_cache_context(time, model)
-    d = load_data(run, step, model_used, keys=overlay_keys)
+    d = load_data(run, step, model_used, keys=overlay_keys, substep_minutes=substep_minutes)
 
     lat = d["lat"]
     lon = d["lon"]
@@ -1623,6 +1626,7 @@ async def api_overlay_tile(
     time: str = Query("latest"),
     model: Optional[str] = Query(None),
     clientClass: str = Query("desktop"),
+    substep: int = Query(0, ge=0, le=45),
 ):
     t0 = perf_counter()
     t_load_ms = 0.0
@@ -1660,9 +1664,10 @@ async def api_overlay_tile(
         )
 
     t_load0 = perf_counter()
+    substep_minutes = substep if substep in (0, 15, 30, 45) else 0
     try:
         run, step, model_used = resolve_time_with_cache_context(time, model)
-        d = load_data(run, step, model_used, keys=overlay_keys)
+        d = load_data(run, step, model_used, keys=overlay_keys, substep_minutes=substep_minutes)
     except HTTPException as exc:
         if exc.status_code in (404, 422):
             return _empty_tile_response(f"empty:{exc.status_code}")
