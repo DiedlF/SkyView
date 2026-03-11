@@ -459,13 +459,13 @@ def _spatial_datasets(datasets):
     return [d for d in datasets if "latitude" in d.coords and "longitude" in d.coords and d.data_vars]
 
 
-def _select_spatial_dataset(datasets, filepath: str):
+def _select_spatial_dataset(datasets, filepath: str, var_name_hint: str | None = None, nominal_hour_hint: int | None = None):
     spatial = _spatial_datasets(datasets)
     if not spatial:
         return None
 
-    var_name = _guess_var_name_from_path(filepath)
-    nominal_hour = _extract_nominal_hour_from_filename(filepath)
+    var_name = var_name_hint or _guess_var_name_from_path(filepath)
+    nominal_hour = nominal_hour_hint if nominal_hour_hint is not None else _extract_nominal_hour_from_filename(filepath)
     if var_name not in MULTI_MESSAGE_HOURLY_SELECT_VARS or nominal_hour is None:
         return spatial[0]
 
@@ -547,7 +547,7 @@ def load_grib(filepath, bounds=None):
     return _crop_field(data, lat, lon, bounds)
 
 
-def load_grib_with_substeps(filepath, bounds=None):
+def load_grib_with_substeps(filepath, bounds=None, var_name_hint: str | None = None, nominal_hour_hint: int | None = None):
     """Load GRIB2 and also return quarter-hour stacked substeps when present.
 
     Returns (data_2d, lat_1d, lon_1d, substeps_3d|None, minutes_list|None)
@@ -561,12 +561,12 @@ def load_grib_with_substeps(filepath, bounds=None):
     if not spatial:
         raise ValueError(f"No spatial dataset found in {filepath}")
 
-    selected = _select_spatial_dataset(datasets, filepath)
+    selected = _select_spatial_dataset(datasets, filepath, var_name_hint=var_name_hint, nominal_hour_hint=nominal_hour_hint)
     data, lat, lon = _reduce_dataset_to_2d(selected, filepath)
     data, lat, lon = _crop_field(data, lat, lon, bounds)
 
-    var_name = _guess_var_name_from_path(filepath)
-    nominal_hour = _extract_nominal_hour_from_filename(filepath)
+    var_name = var_name_hint or _guess_var_name_from_path(filepath)
+    nominal_hour = nominal_hour_hint if nominal_hour_hint is not None else _extract_nominal_hour_from_filename(filepath)
     if var_name not in MULTI_MESSAGE_HOURLY_SELECT_VARS or nominal_hour is None:
         return data, lat, lon, None, None
 
@@ -723,7 +723,12 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
                 try:
                     with os.fdopen(fd, "wb") as f:
                         f.write(grib_bytes)
-                    data, lat, lon, substeps, minutes = load_grib_with_substeps(tmp_path, bounds)
+                    data, lat, lon, substeps, minutes = load_grib_with_substeps(
+                        tmp_path,
+                        bounds,
+                        var_name_hint=key,
+                        nominal_hour_hint=int(step),
+                    )
                 finally:
                     try:
                         os.unlink(tmp_path)

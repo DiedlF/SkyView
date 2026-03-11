@@ -50,3 +50,18 @@ def test_select_spatial_dataset_leaves_other_vars_on_first_spatial_dataset():
         "/tmp/icon-d2_germany_regular-lat-lon_single-level_2026031100_005_2d_ceiling.grib2",
     )
     assert str(selected.coords["valid_time"].values) == "2026-03-11T05:15:00"
+
+
+def test_select_spatial_dataset_works_with_temp_filename_when_hints_are_provided():
+    datasets = [
+        _Dataset("2026-03-11T05:15:00"),
+        _Dataset("2026-03-11T05:00:00"),
+        _Dataset("2026-03-11T05:30:00"),
+    ]
+    selected = _select_spatial_dataset(
+        datasets,
+        "/tmp/tmpabcd1234.grib2",
+        var_name_hint="cape_ml",
+        nominal_hour_hint=5,
+    )
+    assert str(selected.coords["valid_time"].values) == "2026-03-11T05:00:00"
