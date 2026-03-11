@@ -32,6 +32,7 @@ from constants import (
     SYMBOL_MODE_PRECOMPUTED_MAX_ZOOM,
     WORLD_GRID_ANCHOR_LAT,
     WORLD_GRID_ANCHOR_LON,
+    LOW_ZOOM_PRECOMPUTED_BINS_ENABLED,
 )
 from grid_aggregation import build_grid_context, choose_cell_groups
 from grid_utils import bbox_indices as _bbox_indices, slice_array as _slice_array
@@ -95,7 +96,7 @@ def build_weather_router(
             "sym_code", "cb_hm",
         ]
         symbol_mode = (
-            "precomputed" if zoom <= SYMBOL_MODE_PRECOMPUTED_MAX_ZOOM else
+            "precomputed" if (zoom <= SYMBOL_MODE_PRECOMPUTED_MAX_ZOOM and LOW_ZOOM_PRECOMPUTED_BINS_ENABLED) else
             ("fixed_grid" if zoom <= SYMBOL_MODE_FIXED_GRID_MAX_ZOOM else "native")
         )
         requested_model_for_mode = "icon_d2" if zoom == SYMBOL_MODE_NATIVE_ZOOM else model

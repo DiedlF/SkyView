@@ -32,6 +32,7 @@
 ### B) Ops / Release Hygiene (P3)
 
 - [x] **`test_symbol_zoom_continuity` threshold** — resolved.
+- [x] **Precomputed symbols benchmark** — benchmarked on VPS with `scripts/benchmark_symbols_precompute.py`; current low-zoom JSON-bin precompute is now opt-in only (`SKYVIEW_LOW_ZOOM_PRECOMPUTED_BINS=1`) because measured gains were negligible and storage cost was ~4.7 GB.
 - [x] **GitHub push** — repo pushed to remote.
 - [x] **CI pipeline** (PR9) — lint/type/pytest + qa_smoke/qa_regression/qa_contract/qa_perf workflows. Live: https://github.com/DiedlF/SkyView/actions
 - [x] **Pytest migration** (PR8) — `tests/test_smoke.py`, `test_regression.py`, `test_contract.py`, `test_perf.py`. Unit tests (no server) run always; integration/perf marked + skipped in fast CI. `pytest.ini` configured. 20 unit tests pass. (Arch #11)

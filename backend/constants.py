@@ -59,6 +59,9 @@ WORLD_GRID_ANCHOR_LON: float = -180.0
 # Low-zoom precompute domain (operational Europe view)
 LOW_ZOOM_GLOBAL_CACHE_MAX_ZOOM: int = SYMBOL_MODE_PRECOMPUTED_MAX_ZOOM
 LOW_ZOOM_GLOBAL_BBOX: tuple[float, float, float, float] = (30.0, -30.0, 72.0, 45.0)
+# Low-zoom precomputed JSON bins are opt-in. VPS benchmark (2026-03-11) showed
+# little to no latency win, plus ~10 min ingest overhead and ~4.7 GB disk use.
+LOW_ZOOM_PRECOMPUTED_BINS_ENABLED: bool = os.environ.get("SKYVIEW_LOW_ZOOM_PRECOMPUTED_BINS", "0").strip().lower() not in {"0", "false", "no", "off"}
 
 # Emagram pressure levels (D2)
 EMAGRAM_D2_LEVELS_HPA: list[int] = [1000, 975, 950, 850, 700, 600, 500, 400, 300, 200]

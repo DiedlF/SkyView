@@ -24,6 +24,7 @@ This directory contains research notes, implementation guides, and reference mat
 - **IMPROVEMENT_IDEAS_SUMMARY.md** — Consolidated roadmap and phased implementation plan.
 - **ICON_EU_OUTSIDE_D2_IMPLEMENTATION_PLAN.md** — Implementation status for D2→EU spatial fallback (Phases 1–3), strict-time guard, and residual risks.
 - **QA_BASELINE_2026-02-15.md** — Baseline + boundary QA evidence for fallback behavior.
+- **PRECOMPUTED_SYMBOLS_BENCHMARK_2026-03-11.md** — VPS benchmark for low-zoom symbol precompute. Result: current JSON-bin precompute is not worth enabling by default.
 
 ### Archive
 - Historical/superseded docs are in `archive/` (prototype reports, completed fix summaries, and superseded plans).
@@ -43,6 +44,10 @@ Prototype/fix-history docs are archived under `archive/` — useful for archaeol
 Operational note: `/api/status` now exposes:
 - `fallback` counters for EU fallback resolution and blended endpoint usage (process-local), and
 - `ingestHealth.models.icon_d2/icon_eu` with latest run plus expected/available/missing steps.
+
+Symbols perf note:
+- low-zoom precomputed symbol bins are now **opt-in** via `SKYVIEW_LOW_ZOOM_PRECOMPUTED_BINS=1`
+- default is **off** because the VPS benchmark showed little to no latency gain, plus ~10 minutes ingest overhead and ~4.7 GB disk usage in the current JSON-bin format
 
 API diagnostics note: JSON endpoints (`/api/point`, `/api/symbols`, `/api/wind`) include a `diagnostics` object with `dataFreshnessMinutes` and `fallbackDecision`; overlay endpoints expose equivalent diagnostics via headers.
 
