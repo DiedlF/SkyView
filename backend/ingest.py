@@ -16,6 +16,7 @@ import subprocess
 import bz2
 import tempfile
 import warnings
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Tuple
 import numpy as np
@@ -411,12 +412,85 @@ def download(url, dest):
     return False
 
 
+MULTI_MESSAGE_HOURLY_SELECT_VARS = {"cape_ml", "cin_ml", "hbas_sc", "htop_sc", "lpi"}
+
+
+def _guess_var_name_from_path(filepath: str) -> str | None:
+    name = os.path.basename(filepath)
+    m = re.search(r'_\d{3}_(?:2d_)?([A-Za-z0-9_]+)\.grib2$', name)
+    if not m:
+        return None
+    return m.group(1).lower()
+
+
+def _extract_nominal_hour_from_filename(filepath: str) -> int | None:
+    name = os.path.basename(filepath)
+    m = re.search(r'_(\d{3})_(?:2d_)?[A-Za-z0-9_]+\.grib2$', name)
+    if not m:
+        return None
+    return int(m.group(1))
+
+
+def _dataset_valid_hour_and_minute(ds) -> tuple[int | None, int | None]:
+    if "valid_time" in ds.coords:
+        v = ds.coords["valid_time"].values
+        if hasattr(v, "item"):
+            v = v.item()
+        if hasattr(v, "hour") and hasattr(v, "minute"):
+            return int(v.hour), int(v.minute)
+        text = str(v)
+        m = re.search(r'[T ](\d{2}):(\d{2})', text)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    if "step" in ds.coords:
+        v = ds.coords["step"].values
+        if hasattr(v, "item"):
+            v = v.item()
+        text = str(v)
+        m = re.search(r'(\d+)', text)
+        if m:
+            total_minutes = int(m.group(1)) // 60000000000 if 'nanoseconds' in text else None
+            if total_minutes is not None:
+                return total_minutes // 60, total_minutes % 60
+    return None, None
+
+
+def _select_spatial_dataset(datasets, filepath: str):
+    spatial = [d for d in datasets if "latitude" in d.coords and "longitude" in d.coords and d.data_vars]
+    if not spatial:
+        return None
+
+    var_name = _guess_var_name_from_path(filepath)
+    nominal_hour = _extract_nominal_hour_from_filename(filepath)
+    if var_name not in MULTI_MESSAGE_HOURLY_SELECT_VARS or nominal_hour is None:
+        return spatial[0]
+
+    exact_hour = []
+    zero_minute = []
+    for d in spatial:
+        hour, minute = _dataset_valid_hour_and_minute(d)
+        if minute == 0:
+            zero_minute.append(d)
+            if hour == nominal_hour:
+                exact_hour.append(d)
+
+    if exact_hour:
+        return exact_hour[0]
+    if zero_minute:
+        return zero_minute[0]
+    return spatial[0]
+
+
 def load_grib(filepath, bounds=None):
     """Load GRIB2, optionally crop to bounds, return (data_2d, lat_1d, lon_1d).
 
     cfgrib ≥ 0.9.14 compatibility notes vs 0.9.10.x:
     - open_datasets() may return multiple datasets; we search for the first with
       latitude/longitude coords rather than blindly taking [0].
+    - For D2 multi-message quarter-hour files (`cape_ml`, `cin_ml`, `hbas_sc`,
+      `htop_sc`, `lpi`), we explicitly select the on-the-hour message matching
+      the nominal forecast step from the filename (e.g. `_005_` -> 05:00),
+      instead of accidentally ingesting whichever slice cfgrib returns first.
     - step may be an explicit dimension (not squeezed) for accumulated fields
       (tot_prec, rain_*, snow_*, grau_gsp, h_snow, freshsnw, prr/prs/prg_gsp)
       and time-range statistics (vmax_10m, tmax/tmin_2m, lpi_max, dbz_*, etc.).
@@ -429,12 +503,7 @@ def load_grib(filepath, bounds=None):
     if not datasets:
         raise ValueError(f"No datasets in {filepath}")
 
-    # Find first dataset that has spatial coordinates and at least one data variable.
-    ds = None
-    for candidate in datasets:
-        if "latitude" in candidate.coords and "longitude" in candidate.coords and candidate.data_vars:
-            ds = candidate
-            break
+    ds = _select_spatial_dataset(datasets, filepath)
     if ds is None:
         raise ValueError(f"No spatial dataset found in {filepath}")
 
