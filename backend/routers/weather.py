@@ -628,7 +628,7 @@ def build_weather_router(
         for lev in EMAGRAM_D2_LEVELS_HPA:
             level_keys += [f"u_{lev}hpa", f"v_{lev}hpa"]
 
-        needed_keys = ["lat", "lon", "validTime", "tot_prec", "h_snow", "t_2m", "td_2m"] + level_keys
+        needed_keys = ["lat", "lon", "validTime", "tot_prec", "h_snow", "t_2m", "td_2m", "hsurf"] + level_keys
 
         out: List[dict] = []
         grid_point: Optional[dict] = None
@@ -682,6 +682,7 @@ def build_weather_router(
                 "windLevels": wind_levels,
                 "precipTotal": _g("tot_prec"),
                 "snowDepthM": _g("h_snow"),
+                "hsurfM": _g("hsurf"),
                 "t2mC": round(t2k - 273.15, 2) if t2k is not None else None,
                 "dewpoint2mC": round(tdk - 273.15, 2) if tdk is not None else None,
             })

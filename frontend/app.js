@@ -2131,6 +2131,7 @@ function renderMeteogramSvg(series) {
   // Wind panel: small barbs for each timestep x pressure level
   const levels = [1000, 975, 950, 850, 700, 600, 500, 400, 300, 200];
   const yWind = (lev) => pWind.y + ((lev - 200) / (1000 - 200)) * pWind.ph;
+  const pressureToApproxHeightM = (lev) => 44330 * (1 - Math.pow(Number(lev) / 1013.25, 0.1903));
   const mkBarb = (xx, yy, speedKt = 0, dirDeg = 0) => {
     if (!(Number.isFinite(speedKt) && Number.isFinite(dirDeg))) return '';
     let s = Math.max(0, Math.round(speedKt / 5) * 5);
@@ -2149,11 +2150,14 @@ function renderMeteogramSvg(series) {
   for (let i = 0; i < rows.length; i++) {
     const xx = x(i);
     const wl = rows[i].windLevels || [];
+    const terrainM = Number(rows[i].hsurfM);
     const byLev = {};
     for (const w of wl) byLev[Number(w.pressureHpa)] = w;
     for (const lev of levels) {
       const w = byLev[lev];
       if (!w) continue;
+      const approxHeightM = pressureToApproxHeightM(lev);
+      if (Number.isFinite(terrainM) && approxHeightM < terrainM) continue;
       svg += mkBarb(xx, yWind(lev), Number(w.speedKt), Number(w.dirDeg));
     }
   }
@@ -2341,13 +2345,7 @@ async function openMeteogramAt(lat, lon, model = 'icon_d2') {
     const glat = (p.gridLat ?? lat);
     const glon = (p.gridLon ?? lon);
     if (meteogramTitle) meteogramTitle.textContent = `Meteogram · ${glat}, ${glon} · ${String(modelUsed).toUpperCase().replace('_','-')} · Run ${runUsed}`;
-    meteogramBody.innerHTML = `
-      <div class="nowcast-meta">Point ${glat}, ${glon} · run ${runUsed}</div>
-      <div id="chart-hover-readout" class="nowcast-meta">Hover a chart to inspect values.</div>
-      <div id="meteogram-chart-temp" class="nowcast-chart"></div>
-      <div id="meteogram-chart-precip" class="nowcast-chart"></div>
-      <div id="meteogram-chart-wind" class="nowcast-chart"></div>`;
-    renderMeteogramCharts(data.series || []);
+    meteogramBody.innerHTML = renderMeteogramSvg(data.series || []);
   } catch (e) {
     if (e && (e.name === 'AbortError' || String(e.message || '').toLowerCase().includes('aborted'))) {
       return;
@@ -2417,69 +2415,6 @@ function emagramSetLoadingUI(isLoading) {
     nextBtn.style.cursor = (isLoading || atEnd) ? 'default' : 'pointer';
   }
   if (st) st.textContent = isLoading ? 'loading…' : '';
-}
-
-function renderMeteogramCharts(series) {
-  if (!window.uPlot || !Array.isArray(series) || !series.length) return false;
-  const tempEl = document.getElementById('meteogram-chart-temp');
-  const precipEl = document.getElementById('meteogram-chart-precip');
-  const windEl = document.getElementById('meteogram-chart-wind');
-  if (!tempEl || !precipEl || !windEl) return false;
-
-  const xs = series.map((r) => Date.parse(r.validTime) / 1000);
-  const commonOpts = {
-    width: Math.max(320, Math.min(760, tempEl.clientWidth || 640)),
-    height: 200,
-    tzDate: ts => new Date(ts * 1000),
-    scales: { x: { time: true } },
-    sync: { key: 'skyview-meteogram-sync' },
-    axes: [
-      { stroke: 'rgba(255,255,255,0.55)', grid: { stroke: 'rgba(255,255,255,0.08)' } },
-      { stroke: 'rgba(255,255,255,0.55)', grid: { stroke: 'rgba(255,255,255,0.08)' } },
-    ],
-    legend: { show: true },
-    cursor: { drag: { x: false, y: false } },
-  };
-
-  if (meteogramState.chartTemp) { try { meteogramState.chartTemp.destroy(); } catch {} }
-  if (meteogramState.chartPrecip) { try { meteogramState.chartPrecip.destroy(); } catch {} }
-  if (meteogramState.chartWind) { try { meteogramState.chartWind.destroy(); } catch {} }
-
-  const tempSeries = chartSeriesValues(series, 't2mC');
-  const dewSeries = chartSeriesValues(series, 'dewpoint2mC');
-  const precipSeries = chartSeriesValues(series, 'precipRateTotal');
-  const windSeries = series.map((r) => {
-    const first = Array.isArray(r.windLevels) ? r.windLevels.find(w => w && w.pressureHpa === 850) : null;
-    return first?.speedKt ?? null;
-  });
-
-  meteogramState.chartTemp = new uPlot({
-    ...commonOpts,
-    title: 'Temperature',
-    series: [{}, { label: 'T2m', stroke: '#ffb86b', width: 2 }, { label: 'Dewpoint', stroke: '#79c0ff', width: 2 }],
-  }, [xs, tempSeries, dewSeries], tempEl);
-
-  meteogramState.chartPrecip = new uPlot({
-    ...commonOpts,
-    title: 'Precipitation',
-    series: [{}, { label: 'Rate', stroke: '#58a6ff', width: 2, fill: 'rgba(88,166,255,0.18)' }],
-  }, [xs, precipSeries], precipEl);
-
-  meteogramState.chartWind = new uPlot({
-    ...commonOpts,
-    title: 'Wind 850 hPa',
-    series: [{}, { label: 'Speed', stroke: '#7ee787', width: 2 }],
-  }, [xs, windSeries], windEl);
-
-  const readoutFmt = (row, idx) => {
-    const t = String(row.validTime || '').slice(11, 16);
-    const w = windSeries[idx];
-    return `${t} · T ${formatChartValue(row.t2mC, 1, ' °C')} · Td ${formatChartValue(row.dewpoint2mC, 1, ' °C')} · Precip ${formatChartValue(row.precipRateTotal, 2, ' mm/h')} · Wind850 ${formatChartValue(w, 1, ' kt')}`;
-  };
-  bindHoverReadout(meteogramState.chartTemp, series, (row) => readoutFmt(row, meteogramState.chartTemp.cursor.idx));
-  bindHoverReadout(meteogramState.chartPrecip, series, (row) => readoutFmt(row, meteogramState.chartPrecip.cursor.idx));
-  bindHoverReadout(meteogramState.chartWind, series, (row) => readoutFmt(row, meteogramState.chartWind.cursor.idx));
-  return true;
 }
 
 function emagramCacheKey({ lat, lon, model, zoom, time }) {
