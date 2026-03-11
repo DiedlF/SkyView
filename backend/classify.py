@@ -34,13 +34,12 @@ def _meters_to_hm_array(values: np.ndarray) -> np.ndarray:
     return base_hm
 
 
-def classify_point_with_base(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=0.0, mh=None):
+def classify_point_with_base(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=0.0, mh=None, ww=0.0):
     """Canonical scalar symbol/base decision.
 
     Returns (cloud_type, cb_hm). Inputs use AMSL for htop_dc/hbas_sc;
     AGL thresholds are applied via hsurf.
     """
-    ww = 0.0
     if not (np.isfinite(ww) and ww <= 3):
         return "clear", None
 
@@ -64,28 +63,23 @@ def classify_point_with_base(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_s
             return "cu_hum", cb_hm
         return "clear", None
 
+    if not (np.isfinite(ww) and ww >= 1):
+        return "clear", None
+
     valid_ceiling = np.isfinite(ceiling) and (ceiling > 0) and (ceiling < CEILING_VALID_MAX_METERS)
     if not valid_ceiling:
         return "clear", None
 
     cb_hm = _meters_to_hm_scalar(ceiling)
     if ceiling < CEILING_LOW_MAX_METERS:
-        if np.isfinite(clcl) and clcl >= 30:
-            return "st", cb_hm
-    elif ceiling < CEILING_MID_MAX_METERS:
-        if np.isfinite(clcm) and clcm >= 30:
-            return "ac", cb_hm
-    else:
-        if np.isfinite(clch) and clch >= 30:
-            return "ci", cb_hm
-
-    # Ceiling context wins for stratiform classification. If the band-matched
-    # layer does not clear threshold, do not fall back to another band.
-    return "clear", None
+        return "st", cb_hm
+    if ceiling < CEILING_MID_MAX_METERS:
+        return "ac", cb_hm
+    return "ci", cb_hm
 
 
-def classify_point(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=0.0, mh=None):
-    return classify_point_with_base(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf, mh)[0]
+def classify_point(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=0.0, mh=None, ww=0.0):
+    return classify_point_with_base(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf, mh, ww=ww)[0]
 
 
 def crop_to_bbox(arrays_dict, lat, lon, bbox):
@@ -168,37 +162,19 @@ def classify_clouds_and_bases(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, h
     cb_hm[cu_hum_mask] = hbas_hm[cu_hum_mask]
 
     strat_mask = mask & ~is_convective
-    valid_ceiling = strat_mask & np.isfinite(ceiling) & (ceiling > 0) & (ceiling < CEILING_VALID_MAX_METERS)
+    cloud_ww = strat_mask & np.isfinite(ww) & (ww >= 1)
+    valid_ceiling = cloud_ww & np.isfinite(ceiling) & (ceiling > 0) & (ceiling < CEILING_VALID_MAX_METERS)
 
     low_band = valid_ceiling & (ceiling < CEILING_LOW_MAX_METERS)
     mid_band = valid_ceiling & (ceiling >= CEILING_LOW_MAX_METERS) & (ceiling < CEILING_MID_MAX_METERS)
     high_band = valid_ceiling & (ceiling >= CEILING_MID_MAX_METERS)
 
-    st_mask = low_band & np.isfinite(clcl) & (clcl >= 30)
-    ac_mask = mid_band & np.isfinite(clcm) & (clcm >= 30)
-    ci_mask = high_band & np.isfinite(clch) & (clch >= 30)
-
-    cloud_type[st_mask] = "st"
-    cb_hm[st_mask] = ceil_hm[st_mask]
-    cloud_type[ac_mask] = "ac"
-    cb_hm[ac_mask] = ceil_hm[ac_mask]
-    cloud_type[ci_mask] = "ci"
-    cb_hm[ci_mask] = ceil_hm[ci_mask]
-
-    unresolved = valid_ceiling & (cloud_type == "clear")
-    st_fallback = unresolved & np.isfinite(clcl) & (clcl >= 30)
-    cloud_type[st_fallback] = "st"
-    cb_hm[st_fallback] = ceil_hm[st_fallback]
-
-    unresolved = valid_ceiling & (cloud_type == "clear")
-    ac_fallback = unresolved & np.isfinite(clcm) & (clcm >= 30)
-    cloud_type[ac_fallback] = "ac"
-    cb_hm[ac_fallback] = ceil_hm[ac_fallback]
-
-    unresolved = valid_ceiling & (cloud_type == "clear")
-    ci_fallback = unresolved & np.isfinite(clch) & (clch >= 30)
-    cloud_type[ci_fallback] = "ci"
-    cb_hm[ci_fallback] = ceil_hm[ci_fallback]
+    cloud_type[low_band] = "st"
+    cb_hm[low_band] = ceil_hm[low_band]
+    cloud_type[mid_band] = "ac"
+    cb_hm[mid_band] = ceil_hm[mid_band]
+    cloud_type[high_band] = "ci"
+    cb_hm[high_band] = ceil_hm[high_band]
 
     unique, counts = np.unique(cloud_type, return_counts=True)
     summary = dict(zip(unique, counts))

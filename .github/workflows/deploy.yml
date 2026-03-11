@@ -3,6 +3,11 @@ name: Deploy to VPS
 on:
   push:
     branches: [ master ]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-vps-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read

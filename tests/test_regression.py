@@ -37,6 +37,11 @@ def test_blue_thermal_precedence_over_cb():
     qa_regression.check_blue_thermal_precedence_over_cb()
 
 
+def test_stratiform_symbols_follow_ww_and_ceiling():
+    """Stratiform symbols should be driven by ww(1..3) and ceiling."""
+    qa_regression.check_stratiform_symbols_follow_ww_and_ceiling()
+
+
 def test_resolve_eu_time_strict_input_handling():
     """_resolve_eu_time_strict handles 'latest' and non-ISO strings gracefully."""
     qa_regression.check_resolve_eu_time_strict_input_handling()

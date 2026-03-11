@@ -88,6 +88,7 @@ def _compute_native_symbols_from_points(
                     ceiling=float(src_ceil[ii, jj]) if np.isfinite(src_ceil[ii, jj]) else 0.0,
                     hsurf=float(src_hsurf[ii, jj]) if np.isfinite(src_hsurf[ii, jj]) else 0.0,
                     mh=float(src_mh[ii, jj]) if np.isfinite(src_mh[ii, jj]) else None,
+                    ww=ww_v,
                 )
             if sym == "clear":
                 continue
@@ -484,6 +485,7 @@ def compute_symbols_payload(
                         ceiling=float(src_ceil[best_ii, best_jj]) if np.isfinite(src_ceil[best_ii, best_jj]) else 0.0,
                         hsurf=float(src_hsurf[best_ii, best_jj]) if np.isfinite(src_hsurf[best_ii, best_jj]) else 0.0,
                         mh=float(src_mh[best_ii, best_jj]) if np.isfinite(src_mh[best_ii, best_jj]) else None,
+                        ww=float(src_ww[best_ii, best_jj]) if np.isfinite(src_ww[best_ii, best_jj]) else 0.0,
                     )
                     if cb_hm is None and recomputed_sym == sym:
                         cb_hm = recomputed_cb_hm

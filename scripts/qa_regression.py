@@ -240,6 +240,89 @@ def check_symbol_zoom_continuity(base: str, t: str):
             fail(f"symbol zoom continuity too low at z{z}->z{z+1}: {ok}/{total} ({ratio:.2%})")
 
 
+def check_stratiform_symbols_follow_ww_and_ceiling():
+    """Regression guard: non-convective stratiform symbols use ww(1..3)+ceiling, not layer cover."""
+    backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend"))
+    if backend_dir not in sys.path:
+        sys.path.insert(0, backend_dir)
+
+    from classify import classify_point_with_base
+    from symbol_logic import aggregate_symbol_cell
+
+    cloud_type, cb_hm = classify_point_with_base(
+        clcl=0.0,
+        clcm=0.0,
+        clch=0.0,
+        cape_ml=0.0,
+        htop_dc=np.nan,
+        hbas_sc=np.nan,
+        htop_sc=np.nan,
+        lpi=0.0,
+        ceiling=1500.0,
+        hsurf=0.0,
+        mh=None,
+        ww=2.0,
+    )
+    if (cloud_type, cb_hm) != ("st", 15):
+        fail(f"scalar ww+ceiling regression: got={(cloud_type, cb_hm)}, want=('st', 15)")
+
+    clear_type, clear_cb_hm = classify_point_with_base(
+        clcl=100.0,
+        clcm=100.0,
+        clch=100.0,
+        cape_ml=0.0,
+        htop_dc=np.nan,
+        hbas_sc=np.nan,
+        htop_sc=np.nan,
+        lpi=0.0,
+        ceiling=1500.0,
+        hsurf=0.0,
+        mh=None,
+        ww=0.0,
+    )
+    if (clear_type, clear_cb_hm) != ("clear", None):
+        fail(f"ww=0 clear regression: got={(clear_type, clear_cb_hm)}, want=('clear', None)")
+
+    cli = np.array([0])
+    clo = np.array([0])
+    cell_ww = np.array([[1.0]])
+    ceil_arr = np.array([[6500.0]])
+    c_clcl = np.array([[0.0]])
+    c_clcm = np.array([[0.0]])
+    c_clch = np.array([[0.0]])
+    c_cape = np.array([[0.0]])
+    c_htop_dc = np.array([[np.nan]])
+    c_hbas_sc = np.array([[np.nan]])
+    c_htop_sc = np.array([[np.nan]])
+    c_lpi = np.array([[0.0]])
+    c_hsurf = np.array([[0.0]])
+    c_mh = np.array([[np.nan]])
+
+    sym, agg_cb_hm, _, _ = aggregate_symbol_cell(
+        cli,
+        clo,
+        cell_ww,
+        ceil_arr,
+        c_clcl,
+        c_clcm,
+        c_clch,
+        c_cape,
+        c_htop_dc,
+        c_hbas_sc,
+        c_htop_sc,
+        c_lpi,
+        c_hsurf,
+        c_mh,
+        classify_point_fn=None,
+        zoom=12,
+        pre_has_cape=False,
+        pre_has_ceil=True,
+    )
+    if (sym, agg_cb_hm) != ("ac", 65):
+        fail(f"aggregate ww+ceiling regression: got={(sym, agg_cb_hm)}, want=('ac', 65)")
+
+
+
 def check_resolve_eu_time_strict_input_handling():
     """Regression guard for explicit latest/malformed handling in strict EU resolver."""
     backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend"))

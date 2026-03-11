@@ -201,27 +201,28 @@ def aggregate_symbol_cell(
             if not np.any(ceil_mask_s):
                 sym = "clear"
             else:
-                i_loc, j_loc = np.where(ceil_mask_s)
-                vals = s_ceil[i_loc, j_loc]
-                avg_ceil = float(np.mean(vals))
-                k = int(np.argmin(np.abs(vals - avg_ceil)))
-                ii_s, jj_s = int(i_loc[k]), int(j_loc[k])
-                best_ii = int(iter_cli[ii_s])
-                best_jj = int(iter_clo[jj_s])
-
-                chosen_ceil = float(vals[k])
-                chosen_clcl = float(s_clcl[ii_s, jj_s]) if np.isfinite(s_clcl[ii_s, jj_s]) else np.nan
-                chosen_clcm = float(s_clcm[ii_s, jj_s]) if np.isfinite(s_clcm[ii_s, jj_s]) else np.nan
-                chosen_clch = float(s_clch[ii_s, jj_s]) if np.isfinite(s_clch[ii_s, jj_s]) else np.nan
-
-                if chosen_ceil < 2000:
-                    sym = "st" if np.isfinite(chosen_clcl) and chosen_clcl >= 30 else "clear"
-                elif chosen_ceil < 7000:
-                    sym = "ac" if np.isfinite(chosen_clcm) and chosen_clcm >= 30 else "clear"
+                cloud_mask_s = np.isfinite(cell_ww[np.ix_(iter_cli, iter_clo)]) & (cell_ww[np.ix_(iter_cli, iter_clo)] >= 1) & (cell_ww[np.ix_(iter_cli, iter_clo)] <= 3)
+                strat_mask_s = ceil_mask_s & cloud_mask_s
+                if not np.any(strat_mask_s):
+                    sym = "clear"
                 else:
-                    sym = "ci" if np.isfinite(chosen_clch) and chosen_clch >= 30 else "clear"
+                    i_loc, j_loc = np.where(strat_mask_s)
+                    vals = s_ceil[i_loc, j_loc]
+                    avg_ceil = float(np.mean(vals))
+                    k = int(np.argmin(np.abs(vals - avg_ceil)))
+                    ii_s, jj_s = int(i_loc[k]), int(j_loc[k])
+                    best_ii = int(iter_cli[ii_s])
+                    best_jj = int(iter_clo[jj_s])
 
-                cb_hm = int((chosen_ceil + 50) / 100) if sym != "clear" else None
+                    chosen_ceil = float(vals[k])
+                    if chosen_ceil < 2000:
+                        sym = "st"
+                    elif chosen_ceil < 7000:
+                        sym = "ac"
+                    else:
+                        sym = "ci"
+
+                    cb_hm = int((chosen_ceil + 50) / 100)
 
     if cb_hm is not None and cb_hm > 99:
         cb_hm = 99
