@@ -2007,6 +2007,9 @@ def _ingest_model_timings() -> dict[str, dict[str, Any]]:
 
     latestRunAvailableAt uses runTime from timeline; latestRunFullyIngestedAt uses max mtime of
     npz files in the newest run that has full expected step coverage.
+
+    ingestDurationMinutes measures actual local ingest wall time:
+    latestRunFullyIngestedAt - latestRunFirstIngestedAt.
     """
     now = datetime.now(timezone.utc)
     expected_steps = {"icon_d2": 48, "icon_eu": 92}
@@ -2066,11 +2069,11 @@ def _ingest_model_timings() -> dict[str, dict[str, Any]]:
 
         ingest_minutes = None
         full_iso = full_dt.isoformat().replace("+00:00", "Z") if full_dt else None
-        if dwd_available_iso and full_iso and latest_run and full_run == latest_run:
+        if latest_run_first_ingested_iso and full_iso and latest_run and full_run == latest_run:
             try:
-                da = datetime.fromisoformat(dwd_available_iso.replace("Z", "+00:00"))
+                fs = datetime.fromisoformat(latest_run_first_ingested_iso.replace("Z", "+00:00"))
                 fi = datetime.fromisoformat(full_iso.replace("Z", "+00:00"))
-                ingest_minutes = round((fi - da).total_seconds() / 60.0, 1)
+                ingest_minutes = round((fi - fs).total_seconds() / 60.0, 1)
             except Exception:
                 ingest_minutes = None
 
