@@ -881,6 +881,7 @@ async function loadPoint(lat, lon, time, model, windLvl = '10m', zoom = null) {
       btns += `<button onclick="openEmagramAt(${Number(lat).toFixed(5)},${Number(lon).toFixed(5)},'${String(time || 'latest').replace(/'/g, "&#39;")}','icon_d2')" style="font-size:11px;padding:2px 6px;line-height:1.1;">Skew-T</button>`;
     }
     btns += `<button onclick="openMeteogramAt(${Number(lat).toFixed(5)},${Number(lon).toFixed(5)},'icon_d2')" style="font-size:11px;padding:2px 6px;line-height:1.1;">Meteogram</button>`;
+    btns += `<button onclick="openNowcastAt(${Number(lat).toFixed(5)},${Number(lon).toFixed(5)},'icon_d2')" style="font-size:11px;padding:2px 6px;line-height:1.1;">Nowcast 12h</button>`;
     btns += `</div>`;
     L.popup({ maxWidth: 280 })
       .setLatLng([lat, lon])
@@ -1770,12 +1771,19 @@ const meteogramOverlay = document.getElementById('meteogram-overlay');
 const meteogramClose = document.getElementById('meteogram-close');
 const meteogramTitle = document.getElementById('meteogram-title');
 const meteogramBody = document.getElementById('meteogram-body');
+const nowcastOverlay = document.getElementById('nowcast-overlay');
+const nowcastClose = document.getElementById('nowcast-close');
+const nowcastTitle = document.getElementById('nowcast-title');
+const nowcastBody = document.getElementById('nowcast-body');
 let emagramState = { open: false, lat: null, lon: null, model: '', zoom: null, loading: false, reqId: 0, allowedIndices: [] };
 let meteogramState = { open: false, lat: null, lon: null, model: '', abortCtrl: null };
+let nowcastState = { open: false, lat: null, lon: null, model: '', abortCtrl: null, chartA: null, chartB: null };
 const emagramCache = new Map();
 const meteogramCache = new Map();
+const nowcastCache = new Map();
 const EMAGRAM_CACHE_MAX = 96;
 const METEOGRAM_CACHE_MAX = 32;
+const NOWCAST_CACHE_MAX = 32;
 const langSelect = document.getElementById('lang-select');
 
 function openFeedback() {
@@ -1819,6 +1827,17 @@ function closeMeteogram() {
     meteogramState.abortCtrl = null;
   }
   if (meteogramOverlay) meteogramOverlay.style.display = 'none';
+}
+
+function closeNowcast() {
+  nowcastState.open = false;
+  if (nowcastState.abortCtrl) {
+    try { nowcastState.abortCtrl.abort(); } catch {}
+    nowcastState.abortCtrl = null;
+  }
+  if (nowcastState.chartA) { try { nowcastState.chartA.destroy(); } catch {} nowcastState.chartA = null; }
+  if (nowcastState.chartB) { try { nowcastState.chartB.destroy(); } catch {} nowcastState.chartB = null; }
+  if (nowcastOverlay) nowcastOverlay.style.display = 'none';
 }
 
 function renderEmagramSvg(levels) {
@@ -2192,25 +2211,58 @@ function renderMeteogramSvg(series) {
   return svg;
 }
 
-function renderNowcastTable(series) {
-  if (!Array.isArray(series) || !series.length) return '<div style="opacity:.75">No short-term nowcast data.</div>';
-  const rows = series.slice(0, 96).map((r) => {
-    const t = String(r.validTime || '').slice(11, 16);
-    const cape = (r.capeMl == null) ? '—' : Number(r.capeMl).toFixed(0);
-    const hbas = (r.hbasSc == null) ? '—' : Number(r.hbasSc).toFixed(0);
-    const thick = (r.cloudThickness == null) ? '—' : Number(r.cloudThickness).toFixed(0);
-    const lpi = (r.lpi == null) ? '—' : Number(r.lpi).toFixed(1);
-    const cin = (r.cinMl == null) ? '—' : Number(r.cinMl).toFixed(0);
-    return `<tr><td>${t}</td><td>${cape}</td><td>${hbas}</td><td>${thick}</td><td>${lpi}</td><td>${cin}</td></tr>`;
-  }).join('');
-  return `
-    <div style="margin-top:10px;opacity:.9;font-size:12px">Nowcast (15 min · next 24h)</div>
-    <div style="max-height:220px;overflow:auto;border:1px solid rgba(255,255,255,.15);border-radius:8px;margin-top:6px">
-      <table style="width:100%;border-collapse:collapse;font-size:11px">
-        <thead><tr><th style="text-align:left">Time</th><th>CAPE</th><th>hbas</th><th>thick</th><th>LPI</th><th>CIN</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>`;
+function chartSeriesValues(series, key) {
+  return series.map((r) => {
+    const v = r[key];
+    return (v == null || !Number.isFinite(Number(v))) ? null : Number(v);
+  });
+}
+
+function renderNowcastCharts(series) {
+  if (!window.uPlot || !Array.isArray(series) || !series.length) return false;
+  const chartAEl = document.getElementById('nowcast-chart-a');
+  const chartBEl = document.getElementById('nowcast-chart-b');
+  if (!chartAEl || !chartBEl) return false;
+
+  if (nowcastState.chartA) { try { nowcastState.chartA.destroy(); } catch {} }
+  if (nowcastState.chartB) { try { nowcastState.chartB.destroy(); } catch {} }
+
+  const xs = series.map((r) => Date.parse(r.validTime) / 1000);
+  const commonOpts = {
+    width: Math.max(320, Math.min(760, chartAEl.clientWidth || 640)),
+    height: 220,
+    tzDate: ts => new Date(ts * 1000),
+    scales: { x: { time: true } },
+    axes: [
+      { stroke: 'rgba(255,255,255,0.55)', grid: { stroke: 'rgba(255,255,255,0.08)' } },
+      { stroke: 'rgba(255,255,255,0.55)', grid: { stroke: 'rgba(255,255,255,0.08)' } },
+    ],
+    legend: { show: true },
+    cursor: { drag: { x: false, y: false } },
+    series: [],
+  };
+
+  nowcastState.chartA = new uPlot({
+    ...commonOpts,
+    title: 'Energy',
+    series: [
+      {},
+      { label: 'CAPE', stroke: '#7ee787', width: 2 },
+      { label: 'CIN', stroke: '#ff7b72', width: 2 },
+      { label: 'LPI', stroke: '#d2a8ff', width: 2 },
+    ],
+  }, [xs, chartSeriesValues(series, 'capeMl'), chartSeriesValues(series, 'cinMl'), chartSeriesValues(series, 'lpi')], chartAEl);
+
+  nowcastState.chartB = new uPlot({
+    ...commonOpts,
+    title: 'Cloud development',
+    series: [
+      {},
+      { label: 'hbas_sc', stroke: '#79c0ff', width: 2 },
+      { label: 'Thickness', stroke: '#ffa657', width: 2 },
+    ],
+  }, [xs, chartSeriesValues(series, 'hbasSc'), chartSeriesValues(series, 'cloudThickness')], chartBEl);
+  return true;
 }
 
 async function openMeteogramAt(lat, lon, model = 'icon_d2') {
@@ -2242,17 +2294,7 @@ async function openMeteogramAt(lat, lon, model = 'icon_d2') {
     const glat = (p.gridLat ?? lat);
     const glon = (p.gridLon ?? lon);
     if (meteogramTitle) meteogramTitle.textContent = `Meteogram · ${glat}, ${glon} · ${String(modelUsed).toUpperCase().replace('_','-')} · Run ${runUsed}`;
-    let nowcastHtml = '';
-    try {
-      const nres = await fetch(`/api/nowcast_point?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&model=icon_d2&hours=24`, { signal: abortCtrl.signal });
-      if (nres.ok) {
-        const ndata = await nres.json();
-        nowcastHtml = renderNowcastTable(ndata.series || []);
-      }
-    } catch (_e) {
-      // best effort
-    }
-    meteogramBody.innerHTML = renderMeteogramSvg(data.series || []) + nowcastHtml;
+    meteogramBody.innerHTML = renderMeteogramSvg(data.series || []);
   } catch (e) {
     if (e && (e.name === 'AbortError' || String(e.message || '').toLowerCase().includes('aborted'))) {
       return;
@@ -2263,7 +2305,44 @@ async function openMeteogramAt(lat, lon, model = 'icon_d2') {
   }
 }
 
+async function openNowcastAt(lat, lon, model = 'icon_d2') {
+  if (!nowcastOverlay || !nowcastBody) return;
+  if (nowcastState.abortCtrl) {
+    try { nowcastState.abortCtrl.abort(); } catch {}
+  }
+  const abortCtrl = new AbortController();
+  nowcastState = { ...nowcastState, open: true, lat: Number(lat), lon: Number(lon), model: model || '', abortCtrl };
+  nowcastOverlay.style.display = 'flex';
+  nowcastBody.innerHTML = '<div style="opacity:.8">Loading nowcast…</div>';
+  try {
+    const key = `${Number(lat).toFixed(4)}|${Number(lon).toFixed(4)}|${model || ''}|12h`;
+    let data = nowcastCache.get(key);
+    if (!data) {
+      const res = await fetch(`/api/nowcast_point?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&model=icon_d2&hours=12`, { signal: abortCtrl.signal });
+      if (!res.ok) await throwHttpError(res, 'API');
+      data = await res.json();
+      if (nowcastCache.has(key)) nowcastCache.delete(key);
+      nowcastCache.set(key, data);
+      if (nowcastCache.size > NOWCAST_CACHE_MAX) nowcastCache.delete(nowcastCache.keys().next().value);
+    }
+    const p = data.point || {};
+    if (nowcastTitle) nowcastTitle.textContent = `Nowcast 12h · ${p.gridLat ?? lat}, ${p.gridLon ?? lon}`;
+    nowcastBody.innerHTML = `
+      <div class="nowcast-meta">15-minute D2 point series for the next 12 hours.</div>
+      <div id="nowcast-chart-a" class="nowcast-chart"></div>
+      <div id="nowcast-chart-b" class="nowcast-chart"></div>
+      <div class="nowcast-hint">Panels: Energy (CAPE/CIN/LPI) and cloud development (hbas_sc/cloud thickness).</div>`;
+    renderNowcastCharts(data.series || []);
+  } catch (e) {
+    if (e && (e.name === 'AbortError' || String(e.message || '').toLowerCase().includes('aborted'))) return;
+    nowcastBody.innerHTML = `<div style="color:#ff9f9f">Failed to load nowcast: ${String(e.message || e)}</div>`;
+  } finally {
+    if (nowcastState.abortCtrl === abortCtrl) nowcastState.abortCtrl = null;
+  }
+}
+
 window.openMeteogramAt = openMeteogramAt;
+window.openNowcastAt = openNowcastAt;
 
 
 function emagramSetLoadingUI(isLoading) {
@@ -2447,6 +2526,12 @@ if (meteogramClose) meteogramClose.addEventListener('click', closeMeteogram);
 if (meteogramOverlay) {
   meteogramOverlay.addEventListener('click', (e) => {
     if (e.target === meteogramOverlay) closeMeteogram();
+  });
+}
+if (nowcastClose) nowcastClose.addEventListener('click', closeNowcast);
+if (nowcastOverlay) {
+  nowcastOverlay.addEventListener('click', (e) => {
+    if (e.target === nowcastOverlay) closeNowcast();
   });
 }
 if (langSelect) {
