@@ -413,6 +413,9 @@ def download(url, dest):
 
 
 MULTI_MESSAGE_HOURLY_SELECT_VARS = {"cape_ml", "cin_ml", "hbas_sc", "htop_sc", "lpi"}
+# Quarter-hour substeps are most useful for short-range nowcast/overlay work.
+# Keep later D2 steps on the cheaper hourly path to limit ingest overhead.
+D2_SUBSTEP_MAX_STEP = int(os.environ.get("SKYVIEW_D2_SUBSTEP_MAX_STEP", "24"))
 
 
 def _guess_var_name_from_path(filepath: str) -> str | None:
@@ -718,7 +721,7 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
             return False
 
         try:
-            if model == "icon-d2" and key in MULTI_MESSAGE_HOURLY_SELECT_VARS:
+            if model == "icon-d2" and key in MULTI_MESSAGE_HOURLY_SELECT_VARS and int(step) <= D2_SUBSTEP_MAX_STEP:
                 fd, tmp_path = tempfile.mkstemp(suffix=".grib2")
                 try:
                     with os.fdopen(fd, "wb") as f:
