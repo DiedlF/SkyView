@@ -8,7 +8,7 @@ import numpy as np
 BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..", "backend")
 sys.path.insert(0, BACKEND_DIR)
 
-from ingest import _select_spatial_dataset  # noqa: E402
+from ingest import _select_spatial_dataset, load_grib_with_substeps  # noqa: E402
 
 
 class _Coord:
@@ -16,14 +16,20 @@ class _Coord:
         self.values = value
 
 
+class _Var:
+    def __init__(self, value):
+        self.values = value
+
+
 class _Dataset:
-    def __init__(self, valid_time: str, has_spatial: bool = True):
+    def __init__(self, valid_time: str, has_spatial: bool = True, data=None, lat=None, lon=None):
         self.coords = {}
         if has_spatial:
-            self.coords["latitude"] = _Coord(np.array([47.0]))
-            self.coords["longitude"] = _Coord(np.array([11.0]))
+            self.coords["latitude"] = _Coord(np.array([47.0, 48.0]) if lat is None else np.asarray(lat))
+            self.coords["longitude"] = _Coord(np.array([11.0, 12.0]) if lon is None else np.asarray(lon))
         self.coords["valid_time"] = _Coord(np.datetime64(valid_time))
-        self.data_vars = {"dummy": object()}
+        default = np.array([[1.0, 1.0], [1.0, 1.0]], dtype=np.float32)
+        self.data_vars = {"dummy": _Var(default if data is None else data)}
 
 
 def test_select_spatial_dataset_prefers_nominal_hour_for_d2_multi_message_var():
@@ -65,3 +71,41 @@ def test_select_spatial_dataset_works_with_temp_filename_when_hints_are_provided
         nominal_hour_hint=5,
     )
     assert str(selected.coords["valid_time"].values) == "2026-03-11T05:00:00"
+
+
+def test_select_spatial_dataset_prefers_expected_valid_time_for_nonzero_run_hour():
+    datasets = [
+        _Dataset("2026-03-11T05:00:00"),
+        _Dataset("2026-03-11T08:00:00"),
+        _Dataset("2026-03-11T08:15:00"),
+    ]
+    selected = _select_spatial_dataset(
+        datasets,
+        "/tmp/icon-d2_germany_regular-lat-lon_single-level_2026031103_005_2d_cape_ml.grib2",
+    )
+    assert str(selected.coords["valid_time"].values) == "2026-03-11T08:00:00"
+
+
+def test_load_grib_with_substeps_filters_to_expected_valid_hour_for_nonzero_run(monkeypatch):
+    datasets = [
+        _Dataset("2026-03-11T05:00:00", data=np.full((2, 2), 5.0, dtype=np.float32)),
+        _Dataset("2026-03-11T05:15:00", data=np.full((2, 2), 15.0, dtype=np.float32)),
+        _Dataset("2026-03-11T08:00:00", data=np.full((2, 2), 80.0, dtype=np.float32)),
+        _Dataset("2026-03-11T08:15:00", data=np.full((2, 2), 81.0, dtype=np.float32)),
+        _Dataset("2026-03-11T08:30:00", data=np.full((2, 2), 82.0, dtype=np.float32)),
+        _Dataset("2026-03-11T08:45:00", data=np.full((2, 2), 83.0, dtype=np.float32)),
+    ]
+
+    monkeypatch.setattr("ingest.cfgrib.open_datasets", lambda _path: datasets)
+
+    data, lat, lon, substeps, minutes = load_grib_with_substeps(
+        "/tmp/icon-d2_germany_regular-lat-lon_single-level_2026031103_005_2d_cape_ml.grib2"
+    )
+
+    assert data.shape == (2, 2)
+    assert float(data[0, 0]) == 80.0
+    assert lat.shape == (2,)
+    assert lon.shape == (2,)
+    assert minutes == [0, 15, 30, 45]
+    assert substeps.shape == (4, 2, 2)
+    assert [float(substeps[i, 0, 0]) for i in range(4)] == [80.0, 81.0, 82.0, 83.0]

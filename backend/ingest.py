@@ -434,6 +434,24 @@ def _extract_nominal_hour_from_filename(filepath: str) -> int | None:
     return int(m.group(1))
 
 
+def _extract_expected_valid_datetime_from_filename(filepath: str):
+    """Return expected valid datetime from DWD filename when available.
+
+    Example:
+      icon-d2_..._2026031103_005_2d_cape_ml.grib2 -> 2026-03-11 08:00 UTC
+    """
+    name = os.path.basename(filepath)
+    m = re.search(r'_(\d{10})_(\d{3})_(?:2d_)?[A-Za-z0-9_]+\.grib2$', name)
+    if not m:
+        return None
+    try:
+        run_dt = datetime.strptime(m.group(1), "%Y%m%d%H")
+        step_h = int(m.group(2))
+        return run_dt + timedelta(hours=step_h)
+    except Exception:
+        return None
+
+
 def _first_scalar_like(v):
     arr = np.asarray(v)
     if arr.size == 0:
@@ -446,15 +464,27 @@ def _first_scalar_like(v):
     return arr.reshape(-1)[0]
 
 
-def _dataset_valid_hour_and_minute(ds) -> tuple[int | None, int | None]:
+def _dataset_valid_datetime(ds):
     if "valid_time" in ds.coords:
         v = _first_scalar_like(ds.coords["valid_time"].values)
-        if v is not None and hasattr(v, "hour") and hasattr(v, "minute"):
-            return int(v.hour), int(v.minute)
-        text = str(v)
-        m = re.search(r'[T ](\d{2}):(\d{2})', text)
-        if m:
-            return int(m.group(1)), int(m.group(2))
+        if v is not None:
+            try:
+                return np.datetime64(v).astype("datetime64[m]").astype(object)
+            except Exception:
+                pass
+            text = str(v)
+            for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"):
+                try:
+                    return datetime.strptime(text, fmt)
+                except Exception:
+                    pass
+    return None
+
+
+def _dataset_valid_hour_and_minute(ds) -> tuple[int | None, int | None]:
+    dt = _dataset_valid_datetime(ds)
+    if dt is not None:
+        return int(dt.hour), int(dt.minute)
     if "step" in ds.coords:
         v = _first_scalar_like(ds.coords["step"].values)
         text = str(v)
@@ -477,18 +507,25 @@ def _select_spatial_dataset(datasets, filepath: str, var_name_hint: str | None =
 
     var_name = var_name_hint or _guess_var_name_from_path(filepath)
     nominal_hour = nominal_hour_hint if nominal_hour_hint is not None else _extract_nominal_hour_from_filename(filepath)
+    expected_valid_dt = _extract_expected_valid_datetime_from_filename(filepath)
     if var_name not in MULTI_MESSAGE_HOURLY_SELECT_VARS or nominal_hour is None:
         return spatial[0]
 
+    exact_valid = []
     exact_hour = []
     zero_minute = []
     for d in spatial:
+        dt = _dataset_valid_datetime(d)
         hour, minute = _dataset_valid_hour_and_minute(d)
         if minute == 0:
             zero_minute.append(d)
+            if expected_valid_dt is not None and dt is not None and dt == expected_valid_dt:
+                exact_valid.append(d)
             if hour == nominal_hour:
                 exact_hour.append(d)
 
+    if exact_valid:
+        return exact_valid[0]
     if exact_hour:
         return exact_hour[0]
     if zero_minute:
@@ -578,13 +615,25 @@ def load_grib_with_substeps(filepath, bounds=None, var_name_hint: str | None = N
 
     var_name = var_name_hint or _guess_var_name_from_path(filepath)
     nominal_hour = nominal_hour_hint if nominal_hour_hint is not None else _extract_nominal_hour_from_filename(filepath)
+    expected_valid_dt = _extract_expected_valid_datetime_from_filename(filepath)
     if var_name not in MULTI_MESSAGE_HOURLY_SELECT_VARS or nominal_hour is None:
         return data, lat, lon, None, None
 
     substep_entries = []
     for ds in spatial:
+        dt = _dataset_valid_datetime(ds)
         hour, minute = _dataset_valid_hour_and_minute(ds)
-        if hour != nominal_hour or minute is None:
+        if minute is None:
+            continue
+        if expected_valid_dt is not None and dt is not None:
+            if (dt.year, dt.month, dt.day, dt.hour) != (
+                expected_valid_dt.year,
+                expected_valid_dt.month,
+                expected_valid_dt.day,
+                expected_valid_dt.hour,
+            ):
+                continue
+        elif hour != nominal_hour:
             continue
         s_data, s_lat, s_lon = _reduce_dataset_to_2d(ds, filepath)
         s_data, s_lat, s_lon = _crop_field(s_data, s_lat, s_lon, bounds)
@@ -701,6 +750,7 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
     workers = INGEST_WORKERS
     arrays: Dict[str, np.ndarray] = {}
     lat_1d = lon_1d = None
+    out_tmp_path = os.path.join(out_dir, f".{step:03d}.tmp.npz")
 
     # Track which required variables failed so we can abort after the pool drains.
     failed_required: Optional[str] = None
@@ -712,6 +762,7 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
     }
     # Separate required vars from optional/pressure — only required failures abort.
     required_var_keys = {key for key, _url, is_opt in var_tasks if not is_opt}
+    var_task_keys = {key for key, _url, _is_opt in var_tasks}
 
     def _process_future(key: str, grib_bytes: Optional[bytes]) -> bool:
         """Parse one result on the calling (main) thread. Returns False to abort step."""
@@ -752,7 +803,7 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
             else:
                 data, lat, lon = _parse_grib_from_bytes(grib_bytes, bounds)
                 arrays[key] = data.astype(np.float32)
-            if lat_1d is None and key in {t[0] for t in var_tasks}:
+            if lat_1d is None and key in var_task_keys:
                 lat_1d = lat.astype(np.float32)
                 lon_1d = lon.astype(np.float32)
         except Exception as e:
@@ -821,9 +872,17 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
                     arr = data.astype(np.float32)
                     arrays[svar] = arr
                     os.makedirs(out_dir, exist_ok=True)
-                    np.save(svar_cache, arr)
+                    static_tmp = os.path.join(out_dir, f"._static_{svar}.npy.tmp")
+                    with open(static_tmp, "wb") as f:
+                        np.save(f, arr)
+                    os.replace(static_tmp, svar_cache)
                 except Exception as e:
                     logger.debug(f"Step {step:03d}: static {svar} parse failed: {e}")
+                    try:
+                        if 'static_tmp' in locals() and os.path.exists(static_tmp):
+                            os.unlink(static_tmp)
+                    except OSError:
+                        pass
 
     # ── Inline precip rate computation ────────────────────────────────────────
     # De-accumulate precipitation and compute mm/h rates in the same pass,
@@ -897,7 +956,16 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
     _precompute_symbol_native_fields(arrays, step=step, model=model, run=run)
 
     os.makedirs(out_dir, exist_ok=True)
-    np.savez_compressed(out_path, lat=lat_1d, lon=lon_1d, **arrays)
+    try:
+        np.savez_compressed(out_tmp_path, lat=lat_1d, lon=lon_1d, **arrays)
+        os.replace(out_tmp_path, out_path)
+    except Exception:
+        try:
+            if os.path.exists(out_tmp_path):
+                os.unlink(out_tmp_path)
+        except OSError:
+            pass
+        raise
     logger.info(f"Step {step:03d}: saved ({len(arrays)} vars, shape {arrays.get('ww', next(iter(arrays.values()))).shape})")
     return True, curr_acc
 

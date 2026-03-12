@@ -13,7 +13,6 @@
 cd "$(dirname "$0")"
 
 LOCKFILE="/tmp/skyview-ingest.lock"
-LOCKFILE_AGE_MAX=5400  # 90 minutes (EU + D2 full-cycle safety window)
 # Leave profile on auto unless explicitly overridden.
 # ingest.py resolves model-specific defaults from ingest_config.yaml:
 #   icon-d2 -> skyview_d2_core
@@ -21,21 +20,16 @@ LOCKFILE_AGE_MAX=5400  # 90 minutes (EU + D2 full-cycle safety window)
 INGEST_PROFILE="${SKYVIEW_INGEST_PROFILE:-auto}"
 export SKYVIEW_INGEST_RATE_LIMIT="${SKYVIEW_INGEST_RATE_LIMIT:-10M}"
 
-# Check for stale lock (process died without cleanup)
-if [ -f "$LOCKFILE" ]; then
-    LOCK_AGE=$(($(date +%s) - $(stat -c %Y "$LOCKFILE" 2>/dev/null || echo 0)))
-    if [ $LOCK_AGE -gt $LOCKFILE_AGE_MAX ]; then
-        echo "WARNING: Removing stale lock (age: ${LOCK_AGE}s)" >&2
-        rm -f "$LOCKFILE"
-    else
-        # Lock is fresh, another instance is running (silent exit)
-        exit 0
-    fi
+# Acquire lock atomically. flock releases automatically if the process dies,
+# avoiding stale-lock cleanup races from check-then-touch logic.
+exec 9>"$LOCKFILE"
+if ! flock -n 9; then
+    # Another instance is running (silent exit)
+    exit 0
 fi
-
-# Acquire lock
+trap 'rm -f "$LOCKFILE"' EXIT
+# Refresh mtime for admin/status views that inspect lock age.
 touch "$LOCKFILE"
-trap "rm -f $LOCKFILE" EXIT
 
 # Prefer project venv python when available
 PYTHON_BIN="${PYTHON_BIN:-../venv/bin/python}"
