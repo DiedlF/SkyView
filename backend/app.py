@@ -1732,7 +1732,8 @@ async def api_overlay_tile(
         except Exception:
             pass
     eu_key = f"|eu:{eu_fb['run']}:{eu_fb['step']}" if eu_fb else ""
-    cache_key = f"{client_class}|{model_used}|{run}|{step}{eu_key}|{layer}|{z}|{x}|{y}"
+    substep_key = f"|sub:{substep_minutes}" if substep_minutes else ""
+    cache_key = f"{client_class}|{model_used}|{run}|{step}{eu_key}{substep_key}|{layer}|{z}|{x}|{y}"
     cached = tile_cache_get(client_class, cache_key)
     if cached is not None:
         total_ms = (perf_counter() - t0) * 1000.0

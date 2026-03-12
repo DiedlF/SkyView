@@ -36,7 +36,9 @@ OVERLAY_NEEDS = {
     "h_snow": {"h_snow"},
     "dew_spread_2m": {"t_2m", "td_2m"},
     "conv_thickness": {"htop_sc", "hbas_sc"},
-    "lpi": {"lpi_max"},
+    "lpi": {"lpi"},
+    "cin_ml": {"cin_ml"},
+    "hzerocl": {"hzerocl"},
     "t_2m": {"t_2m"},
     "t_950hpa": {"t_950hpa"},
     "t_850hpa": {"t_850hpa"},
@@ -51,7 +53,7 @@ OVERLAY_NEEDS = {
     "lcl": {"t_2m", "td_2m", "hsurf"},
 }
 
-RAW_VALUE_KEYS = ["ww", "clcl", "clcm", "clch", "clct", "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "ceiling"]
+RAW_VALUE_KEYS = ["ww", "clcl", "clcm", "clch", "clct", "cape_ml", "cin_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi", "hzerocl", "ceiling"]
 
 
 def _nearest_idx(arr: np.ndarray, value: float) -> int:

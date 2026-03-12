@@ -190,6 +190,8 @@ const I18N = {
     'layer.ceiling': 'Ceiling',
     'layer.convthickness': 'Cloud thickness (convective)',
     'layer.lpi': 'LPI',
+    'layer.cinml': 'CIN (mixed layer)',
+    'layer.hzerocl': 'Freezing level',
     'layer.h_snow': 'Snow depth',
     'layer.experimental': 'Experimental',
     'layer.climbrate': 'Climb Rate (lapse_rate)',
@@ -298,6 +300,8 @@ const I18N = {
     'layer.ceiling': 'Haupt-Wolkenuntergrenze',
     'layer.convthickness': 'Wolkenmächtigkeit (konvektiv)',
     'layer.lpi': 'LPI',
+    'layer.cinml': 'CIN (Mixed Layer)',
+    'layer.hzerocl': 'Nullgradgrenze',
     'layer.h_snow': 'Schneehöhe',
     'layer.experimental': 'Experimentell',
     'layer.climbrate': 'Steigwerte (lapse_rate)',
@@ -533,6 +537,8 @@ const LEGEND_CONFIGS = {
   dew_spread_2m: { title: 'Dew point spread 2m', gradient: 'linear-gradient(to right, rgb(70,200,220), rgb(170,140,110), rgb(255,70,40))', labels: ['0 K', '25+ K'] },
   conv_thickness: { title: 'Cloud thickness (convective)', gradient: 'linear-gradient(to right, rgb(40,220,60), rgb(200,200,40), rgb(240,80,40))', labels: ['0m', '6000m'] },
   lpi: { title: 'LPI', gradient: 'linear-gradient(to right, rgb(70,190,80), rgb(160,150,60), rgb(255,70,40))', labels: ['0', '20+'] },
+  cin_ml: { title: 'CIN (mixed layer)', gradient: 'linear-gradient(to right, rgb(255,80,80), rgb(220,160,60), rgb(80,200,120))', labels: ['-500 J/kg', '0 J/kg'] },
+  hzerocl: { title: 'Freezing level', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '5000m+'] },
   thermals: { title: 'CAPE_ml', gradient: 'linear-gradient(to right, rgb(50,180,50), rgb(150,150,50), rgb(220,100,30), rgb(255,50,50))', labels: ['0 J/kg', '500+ J/kg'] },
   climb_rate: { title: 'Climb Rate', gradient: 'linear-gradient(to right, rgb(50,200,50), rgb(180,200,50), rgb(220,150,30), rgb(255,50,50))', labels: ['0 m/s', '5 m/s'] },
   climb_rate_cape: { title: 'Climb Rate (CAPE)', gradient: 'linear-gradient(to right, rgb(50,200,50), rgb(180,200,50), rgb(220,150,30), rgb(255,50,50))', labels: ['0 m/s', '5+ m/s'] },
@@ -802,6 +808,8 @@ const OVERLAY_META = {
   dew_spread_2m: { label: 'Dew point spread 2m', unit: 'K', decimals: 1 },
   conv_thickness: { label: 'Convective thickness', unit: 'm', integer: true },
   lpi: { label: 'LPI', unit: '', decimals: 1 },
+  cin_ml: { label: 'CIN', unit: 'J/kg', decimals: 1 },
+  hzerocl: { label: 'Freezing level', unit: 'm', integer: true },
   thermals: { label: 'CAPE_ml', unit: 'J/kg', decimals: 1 },
   climb_rate: { label: 'Climb', unit: 'm/s', decimals: 1 },
   climb_rate_cape: { label: 'Climb (CAPE)', unit: 'm/s', decimals: 1 },
@@ -1127,7 +1135,7 @@ function overlayOpacityForLayer(layer) {
 }
 
 function overlaySupportsSubsteps(layer) {
-  return ['thermals', 'cloud_base', 'conv_thickness'].includes(layer);
+  return ['thermals', 'cloud_base', 'conv_thickness', 'lpi', 'cin_ml'].includes(layer);
 }
 
 function cycleOverlaySubstep(delta) {
