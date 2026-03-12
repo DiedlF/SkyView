@@ -2132,6 +2132,13 @@ function renderMeteogramSvg(series) {
   const levels = [1000, 975, 950, 850, 700, 600, 500, 400, 300, 200];
   const yWind = (lev) => pWind.y + ((lev - 200) / (1000 - 200)) * pWind.ph;
   const pressureToApproxHeightM = (lev) => 44330 * (1 - Math.pow(Number(lev) / 1013.25, 0.1903));
+  const windTopAltM = pressureToApproxHeightM(200);
+  const windBottomAltM = pressureToApproxHeightM(1000);
+  const yWindAlt = (altM) => {
+    if (!Number.isFinite(altM)) return null;
+    const clamped = Math.max(windBottomAltM, Math.min(windTopAltM, Number(altM)));
+    return pWind.y + pWind.ph - ((clamped - windBottomAltM) / (windTopAltM - windBottomAltM || 1)) * pWind.ph;
+  };
   const mkBarb = (xx, yy, speedKt = 0, dirDeg = 0) => {
     if (!(Number.isFinite(speedKt) && Number.isFinite(dirDeg))) return '';
     let s = Math.max(0, Math.round(speedKt / 5) * 5);
@@ -2175,6 +2182,16 @@ function renderMeteogramSvg(series) {
     svg += `<text x="6" y="${(yy - 3).toFixed(1)}" fill="rgba(255,255,255,0.62)" font-size="9" text-anchor="start">~${a.z}m</text>`;
   }
 
+  const zeroDegPath = rows.map((r, i) => {
+    const alt = v(r, 'zeroDegAltM');
+    const yy = yWindAlt(alt);
+    if (!Number.isFinite(yy)) return null;
+    return `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${yy.toFixed(1)}`;
+  }).filter(Boolean).join(' ');
+  if (zeroDegPath) {
+    svg += `<path d="${zeroDegPath}" fill="none" stroke="#ffd166" stroke-width="1.8" stroke-dasharray="6 4" opacity="0.95"/>`;
+  }
+
   for (let i = 0; i < rows.length; i++) {
     const xx = x(i);
     const bw = Math.max(2, pxW / Math.max(rows.length, 24));
@@ -2204,6 +2221,7 @@ function renderMeteogramSvg(series) {
   }
 
   svg += `<text x="6" y="${(pWind.y + 0).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Wind</text>`;
+  if (zeroDegPath) svg += `<text x="52" y="${(pWind.y + 0).toFixed(1)}" fill="#ffd166" font-size="10">0°C level</text>`;
   svg += `<text x="6" y="${(pPre.y + 24).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Precip</text>`;
   if (hasSnow) svg += `<text x="${W - m.r + 8}" y="${(pPre.y + 24).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10" text-anchor="end">Snow</text>`;
   svg += `<text x="6" y="${(pTemp.y + 24).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Temp</text>`;
@@ -2243,6 +2261,17 @@ function formatChartValue(v, decimals = 0, suffix = '') {
   return (v == null || !Number.isFinite(Number(v))) ? '—' : `${Number(v).toFixed(decimals)}${suffix}`;
 }
 
+function formatNowcastDateTime(value) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return '—';
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yy = String(d.getFullYear()).slice(-2);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${dd}.${mm}.${yy} ${hh}:${mi}`;
+}
+
 function bindHoverReadout(chart, sourceSeries, formatter) {
   if (!chart) return;
   const update = () => {
@@ -2278,7 +2307,11 @@ function renderNowcastCharts(series) {
     scales: { x: { time: true } },
     sync: { key: 'skyview-nowcast-sync' },
     axes: [
-      { stroke: 'rgba(255,255,255,0.55)', grid: { stroke: 'rgba(255,255,255,0.08)' } },
+      {
+        stroke: 'rgba(255,255,255,0.55)',
+        grid: { stroke: 'rgba(255,255,255,0.08)' },
+        values: (_u, vals) => vals.map((v) => formatNowcastDateTime(new Date(v * 1000))),
+      },
       { stroke: 'rgba(255,255,255,0.55)', grid: { stroke: 'rgba(255,255,255,0.08)' } },
     ],
     legend: { show: true },
@@ -2289,11 +2322,21 @@ function renderNowcastCharts(series) {
   nowcastState.chartA = new uPlot({
     ...commonOpts,
     title: 'Energy',
+    scales: {
+      x: { time: true },
+      energy: { auto: true },
+      cin: { auto: true },
+    },
+    axes: [
+      commonOpts.axes[0],
+      { stroke: 'rgba(255,255,255,0.55)', grid: { stroke: 'rgba(255,255,255,0.08)' }, scale: 'energy' },
+      { stroke: '#ff7b72', side: 1, grid: { show: false }, scale: 'cin' },
+    ],
     series: [
       {},
-      { label: 'CAPE', stroke: '#7ee787', width: 2 },
-      { label: 'CIN', stroke: '#ff7b72', width: 2 },
-      { label: 'LPI', stroke: '#d2a8ff', width: 2 },
+      { label: 'CAPE', stroke: '#7ee787', width: 2, scale: 'energy' },
+      { label: 'CIN', stroke: '#ff7b72', width: 2, scale: 'cin' },
+      { label: 'LPI', stroke: '#d2a8ff', width: 2, scale: 'energy' },
     ],
   }, [xs, chartSeriesValues(series, 'capeMl'), chartSeriesValues(series, 'cinMl'), chartSeriesValues(series, 'lpi')], chartAEl);
 
@@ -2302,14 +2345,14 @@ function renderNowcastCharts(series) {
     title: 'Cloud development',
     series: [
       {},
-      { label: 'hbas_sc', stroke: '#79c0ff', width: 2 },
-      { label: 'Thickness', stroke: '#ffa657', width: 2 },
+      { label: 'Cloud base', stroke: '#79c0ff', width: 2 },
+      { label: 'Cloud top', stroke: '#ffa657', width: 2 },
     ],
-  }, [xs, chartSeriesValues(series, 'hbasSc'), chartSeriesValues(series, 'cloudThickness')], chartBEl);
+  }, [xs, chartSeriesValues(series, 'hbasSc'), chartSeriesValues(series, 'htopSc')], chartBEl);
 
   const readoutFmt = (row) => {
-    const t = String(row.validTime || '').slice(11, 16);
-    return `${t} · CAPE ${formatChartValue(row.capeMl, 0)} J/kg · CIN ${formatChartValue(row.cinMl, 0)} J/kg · LPI ${formatChartValue(row.lpi, 1)} · hbas ${formatChartValue(row.hbasSc, 0, ' m')} · thick ${formatChartValue(row.cloudThickness, 0, ' m')}`;
+    const t = formatNowcastDateTime(row.validTime);
+    return `${t} · CAPE ${formatChartValue(row.capeMl, 0)} J/kg · CIN ${formatChartValue(row.cinMl, 0)} J/kg · LPI ${formatChartValue(row.lpi, 0)} · Cloud base ${formatChartValue(row.hbasSc, 0, ' m')} · Cloud top ${formatChartValue(row.htopSc, 0, ' m')}`;
   };
   bindHoverReadout(nowcastState.chartA, series, readoutFmt);
   bindHoverReadout(nowcastState.chartB, series, readoutFmt);
@@ -2379,11 +2422,9 @@ async function openNowcastAt(lat, lon, model = 'icon_d2') {
     const p = data.point || {};
     if (nowcastTitle) nowcastTitle.textContent = `Nowcast 12h · ${p.gridLat ?? lat}, ${p.gridLon ?? lon}`;
     nowcastBody.innerHTML = `
-      <div class="nowcast-meta">15-minute D2 point series for the next 12 hours.</div>
-      <div id="chart-hover-readout" class="nowcast-meta">Hover a chart to inspect values.</div>
+      <div id="chart-hover-readout" class="nowcast-meta"></div>
       <div id="nowcast-chart-a" class="nowcast-chart"></div>
-      <div id="nowcast-chart-b" class="nowcast-chart"></div>
-      <div class="nowcast-hint">Panels: Energy (CAPE/CIN/LPI) and cloud development (hbas_sc/cloud thickness).</div>`;
+      <div id="nowcast-chart-b" class="nowcast-chart"></div>`;
     renderNowcastCharts(data.series || []);
   } catch (e) {
     if (e && (e.name === 'AbortError' || String(e.message || '').toLowerCase().includes('aborted'))) return;

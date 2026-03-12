@@ -43,9 +43,11 @@ profiles:
       # Symbols + overlays
       - ww
       - cape_ml
+      - cin_ml
       - htop_dc
       - hbas_sc
       - htop_sc
+      - lpi
       - lpi_max
       - ceiling
       - clcl

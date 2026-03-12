@@ -4,15 +4,23 @@ import os
 from logging.handlers import RotatingFileHandler
 
 
-def setup_logging(name: str, level: str = "INFO", log_name: str = "skyview") -> logging.Logger:
+def setup_logging(
+    name: str,
+    level: str = "INFO",
+    log_name: str = "skyview",
+    console_level: str | None = None,
+    file_level: str | None = None,
+) -> logging.Logger:
     """Set up logging with console and rotating file handlers.
 
     Args:
         name: Logger name (usually __name__)
-        level: Log level string (DEBUG, INFO, WARNING, ERROR)
+        level: Default log level string (DEBUG, INFO, WARNING, ERROR)
         log_name: Base name for the log file (default "skyview" → skyview.log).
                   Pass "ingest" for the ingest process so its output lands in ingest.log
                   and stays separate from the backend API log.
+        console_level: Optional override for console handler level.
+        file_level: Optional override for file handler level.
 
     Returns:
         Configured logger instance
@@ -24,7 +32,9 @@ def setup_logging(name: str, level: str = "INFO", log_name: str = "skyview") -> 
         return logger
 
     log_level = getattr(logging, level.upper(), logging.INFO)
-    logger.setLevel(log_level)
+    console_log_level = getattr(logging, (console_level or level).upper(), log_level)
+    file_log_level = getattr(logging, (file_level or level).upper(), log_level)
+    logger.setLevel(min(console_log_level, file_log_level))
 
     # Create logs directory
     log_dir = os.path.join(os.path.dirname(__file__), "logs")
@@ -36,20 +46,20 @@ def setup_logging(name: str, level: str = "INFO", log_name: str = "skyview") -> 
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
-    # Console handler (INFO and above)
+    # Console handler
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
+    console_handler.setLevel(console_log_level)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    # File handler (rotating, captures all levels)
+    # File handler (rotating)
     log_file = os.path.join(log_dir, f"{log_name}.log")
     file_handler = RotatingFileHandler(
         log_file,
         maxBytes=10 * 1024 * 1024,  # 10 MB
         backupCount=5
     )
-    file_handler.setLevel(log_level)
+    file_handler.setLevel(file_log_level)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 
