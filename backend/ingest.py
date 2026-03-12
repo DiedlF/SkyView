@@ -466,7 +466,16 @@ def _first_scalar_like(v):
 
 def _dataset_valid_datetime(ds):
     if "valid_time" in ds.coords:
-        v = _first_scalar_like(ds.coords["valid_time"].values)
+        raw = ds.coords["valid_time"].values
+        try:
+            if isinstance(raw, np.datetime64):
+                return raw.astype("datetime64[m]").astype(object)
+            if isinstance(raw, np.ndarray) and raw.shape == () and np.issubdtype(raw.dtype, np.datetime64):
+                return raw.astype("datetime64[m]").astype(object)
+        except Exception:
+            pass
+
+        v = _first_scalar_like(raw)
         if v is not None:
             try:
                 return np.datetime64(v).astype("datetime64[m]").astype(object)
@@ -500,14 +509,20 @@ def _spatial_datasets(datasets):
     return [d for d in datasets if "latitude" in d.coords and "longitude" in d.coords and d.data_vars]
 
 
-def _select_spatial_dataset_with_reason(datasets, filepath: str, var_name_hint: str | None = None, nominal_hour_hint: int | None = None):
+def _select_spatial_dataset_with_reason(
+    datasets,
+    filepath: str,
+    var_name_hint: str | None = None,
+    nominal_hour_hint: int | None = None,
+    expected_valid_dt_hint=None,
+):
     spatial = _spatial_datasets(datasets)
     if not spatial:
         return None, "no_spatial"
 
     var_name = var_name_hint or _guess_var_name_from_path(filepath)
     nominal_hour = nominal_hour_hint if nominal_hour_hint is not None else _extract_nominal_hour_from_filename(filepath)
-    expected_valid_dt = _extract_expected_valid_datetime_from_filename(filepath)
+    expected_valid_dt = expected_valid_dt_hint or _extract_expected_valid_datetime_from_filename(filepath)
     if var_name not in MULTI_MESSAGE_HOURLY_SELECT_VARS or nominal_hour is None:
         return spatial[0], "default_first"
 
@@ -605,7 +620,13 @@ def load_grib(filepath, bounds=None):
     return _crop_field(data, lat, lon, bounds)
 
 
-def load_grib_with_substeps(filepath, bounds=None, var_name_hint: str | None = None, nominal_hour_hint: int | None = None):
+def load_grib_with_substeps(
+    filepath,
+    bounds=None,
+    var_name_hint: str | None = None,
+    nominal_hour_hint: int | None = None,
+    expected_valid_dt_hint=None,
+):
     """Load GRIB2 and also return quarter-hour stacked substeps when present.
 
     Returns (data_2d, lat_1d, lon_1d, substeps_3d|None, minutes_list|None)
@@ -619,13 +640,19 @@ def load_grib_with_substeps(filepath, bounds=None, var_name_hint: str | None = N
     if not spatial:
         raise ValueError(f"No spatial dataset found in {filepath}")
 
-    selected, selection_reason = _select_spatial_dataset_with_reason(datasets, filepath, var_name_hint=var_name_hint, nominal_hour_hint=nominal_hour_hint)
+    selected, selection_reason = _select_spatial_dataset_with_reason(
+        datasets,
+        filepath,
+        var_name_hint=var_name_hint,
+        nominal_hour_hint=nominal_hour_hint,
+        expected_valid_dt_hint=expected_valid_dt_hint,
+    )
     data, lat, lon = _reduce_dataset_to_2d(selected, filepath)
     data, lat, lon = _crop_field(data, lat, lon, bounds)
 
     var_name = var_name_hint or _guess_var_name_from_path(filepath)
     nominal_hour = nominal_hour_hint if nominal_hour_hint is not None else _extract_nominal_hour_from_filename(filepath)
-    expected_valid_dt = _extract_expected_valid_datetime_from_filename(filepath)
+    expected_valid_dt = expected_valid_dt_hint or _extract_expected_valid_datetime_from_filename(filepath)
     if var_name not in MULTI_MESSAGE_HOURLY_SELECT_VARS or nominal_hour is None:
         return data, lat, lon, None, None
 
@@ -813,6 +840,7 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
                         bounds,
                         var_name_hint=key,
                         nominal_hour_hint=int(step),
+                        expected_valid_dt_hint=datetime.strptime(str(run), "%Y%m%d%H") + timedelta(hours=int(step)),
                     )
                 finally:
                     try:

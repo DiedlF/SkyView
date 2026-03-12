@@ -109,3 +109,31 @@ def test_load_grib_with_substeps_filters_to_expected_valid_hour_for_nonzero_run(
     assert minutes == [0, 15, 30, 45]
     assert substeps.shape == (4, 2, 2)
     assert [float(substeps[i, 0, 0]) for i in range(4)] == [80.0, 81.0, 82.0, 83.0]
+
+
+def test_load_grib_with_substeps_uses_expected_valid_hint_for_temp_files(monkeypatch):
+    datasets = [
+        _Dataset("2026-03-11T16:00:00", data=np.full((2, 2), 16.0, dtype=np.float32)),
+        _Dataset("2026-03-11T16:15:00", data=np.full((2, 2), 16.25, dtype=np.float32)),
+        _Dataset("2026-03-11T19:00:00", data=np.full((2, 2), 19.0, dtype=np.float32)),
+        _Dataset("2026-03-11T19:15:00", data=np.full((2, 2), 19.25, dtype=np.float32)),
+        _Dataset("2026-03-11T19:30:00", data=np.full((2, 2), 19.5, dtype=np.float32)),
+        _Dataset("2026-03-11T19:45:00", data=np.full((2, 2), 19.75, dtype=np.float32)),
+    ]
+
+    monkeypatch.setattr("ingest.cfgrib.open_datasets", lambda _path: datasets)
+
+    data, lat, lon, substeps, minutes = load_grib_with_substeps(
+        "/tmp/tmpabcd1234.grib2",
+        var_name_hint="cape_ml",
+        nominal_hour_hint=16,
+        expected_valid_dt_hint=np.datetime64("2026-03-11T19:00:00").astype("datetime64[m]").astype(object),
+    )
+
+    assert data.shape == (2, 2)
+    assert float(data[0, 0]) == 19.0
+    assert lat.shape == (2,)
+    assert lon.shape == (2,)
+    assert minutes == [0, 15, 30, 45]
+    assert substeps.shape == (4, 2, 2)
+    assert [float(substeps[i, 0, 0]) for i in range(4)] == [19.0, 19.25, 19.5, 19.75]
