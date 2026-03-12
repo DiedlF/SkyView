@@ -26,7 +26,7 @@ import yaml
 from datetime import datetime, timedelta, timezone
 import time
 from logging_config import setup_logging
-from constants import ICON_EU_STEP_3H_START
+from constants import ICON_EU_STEP_3H_START, LOW_ZOOM_PRECOMPUTED_BINS_ENABLED
 from classify import classify_clouds_and_bases
 from convective_filters import filter_hbas_with_mh
 
@@ -500,16 +500,16 @@ def _spatial_datasets(datasets):
     return [d for d in datasets if "latitude" in d.coords and "longitude" in d.coords and d.data_vars]
 
 
-def _select_spatial_dataset(datasets, filepath: str, var_name_hint: str | None = None, nominal_hour_hint: int | None = None):
+def _select_spatial_dataset_with_reason(datasets, filepath: str, var_name_hint: str | None = None, nominal_hour_hint: int | None = None):
     spatial = _spatial_datasets(datasets)
     if not spatial:
-        return None
+        return None, "no_spatial"
 
     var_name = var_name_hint or _guess_var_name_from_path(filepath)
     nominal_hour = nominal_hour_hint if nominal_hour_hint is not None else _extract_nominal_hour_from_filename(filepath)
     expected_valid_dt = _extract_expected_valid_datetime_from_filename(filepath)
     if var_name not in MULTI_MESSAGE_HOURLY_SELECT_VARS or nominal_hour is None:
-        return spatial[0]
+        return spatial[0], "default_first"
 
     exact_valid = []
     exact_hour = []
@@ -525,12 +525,22 @@ def _select_spatial_dataset(datasets, filepath: str, var_name_hint: str | None =
                 exact_hour.append(d)
 
     if exact_valid:
-        return exact_valid[0]
+        return exact_valid[0], "exact_valid"
     if exact_hour:
-        return exact_hour[0]
+        return exact_hour[0], "fallback_exact_hour"
     if zero_minute:
-        return zero_minute[0]
-    return spatial[0]
+        return zero_minute[0], "fallback_zero_minute"
+    return spatial[0], "fallback_first_spatial"
+
+
+def _select_spatial_dataset(datasets, filepath: str, var_name_hint: str | None = None, nominal_hour_hint: int | None = None):
+    ds, _reason = _select_spatial_dataset_with_reason(
+        datasets,
+        filepath,
+        var_name_hint=var_name_hint,
+        nominal_hour_hint=nominal_hour_hint,
+    )
+    return ds
 
 
 def _reduce_dataset_to_2d(ds, filepath: str):
@@ -587,7 +597,7 @@ def load_grib(filepath, bounds=None):
     if not datasets:
         raise ValueError(f"No datasets in {filepath}")
 
-    ds = _select_spatial_dataset(datasets, filepath)
+    ds, _selection_reason = _select_spatial_dataset_with_reason(datasets, filepath)
     if ds is None:
         raise ValueError(f"No spatial dataset found in {filepath}")
 
@@ -609,7 +619,7 @@ def load_grib_with_substeps(filepath, bounds=None, var_name_hint: str | None = N
     if not spatial:
         raise ValueError(f"No spatial dataset found in {filepath}")
 
-    selected = _select_spatial_dataset(datasets, filepath, var_name_hint=var_name_hint, nominal_hour_hint=nominal_hour_hint)
+    selected, selection_reason = _select_spatial_dataset_with_reason(datasets, filepath, var_name_hint=var_name_hint, nominal_hour_hint=nominal_hour_hint)
     data, lat, lon = _reduce_dataset_to_2d(selected, filepath)
     data, lat, lon = _crop_field(data, lat, lon, bounds)
 
@@ -642,11 +652,24 @@ def load_grib_with_substeps(filepath, bounds=None, var_name_hint: str | None = N
         substep_entries.append((int(minute), s_data))
 
     if not substep_entries:
+        if selection_reason != "exact_valid":
+            logger.warning(
+                "Substep selection fallback for %s (%s) produced no quarter-hour slices",
+                os.path.basename(filepath),
+                selection_reason,
+            )
         return data, lat, lon, None, None
 
     substep_entries.sort(key=lambda item: item[0])
     minutes = [m for m, _ in substep_entries]
     stacked = np.stack([arr for _, arr in substep_entries], axis=0)
+    if selection_reason != "exact_valid":
+        logger.warning(
+            "Substep selection fallback for %s used %s with minutes=%s",
+            os.path.basename(filepath),
+            selection_reason,
+            minutes,
+        )
     return data, lat, lon, stacked, minutes
 
 
@@ -800,6 +823,9 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
                 if substeps is not None and minutes:
                     arrays[f"{key}_substeps"] = substeps.astype(np.float32)
                     arrays[f"{key}_substep_minutes"] = np.asarray(minutes, dtype=np.int16)
+                    logger.debug(f"Step {step:03d}: {key} substeps extracted minutes={minutes}")
+                else:
+                    logger.warning(f"Step {step:03d}: {key} expected quarter-hour substeps but none were extracted")
             else:
                 data, lat, lon = _parse_grib_from_bytes(grib_bytes, bounds)
                 arrays[key] = data.astype(np.float32)
@@ -854,7 +880,7 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
         if _eu_lpi_max_expected_for_step(step):
             logger.warning(f"Step {step:03d}: lpi_max missing on EU source for expected step — filled with zeros")
         else:
-            logger.info(f"Step {step:03d}: lpi_max not scheduled on EU source cadence — filled with zeros")
+            logger.debug(f"Step {step:03d}: lpi_max not scheduled on EU source cadence — filled with zeros")
 
     # ── Static variables (hsurf etc.) — cached per run ───────────────────────
     for svar in static_vars:
@@ -948,7 +974,7 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
         rejected = int(np.count_nonzero(reject_mask))
         if rejected > 0:
             frac = (rejected / reject_mask.size) * 100.0
-            logger.info(
+            logger.debug(
                 f"Step {step:03d}: hbas_sc sanity filter rejected {rejected}/{reject_mask.size} cells ({frac:.2f}%)"
             )
         arrays["hbas_sc"] = hbas_filtered.astype(np.float32)
@@ -966,7 +992,7 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
         except OSError:
             pass
         raise
-    logger.info(f"Step {step:03d}: saved ({len(arrays)} vars, shape {arrays.get('ww', next(iter(arrays.values()))).shape})")
+    logger.debug(f"Step {step:03d}: saved ({len(arrays)} vars, shape {arrays.get('ww', next(iter(arrays.values()))).shape})")
     return True, curr_acc
 
 
@@ -1369,15 +1395,15 @@ def main():
 
         if available and not has_local:
             logger.info(f"NEW: {model} {run} available, not yet downloaded")
-            logger.info(f"Next expected {model} run time (UTC): {nxt_iso}")
+            logger.debug(f"Next expected {model} run time (UTC): {nxt_iso}")
             sys.exit(0)
         elif available and has_local:
-            logger.info(f"NOOP: ingest check ran, no new data for {model}. Current run {run} already downloaded.")
-            logger.info(f"Next expected {model} run time (UTC): {nxt_iso}")
+            logger.debug(f"NOOP: ingest check ran, no new data for {model}. Current run {run} already downloaded.")
+            logger.debug(f"Next expected {model} run time (UTC): {nxt_iso}")
             sys.exit(1)
         else:
-            logger.info(f"NOOP: ingest check ran, no new data for {model}. DWD run {run} not yet available.")
-            logger.info(f"Next expected {model} run time (UTC): {nxt_iso}")
+            logger.debug(f"NOOP: ingest check ran, no new data for {model}. DWD run {run} not yet available.")
+            logger.debug(f"Next expected {model} run time (UTC): {nxt_iso}")
             sys.exit(1)
 
     # --fill-missing implies "all" steps as the target set unless --steps was given explicitly
@@ -1395,9 +1421,9 @@ def main():
 
     bounds = get_bounds_for_model(model, config)
     if bounds:
-        logger.info(f"  Region: crop to {bounds}")
+        logger.debug(f"Region: crop to {bounds}")
     else:
-        logger.info("  Region: full grid (no crop)")
+        logger.debug("Region: full grid (no crop)")
 
     # Check if run data is available (latest expected step; prefer late var 'mh').
     probe_step, probe_var = _availability_probe_target(cfg, variables)
@@ -1421,16 +1447,29 @@ def main():
         if not steps:
             logger.info(f"No missing steps for {model} run {run} — already complete")
             sys.exit(0)
-        logger.info(f"--fill-missing: {len(steps)} step(s) to ingest: {steps}")
+        logger.info(f"--fill-missing: {len(steps)} step(s) to ingest")
+        logger.debug(f"--fill-missing steps: {steps}")
 
     ok = 0
     prev_acc: dict | None = None
     prev_step_done: int | None = None
 
     sp_cfg = config.get("symbol_precompute", {}) if isinstance(config, dict) else {}
-    sp_enabled = bool(sp_cfg.get("enabled", False))
+    sp_enabled = bool(sp_cfg.get("enabled", False)) and LOW_ZOOM_PRECOMPUTED_BINS_ENABLED
     sp_fresh_only = bool(sp_cfg.get("on_fresh_ingest_only", True))
     sp_zooms = ",".join(str(int(z)) for z in sp_cfg.get("zooms", [5, 6, 7, 8, 9]))
+
+    if model == "icon-d2":
+        logger.info(
+            "D2 substep ingest: vars=%s max_step=%s",
+            ",".join(sorted(MULTI_MESSAGE_HOURLY_SELECT_VARS)),
+            D2_SUBSTEP_MAX_STEP,
+        )
+
+    if bool(sp_cfg.get("enabled", False)) and not LOW_ZOOM_PRECOMPUTED_BINS_ENABLED:
+        logger.info(
+            "Low-zoom symbol bin precompute disabled by SKYVIEW_LOW_ZOOM_PRECOMPUTED_BINS=0; native symbol fields remain enabled"
+        )
 
     for step in steps:
         # Ensure prev_acc is consistent with what this step expects.
