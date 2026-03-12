@@ -603,12 +603,19 @@ const CELL_KM = {5:200, 6:110, 7:55, 8:28, 9:13, 10:7, 11:3, 12:2};
 function updateInfoPanel() {
   const info = document.getElementById('overlay-substep-info');
   const sep = document.getElementById('overlay-substep-sep');
-  if (!info || !sep) return;
+  const prevBtn = document.getElementById('overlay-substep-prev');
+  const nextBtn = document.getElementById('overlay-substep-next');
+  if (!info || !sep || !prevBtn || !nextBtn) return;
   const layer = getEffectiveOverlayLayer();
-  const active = overlaySupportsSubsteps(layer) && overlaySubstepMinutes > 0;
+  const supported = overlaySupportsSubsteps(layer);
+  const active = supported && overlaySubstepMinutes > 0;
   info.style.display = active ? '' : 'none';
-  sep.style.display = active ? '' : 'none';
+  sep.style.display = supported ? '' : 'none';
+  prevBtn.style.display = supported ? '' : 'none';
+  nextBtn.style.display = supported ? '' : 'none';
   if (active) info.textContent = `Overlay substep: +${overlaySubstepMinutes} min`;
+  prevBtn.disabled = !supported;
+  nextBtn.disabled = !supported;
 }
 
 function updateZoom() {
@@ -1558,6 +1565,11 @@ map.getContainer().addEventListener('wheel', (e) => {
   cycleOverlaySubstep(e.deltaY > 0 ? 1 : -1);
 }, { passive: false });
 
+const overlaySubstepPrevBtn = document.getElementById('overlay-substep-prev');
+const overlaySubstepNextBtn = document.getElementById('overlay-substep-next');
+if (overlaySubstepPrevBtn) overlaySubstepPrevBtn.addEventListener('click', () => cycleOverlaySubstep(-1));
+if (overlaySubstepNextBtn) overlaySubstepNextBtn.addEventListener('click', () => cycleOverlaySubstep(1));
+
 // Timeline controls
 const timeline = document.getElementById('timeline');
 const dateStrip = document.getElementById('date-strip');
@@ -2272,22 +2284,49 @@ function formatNowcastDateTime(value) {
   return `${dd}.${mm}.${yy} ${hh}:${mi}`;
 }
 
-function bindHoverReadout(chart, sourceSeries, formatter) {
-  if (!chart) return;
-  const update = () => {
-    const idx = chart.cursor?.idx;
+function formatNowcastHour(value) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return '—';
+  return `${String(d.getHours()).padStart(2, '0')}`;
+}
+
+function formatNowcastDate(value) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return '—';
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yy = String(d.getFullYear()).slice(-2);
+  return `${dd}.${mm}.${yy}`;
+}
+
+function buildNowcastSplits(minSec, maxSec) {
+  const out = [];
+  const start = new Date(minSec * 1000);
+  start.setMinutes(0, 0, 0);
+  if ((start.getTime() / 1000) > minSec) start.setHours(start.getHours() - 1);
+  for (let ts = start.getTime() / 1000; ts <= maxSec + 3600; ts += 3600) out.push(ts);
+  return out;
+}
+
+function bindHoverReadout(charts, sourceSeries, formatter) {
+  const list = Array.isArray(charts) ? charts : [charts];
+  const update = (idx) => {
     if (idx == null || idx < 0 || idx >= sourceSeries.length) return;
     const el = document.getElementById('chart-hover-readout');
     if (!el) return;
     el.textContent = formatter(sourceSeries[idx]);
   };
-  const orig = chart.setCursor?.bind(chart);
-  if (!orig) return;
-  chart.setCursor = function(opts, fireHook) {
-    const out = orig(opts, fireHook);
-    try { update(); } catch (_e) {}
-    return out;
-  };
+  for (const chart of list) {
+    if (!chart) continue;
+    const orig = chart.setCursor?.bind(chart);
+    if (!orig) continue;
+    chart.setCursor = function(opts, fireHook) {
+      const out = orig(opts, fireHook);
+      try { update(this.cursor?.idx); } catch (_e) {}
+      return out;
+    };
+  }
+  update(0);
 }
 
 function renderNowcastCharts(series) {
@@ -2310,7 +2349,14 @@ function renderNowcastCharts(series) {
       {
         stroke: 'rgba(255,255,255,0.55)',
         grid: { stroke: 'rgba(255,255,255,0.08)' },
-        values: (_u, vals) => vals.map((v) => formatNowcastDateTime(new Date(v * 1000))),
+        splits: (u, axisIdx, scaleMin, scaleMax) => buildNowcastSplits(scaleMin, scaleMax),
+        values: (_u, vals) => vals.map((v) => {
+          const d = new Date(v * 1000);
+          if (d.getHours() === 0) return formatNowcastDate(d);
+          if (d.getHours() % 2 === 0) return formatNowcastHour(d);
+          return '';
+        }),
+        size: 52,
       },
       { stroke: 'rgba(255,255,255,0.55)', grid: { stroke: 'rgba(255,255,255,0.08)' } },
     ],
@@ -2342,7 +2388,7 @@ function renderNowcastCharts(series) {
 
   nowcastState.chartB = new uPlot({
     ...commonOpts,
-    title: 'Cloud development',
+    title: 'Convective Clouds',
     series: [
       {},
       { label: 'Cloud base', stroke: '#79c0ff', width: 2 },
@@ -2352,10 +2398,9 @@ function renderNowcastCharts(series) {
 
   const readoutFmt = (row) => {
     const t = formatNowcastDateTime(row.validTime);
-    return `${t} · CAPE ${formatChartValue(row.capeMl, 0)} J/kg · CIN ${formatChartValue(row.cinMl, 0)} J/kg · LPI ${formatChartValue(row.lpi, 0)} · Cloud base ${formatChartValue(row.hbasSc, 0, ' m')} · Cloud top ${formatChartValue(row.htopSc, 0, ' m')}`;
+    return `${t} · CAPE ${formatChartValue(Math.round(Number(row.capeMl)), 0)} J/kg · CIN ${formatChartValue(Math.round(Number(row.cinMl)), 0)} J/kg · LPI ${formatChartValue(Math.round(Number(row.lpi)), 0)} · Cloud base ${formatChartValue(Math.round(Number(row.hbasSc)), 0, ' m')} · Cloud top ${formatChartValue(Math.round(Number(row.htopSc)), 0, ' m')}`;
   };
-  bindHoverReadout(nowcastState.chartA, series, readoutFmt);
-  bindHoverReadout(nowcastState.chartB, series, readoutFmt);
+  bindHoverReadout([nowcastState.chartA, nowcastState.chartB], series, readoutFmt);
   return true;
 }
 

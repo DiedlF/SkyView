@@ -30,6 +30,8 @@ from constants import (
     G0,
     SYMBOL_MODE_FIXED_GRID_MAX_ZOOM,
     SYMBOL_MODE_NATIVE_ZOOM,
+    SYMBOL_MODE_NATIVE_ZOOM_D2,
+    SYMBOL_MODE_NATIVE_ZOOM_EU,
     SYMBOL_MODE_PRECOMPUTED_MAX_ZOOM,
     WORLD_GRID_ANCHOR_LAT,
     WORLD_GRID_ANCHOR_LON,
@@ -96,11 +98,13 @@ def build_weather_router(
             "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hsurf", "mh",
             "sym_code", "cb_hm",
         ]
+        requested_model_normalized = str(model or "icon_d2").replace("-", "_")
+        native_zoom_threshold = SYMBOL_MODE_NATIVE_ZOOM_EU if requested_model_normalized == "icon_eu" else SYMBOL_MODE_NATIVE_ZOOM_D2
         symbol_mode = (
             "precomputed" if (zoom <= SYMBOL_MODE_PRECOMPUTED_MAX_ZOOM and LOW_ZOOM_PRECOMPUTED_BINS_ENABLED) else
-            ("fixed_grid" if zoom <= SYMBOL_MODE_FIXED_GRID_MAX_ZOOM else "native")
+            ("native" if zoom >= native_zoom_threshold else "fixed_grid")
         )
-        requested_model_for_mode = "icon_d2" if zoom == SYMBOL_MODE_NATIVE_ZOOM else model
+        requested_model_for_mode = requested_model_normalized if symbol_mode == "native" else model
         run, step, model_used = resolve_time_with_cache_context(time, requested_model_for_mode)
         is_low_zoom_global = symbol_mode == "precomputed"
         is_native_zoom = symbol_mode == "native"

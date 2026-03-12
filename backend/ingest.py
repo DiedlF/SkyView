@@ -31,7 +31,13 @@ from constants import ICON_EU_STEP_3H_START, LOW_ZOOM_PRECOMPUTED_BINS_ENABLED
 from classify import classify_clouds_and_bases
 from convective_filters import filter_hbas_with_mh
 
-logger = setup_logging(__name__, level="INFO", log_name="ingest")
+logger = setup_logging(
+    __name__,
+    level="INFO",
+    log_name="ingest",
+    console_level="INFO",
+    file_level="DEBUG",
+)
 # Reduce cfgrib index-cache noise like "Ignoring index file ... older than GRIB file".
 try:
     import logging as _logging
@@ -666,6 +672,14 @@ def _load_grib_substeps_eccodes(filepath, bounds=None, expected_valid_dt=None):
     return base_data, base_lat, base_lon, stacked, minutes, base_minute
 
 
+def _cfgrib_open_datasets_noidx(filepath):
+    try:
+        return cfgrib.open_datasets(filepath, backend_kwargs={"indexpath": ""})
+    except TypeError:
+        # Test monkeypatches may stub open_datasets(path) without kwargs.
+        return cfgrib.open_datasets(filepath)
+
+
 def load_grib(filepath, bounds=None):
     """Load GRIB2, optionally crop to bounds, return (data_2d, lat_1d, lon_1d).
 
@@ -684,7 +698,7 @@ def load_grib(filepath, bounds=None):
       regular-lat-lon grids but ordering may differ — we sort ascending if needed.
     - Non-hourly steps (ICON-EU 81-120h, 3h intervals) parse correctly since 0.9.12.
     """
-    datasets = cfgrib.open_datasets(filepath)
+    datasets = _cfgrib_open_datasets_noidx(filepath)
     if not datasets:
         raise ValueError(f"No datasets in {filepath}")
 
@@ -728,7 +742,7 @@ def load_grib_with_substeps(
                 )
             return base_data, base_lat, base_lon, stacked, minutes
 
-    datasets = cfgrib.open_datasets(filepath)
+    datasets = _cfgrib_open_datasets_noidx(filepath)
     if not datasets:
         raise ValueError(f"No datasets in {filepath}")
 
