@@ -4,6 +4,7 @@ let map, symbolLayer, windLayer, markerLayer, d2BorderLayer = null, overlayLayer
 let overlayRequestSeq = 0;
 let symbolsRequestSeq = 0;
 let windRequestSeq = 0;
+let markerStartupCentered = false;
 let ingestPulseRevision = null;
 let ingestPulseRunning = null;
 let overlayAbortCtrl = null;
@@ -541,9 +542,11 @@ const LEGEND_CONFIGS = {
 };
 
 // Initialize map
+const DEFAULT_MAP_CENTER = [47.6836, 11.9610];
+const DEFAULT_MAP_ZOOM = 9;
 map = L.map('map', {
-  center: [47.6836, 11.9610],
-  zoom: 9,
+  center: DEFAULT_MAP_CENTER,
+  zoom: DEFAULT_MAP_ZOOM,
   minZoom: 5,
   maxZoom: 12,
   // Expanded pan limits to full ICON-EU operational area (approx Europe view)
@@ -985,6 +988,15 @@ async function loadMarkerProfile() {
     }).addTo(markerLayer);
     marker.bindTooltip(m.name || 'Marker', { direction: 'top', opacity: 0.92 });
 
+    if (!markerStartupCentered && map) {
+      const c = map.getCenter();
+      const atDefaultCenter = Math.abs(c.lat - DEFAULT_MAP_CENTER[0]) < 1e-6 && Math.abs(c.lng - DEFAULT_MAP_CENTER[1]) < 1e-6;
+      if (atDefaultCenter && map.getZoom() === DEFAULT_MAP_ZOOM) {
+        map.setView([m.lat, m.lon], map.getZoom(), { animate: false });
+      }
+      markerStartupCentered = true;
+    }
+
     const btn = document.getElementById('marker-picker-open');
     if (btn) {
       btn.textContent = `Marker: ${m.name || 'Marker'}`;
@@ -1123,8 +1135,35 @@ function cycleOverlaySubstep(delta) {
   if (!overlaySupportsSubsteps(layer)) return;
   const allowed = [0, 15, 30, 45];
   const idx = allowed.indexOf(overlaySubstepMinutes);
-  const next = (idx + delta + allowed.length) % allowed.length;
-  overlaySubstepMinutes = allowed[next];
+  const nextIdx = idx + delta;
+
+  if (nextIdx >= allowed.length) {
+    if (currentTimeIndex < timesteps.length - 1) {
+      currentTimeIndex++;
+      overlaySubstepMinutes = allowed[0];
+      updateTimeline();
+      loadSymbols();
+      loadOverlay();
+      loadWind();
+      loadD2Border();
+    }
+    return;
+  }
+
+  if (nextIdx < 0) {
+    if (currentTimeIndex > 0) {
+      currentTimeIndex--;
+      overlaySubstepMinutes = allowed[allowed.length - 1];
+      updateTimeline();
+      loadSymbols();
+      loadOverlay();
+      loadWind();
+      loadD2Border();
+    }
+    return;
+  }
+
+  overlaySubstepMinutes = allowed[nextIdx];
   updateInfoPanel();
   loadOverlay();
 }
