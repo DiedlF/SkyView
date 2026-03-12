@@ -23,6 +23,7 @@ import numpy as np
 import cfgrib
 import requests as _requests
 import yaml
+from eccodes import codes_grib_new_from_file, codes_get, codes_get_array, codes_release
 from datetime import datetime, timedelta, timezone
 import time
 from logging_config import setup_logging
@@ -590,6 +591,81 @@ def _crop_field(data, lat, lon, bounds=None):
     return data, lat, lon
 
 
+def _grib_valid_datetime(gid):
+    try:
+        vdate = int(codes_get(gid, "validityDate"))
+        vtime = int(codes_get(gid, "validityTime"))
+        return datetime.strptime(f"{vdate:08d}{vtime:04d}", "%Y%m%d%H%M")
+    except Exception:
+        return None
+
+
+def _grib_message_2d(gid, filepath: str):
+    lat = np.asarray(codes_get_array(gid, "distinctLatitudes"), dtype=np.float32)
+    lon = np.asarray(codes_get_array(gid, "distinctLongitudes"), dtype=np.float32)
+    vals = np.asarray(codes_get_array(gid, "values"), dtype=np.float32)
+    try:
+        missing = float(codes_get(gid, "missingValue"))
+        vals[vals == missing] = np.nan
+    except Exception:
+        pass
+    data = vals.reshape((len(lat), len(lon)))
+    if data.shape != (len(lat), len(lon)):
+        raise ValueError(
+            f"ECCODES shape mismatch: data={data.shape}, lat={len(lat)}, lon={len(lon)} in {filepath}"
+        )
+    return data, lat, lon
+
+
+def _load_grib_substeps_eccodes(filepath, bounds=None, expected_valid_dt=None):
+    entries = []
+    with open(filepath, "rb") as f:
+        while True:
+            gid = codes_grib_new_from_file(f)
+            if gid is None:
+                break
+            try:
+                dt = _grib_valid_datetime(gid)
+                if dt is None:
+                    continue
+                if expected_valid_dt is not None and (
+                    dt.year, dt.month, dt.day, dt.hour
+                ) != (
+                    expected_valid_dt.year,
+                    expected_valid_dt.month,
+                    expected_valid_dt.day,
+                    expected_valid_dt.hour,
+                ):
+                    continue
+                data, lat, lon = _grib_message_2d(gid, filepath)
+                data, lat, lon = _crop_field(data, lat, lon, bounds)
+                entries.append((int(dt.minute), dt, data, lat, lon))
+            finally:
+                codes_release(gid)
+
+    if not entries:
+        return None
+
+    entries.sort(key=lambda item: item[0])
+    base_idx = next((i for i, (minute, _dt, _data, _lat, _lon) in enumerate(entries) if minute == 0), 0)
+    base_minute, _base_dt, base_data, base_lat, base_lon = entries[base_idx]
+
+    filtered = []
+    for minute, _dt, data, lat, lon in entries:
+        if data.shape != base_data.shape:
+            continue
+        if lat.shape != base_lat.shape or lon.shape != base_lon.shape:
+            continue
+        filtered.append((minute, data))
+
+    if not filtered:
+        return None
+
+    minutes = [minute for minute, _data in filtered]
+    stacked = np.stack([data for _minute, data in filtered], axis=0)
+    return base_data, base_lat, base_lon, stacked, minutes, base_minute
+
+
 def load_grib(filepath, bounds=None):
     """Load GRIB2, optionally crop to bounds, return (data_2d, lat_1d, lon_1d).
 
@@ -632,6 +708,26 @@ def load_grib_with_substeps(
     Returns (data_2d, lat_1d, lon_1d, substeps_3d|None, minutes_list|None)
     where substeps_3d has shape (N, lat, lon).
     """
+    var_name = var_name_hint or _guess_var_name_from_path(filepath)
+    nominal_hour = nominal_hour_hint if nominal_hour_hint is not None else _extract_nominal_hour_from_filename(filepath)
+    expected_valid_dt = expected_valid_dt_hint or _extract_expected_valid_datetime_from_filename(filepath)
+
+    if os.path.exists(filepath) and var_name in MULTI_MESSAGE_HOURLY_SELECT_VARS and nominal_hour is not None:
+        eccodes_result = _load_grib_substeps_eccodes(
+            filepath,
+            bounds=bounds,
+            expected_valid_dt=expected_valid_dt,
+        )
+        if eccodes_result is not None:
+            base_data, base_lat, base_lon, stacked, minutes, base_minute = eccodes_result
+            if base_minute != 0:
+                logger.warning(
+                    "ECCODES substep selection for %s found no minute-0 slice; using minute=%s as base",
+                    os.path.basename(filepath),
+                    base_minute,
+                )
+            return base_data, base_lat, base_lon, stacked, minutes
+
     datasets = cfgrib.open_datasets(filepath)
     if not datasets:
         raise ValueError(f"No datasets in {filepath}")
@@ -650,9 +746,6 @@ def load_grib_with_substeps(
     data, lat, lon = _reduce_dataset_to_2d(selected, filepath)
     data, lat, lon = _crop_field(data, lat, lon, bounds)
 
-    var_name = var_name_hint or _guess_var_name_from_path(filepath)
-    nominal_hour = nominal_hour_hint if nominal_hour_hint is not None else _extract_nominal_hour_from_filename(filepath)
-    expected_valid_dt = expected_valid_dt_hint or _extract_expected_valid_datetime_from_filename(filepath)
     if var_name not in MULTI_MESSAGE_HOURLY_SELECT_VARS or nominal_hour is None:
         return data, lat, lon, None, None
 
