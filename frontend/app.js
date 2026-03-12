@@ -2355,27 +2355,6 @@ function buildNowcastSplits(minSec, maxSec) {
   return out;
 }
 
-function bindHoverReadout(charts, sourceSeries, formatter) {
-  const list = Array.isArray(charts) ? charts : [charts];
-  const update = (idx) => {
-    if (idx == null || idx < 0 || idx >= sourceSeries.length) return;
-    const el = document.getElementById('chart-hover-readout');
-    if (!el) return;
-    el.textContent = formatter(sourceSeries[idx]);
-  };
-  for (const chart of list) {
-    if (!chart) continue;
-    const orig = chart.setCursor?.bind(chart);
-    if (!orig) continue;
-    chart.setCursor = function(opts, fireHook) {
-      const out = orig(opts, fireHook);
-      try { update(this.cursor?.idx); } catch (_e) {}
-      return out;
-    };
-  }
-  update(0);
-}
-
 function renderNowcastCharts(series) {
   if (!window.uPlot || !Array.isArray(series) || !series.length) return false;
   const chartAEl = document.getElementById('nowcast-chart-a');
@@ -2426,10 +2405,10 @@ function renderNowcastCharts(series) {
       { stroke: '#ff7b72', side: 1, grid: { show: false }, scale: 'cin' },
     ],
     series: [
-      {},
-      { label: 'CAPE', stroke: '#7ee787', width: 2, scale: 'energy' },
-      { label: 'CIN', stroke: '#ff7b72', width: 2, scale: 'cin' },
-      { label: 'LPI', stroke: '#d2a8ff', width: 2, scale: 'energy' },
+      { value: (_u, v) => formatNowcastDateTime(new Date(Number(v) * 1000)) },
+      { label: 'CAPE', stroke: '#7ee787', width: 2, scale: 'energy', value: (_u, v) => formatChartValue(Math.round(Number(v)), 0) },
+      { label: 'CIN', stroke: '#ff7b72', width: 2, scale: 'cin', value: (_u, v) => formatChartValue(Math.round(Number(v)), 0) },
+      { label: 'LPI', stroke: '#d2a8ff', width: 2, scale: 'energy', value: (_u, v) => formatChartValue(Math.round(Number(v)), 0) },
     ],
   }, [xs, chartSeriesValues(series, 'capeMl'), chartSeriesValues(series, 'cinMl'), chartSeriesValues(series, 'lpi')], chartAEl);
 
@@ -2437,17 +2416,12 @@ function renderNowcastCharts(series) {
     ...commonOpts,
     title: 'Convective Clouds',
     series: [
-      {},
-      { label: 'Cloud base', stroke: '#79c0ff', width: 2 },
-      { label: 'Cloud top', stroke: '#ffa657', width: 2 },
+      { value: (_u, v) => formatNowcastDateTime(new Date(Number(v) * 1000)) },
+      { label: 'Cloud base', stroke: '#79c0ff', width: 2, value: (_u, v) => formatChartValue(Math.round(Number(v)), 0) },
+      { label: 'Cloud top', stroke: '#ffa657', width: 2, value: (_u, v) => formatChartValue(Math.round(Number(v)), 0) },
     ],
   }, [xs, chartSeriesValues(series, 'hbasSc'), chartSeriesValues(series, 'htopSc')], chartBEl);
 
-  const readoutFmt = (row) => {
-    const t = formatNowcastDateTime(row.validTime);
-    return `${t} · CAPE ${formatChartValue(Math.round(Number(row.capeMl)), 0)} J/kg · CIN ${formatChartValue(Math.round(Number(row.cinMl)), 0)} J/kg · LPI ${formatChartValue(Math.round(Number(row.lpi)), 0)} · Cloud base ${formatChartValue(Math.round(Number(row.hbasSc)), 0, ' m')} · Cloud top ${formatChartValue(Math.round(Number(row.htopSc)), 0, ' m')}`;
-  };
-  bindHoverReadout([nowcastState.chartA, nowcastState.chartB], series, readoutFmt);
   return true;
 }
 
@@ -2514,7 +2488,6 @@ async function openNowcastAt(lat, lon, model = 'icon_d2') {
     const p = data.point || {};
     if (nowcastTitle) nowcastTitle.textContent = `Nowcast 12h · ${p.gridLat ?? lat}, ${p.gridLon ?? lon}`;
     nowcastBody.innerHTML = `
-      <div id="chart-hover-readout" class="nowcast-meta"></div>
       <div id="nowcast-chart-a" class="nowcast-chart"></div>
       <div id="nowcast-chart-b" class="nowcast-chart"></div>`;
     renderNowcastCharts(data.series || []);
