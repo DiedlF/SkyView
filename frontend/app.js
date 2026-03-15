@@ -264,6 +264,7 @@ const I18N = {
       <ul>
         <li>Run = forecast initialization time (UTC).</li>
         <li>Model label reflects what is visible in your current viewport.</li>
+        <li>Keyboard: use ← ↑ → ↓ to move through timesteps.</li>
       </ul>
     `,
   },
@@ -375,6 +376,7 @@ const I18N = {
       <ul>
         <li>Lauf = Initialisierungszeit des Forecasts (UTC).</li>
         <li>Die Modellanzeige bezieht sich auf den aktuell sichtbaren Kartenausschnitt.</li>
+        <li>Tastatur: mit ← ↑ → ↓ durch die Zeitschritte wechseln.</li>
       </ul>
     `,
   },
@@ -700,6 +702,7 @@ async function loadTimesteps() {
     }
     
     buildTimeline();
+    updateTimelineNavButtons();
     loadSymbols();
     loadD2Border();
     markApiSuccess();
@@ -1700,6 +1703,7 @@ function buildTimeline() {
     }
   });
   
+  updateTimelineNavButtons();
   updateValidTime();
   updateDateStrip();
 }
@@ -1757,6 +1761,12 @@ function updateDateStrip() {
 // Update date strip on scroll
 timeline.addEventListener('scroll', updateDateStrip);
 
+function updateTimelineNavButtons() {
+  const hasSteps = timesteps.length > 0;
+  prev1hBtn.disabled = !hasSteps || currentTimeIndex <= 0;
+  next1hBtn.disabled = !hasSteps || currentTimeIndex >= timesteps.length - 1;
+}
+
 function updateTimeline() {
   const hours = timeline.querySelectorAll('.timeline-hour');
   hours.forEach((el) => {
@@ -1768,6 +1778,7 @@ function updateTimeline() {
     activeEl.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
   }
   
+  updateTimelineNavButtons();
   updateValidTime();
   // Delay date strip update to let scroll settle
   setTimeout(updateDateStrip, 100);
@@ -1777,8 +1788,17 @@ function updateTimeline() {
   }
 }
 
+function refreshForTimestepChange() {
+  updateTimeline();
+  loadSymbols();
+  loadOverlay();
+  loadWind();
+  loadD2Border();
+}
+
 function stepForward() {
   // Find next timestep that's >= currentStep hours ahead
+  const prevIndex = currentTimeIndex;
   if (currentStep === 1) {
     if (currentTimeIndex < timesteps.length - 1) currentTimeIndex++;
   } else {
@@ -1792,14 +1812,13 @@ function stepForward() {
     }
     if (bestIdx > currentTimeIndex) currentTimeIndex = bestIdx;
   }
-  updateTimeline();
-  loadSymbols();
-  loadOverlay();
-  loadWind();
-  loadD2Border();
+  if (currentTimeIndex === prevIndex) return false;
+  refreshForTimestepChange();
+  return true;
 }
 
 function stepBackward() {
+  const prevIndex = currentTimeIndex;
   if (currentStep === 1) {
     if (currentTimeIndex > 0) currentTimeIndex--;
   } else {
@@ -1813,15 +1832,44 @@ function stepBackward() {
     }
     if (bestIdx < currentTimeIndex) currentTimeIndex = bestIdx;
   }
-  updateTimeline();
-  loadSymbols();
-  loadOverlay();
-  loadWind();
-  loadD2Border();
+  if (currentTimeIndex === prevIndex) return false;
+  refreshForTimestepChange();
+  return true;
+}
+
+function isEditableTarget(target) {
+  if (!target || !(target instanceof Element)) return false;
+  if (target.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""], [contenteditable]')) return true;
+  return target.isContentEditable;
+}
+
+function isBlockingOverlayOpen() {
+  return !![
+    feedbackOverlay,
+    helpOverlay,
+    emagramOverlay,
+    meteogramOverlay,
+    nowcastOverlay,
+  ].find((el) => el && el.style.display !== 'none');
+}
+
+function handleTimestepKeyboardNavigation(e) {
+  if (e.defaultPrevented) return;
+  if (e.altKey || e.ctrlKey || e.metaKey) return;
+  if (!timesteps.length) return;
+  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+  if (isEditableTarget(e.target) || isEditableTarget(document.activeElement)) return;
+  if (isBlockingOverlayOpen()) return;
+
+  let changed = false;
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') changed = stepBackward();
+  if (e.key === 'ArrowRight' || e.key === 'ArrowUp') changed = stepForward();
+  if (changed) e.preventDefault();
 }
 
 prev1hBtn.addEventListener('click', stepBackward);
 next1hBtn.addEventListener('click', stepForward);
+document.addEventListener('keydown', handleTimestepKeyboardNavigation);
 
 // ─── Feedback system ───
 const feedbackBtn = document.getElementById('feedback-btn');

@@ -142,6 +142,17 @@ body {
   background: rgba(120,130,160,1);
 }
 
+#time-toolbar button:disabled {
+  background: rgba(80,90,120,0.35);
+  color: rgba(255,255,255,0.35);
+  cursor: not-allowed;
+}
+
+#time-toolbar button:disabled:hover,
+#time-toolbar button:disabled:active {
+  background: rgba(80,90,120,0.35);
+}
+
 #step-buttons {
   display: flex;
   gap: 2px;
