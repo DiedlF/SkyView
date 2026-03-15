@@ -60,7 +60,12 @@ def get_precomputed_field_cropped(var: str, d: dict, li: np.ndarray, lo: np.ndar
         required = ("cape_ml", "cin_ml", "mh", "ashfl_s", "t_2m", "td_2m", "hsurf", "u_10m", "v_10m", "u_850hpa", "v_850hpa")
         if all(k in d for k in required):
             shape = (len(li), len(lo))
-            crop = lambda key: d[key][np.ix_(li, lo)] if key in d else np.full(shape, np.nan, dtype=np.float32)
+
+            def crop(key: str) -> np.ndarray:
+                if key in d:
+                    return d[key][np.ix_(li, lo)]
+                return np.full(shape, np.nan, dtype=np.float32)
+
             return calc_climb_rate_cape_enhanced(
                 crop("cape_ml"), crop("cin_ml"), crop("mh"), crop("ashfl_s"), crop("t_2m"), crop("td_2m"),
                 crop("u_10m"), crop("v_10m"), crop("u_850hpa"), crop("v_850hpa"),
@@ -79,7 +84,12 @@ def get_precomputed_field_full(var: str, d: dict) -> np.ndarray:
     if var == "climb_rate_cape":
         required = ("cape_ml", "cin_ml", "mh", "ashfl_s", "t_2m", "td_2m", "hsurf", "u_10m", "v_10m", "u_850hpa", "v_850hpa")
         if all(k in d for k in required):
-            full = lambda key: d[key] if key in d else np.full_like(d["cape_ml"], np.nan, dtype=np.float32)
+
+            def full(key: str) -> np.ndarray:
+                if key in d:
+                    return d[key]
+                return np.full_like(d["cape_ml"], np.nan, dtype=np.float32)
+
             return calc_climb_rate_cape_enhanced(
                 full("cape_ml"), full("cin_ml"), full("mh"), full("ashfl_s"), full("t_2m"), full("td_2m"),
                 full("u_10m"), full("v_10m"), full("u_850hpa"), full("v_850hpa"),
