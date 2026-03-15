@@ -914,7 +914,7 @@ async function loadPoint(lat, lon, time, model, windLvl = '10m', zoom = null) {
       btns += `<button onclick="openEmagramAt(${Number(lat).toFixed(5)},${Number(lon).toFixed(5)},'${String(time || 'latest').replace(/'/g, "&#39;")}','icon_d2')" style="font-size:11px;padding:2px 6px;line-height:1.1;">Skew-T</button>`;
     }
     btns += `<button onclick="openMeteogramAt(${Number(lat).toFixed(5)},${Number(lon).toFixed(5)},'icon_d2')" style="font-size:11px;padding:2px 6px;line-height:1.1;">Meteogram</button>`;
-    btns += `<button onclick="openNowcastAt(${Number(lat).toFixed(5)},${Number(lon).toFixed(5)},'icon_d2')" style="font-size:11px;padding:2px 6px;line-height:1.1;">Nowcast 12h</button>`;
+    btns += `<button onclick="openNowcastAt(${Number(lat).toFixed(5)},${Number(lon).toFixed(5)},'icon_d2')" style="font-size:11px;padding:2px 6px;line-height:1.1;">Nowcast 24h</button>`;
     btns += `</div>`;
     L.popup({ maxWidth: 280 })
       .setLatLng([lat, lon])
@@ -2158,12 +2158,12 @@ function renderMeteogramSvg(series) {
   const rows = (series || []).filter(r => r && r.validTime);
   if (!rows.length) return '<div style="color:#ffb3b3">No meteogram data.</div>';
 
-  const W = 760, H = 520;
+  const W = 760, H = 620;
   const m = { l: 48, r: 40, t: 18, b: 44 };
   const panels = [
-    { key: 'wind', h: 175 },
-    { key: 'precip', h: 110 },
-    { key: 'temp', h: 85 },
+    { key: 'wind', h: 260 },
+    { key: 'precip', h: 115 },
+    { key: 'temp', h: 92 },
   ];
   const panelGap = 15;
   const totalH = panels.reduce((a, p) => a + p.h, 0);
@@ -2211,6 +2211,7 @@ function renderMeteogramSvg(series) {
   }
 
   const wd = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const majorTickIndices = [];
   for (let i = 0; i < rows.length; i++) {
     const xx = x(i);
     const dt = new Date(rows[i].validTime);
@@ -2222,6 +2223,7 @@ function renderMeteogramSvg(series) {
     const isMajorHour = (hh % 6 === 0);
     const isMidnight = hh === 0;
     if (isMajorHour) {
+      majorTickIndices.push(i);
       const strokeW = isMidnight ? 1.8 : 0.8;
       svg += `<line x1="${xx}" y1="${m.t}" x2="${xx}" y2="${H - m.b}" stroke="rgba(255,255,255,0.20)" stroke-width="${strokeW}"/>`;
     }
@@ -2235,12 +2237,15 @@ function renderMeteogramSvg(series) {
     }
   }
 
-  // Wind panel: small barbs for each timestep x pressure level
-  const levels = [1000, 975, 950, 850, 700, 600, 500, 400, 300, 200];
-  const yWind = (lev) => pWind.y + ((lev - 200) / (1000 - 200)) * pWind.ph;
+  // Wind panel: trimmed lower/mid-level profile for readability and faster payloads
+  const levels = [1000, 975, 950, 850, 700, 600, 500, 400];
   const pressureToApproxHeightM = (lev) => 44330 * (1 - Math.pow(Number(lev) / 1013.25, 0.1903));
-  const windTopAltM = pressureToApproxHeightM(200);
+  const windTopAltM = pressureToApproxHeightM(400);
   const windBottomAltM = pressureToApproxHeightM(1000);
+  const yWind = (lev) => {
+    const alt = pressureToApproxHeightM(lev);
+    return pWind.y + pWind.ph - ((alt - windBottomAltM) / (windTopAltM - windBottomAltM || 1)) * pWind.ph;
+  };
   const yWindAlt = (altM) => {
     if (!Number.isFinite(altM)) return null;
     const clamped = Math.max(windBottomAltM, Math.min(windTopAltM, Number(altM)));
@@ -2253,11 +2258,11 @@ function renderMeteogramSvg(series) {
     const f10 = Math.floor(s / 10); s -= f10 * 10;
     const f5 = s >= 5 ? 1 : 0;
     let g = `<g transform="translate(${xx},${yy}) rotate(${dirDeg})">`;
-    g += `<line x1="0" y1="0" x2="0" y2="-9" stroke="#dbeafe" stroke-width="1.1"/>`;
-    let yyf = -9;
-    for (let i = 0; i < f50; i++) { g += `<polygon points="0,${yyf} 5,${yyf+1.4} 0,${yyf+2.8}" fill="#dbeafe"/>`; yyf += 3; }
-    for (let i = 0; i < f10; i++) { g += `<line x1="0" y1="${yyf}" x2="5" y2="${yyf+1.4}" stroke="#dbeafe" stroke-width="1.1"/>`; yyf += 2.2; }
-    if (f5) g += `<line x1="0" y1="${yyf}" x2="3.2" y2="${yyf+0.9}" stroke="#dbeafe" stroke-width="1.1"/>`;
+    g += `<line x1="0" y1="0" x2="0" y2="-10.5" stroke="#dbeafe" stroke-width="1.25"/>`;
+    let yyf = -10.5;
+    for (let i = 0; i < f50; i++) { g += `<polygon points="0,${yyf} 5.8,${yyf+1.6} 0,${yyf+3.2}" fill="#dbeafe"/>`; yyf += 3.4; }
+    for (let i = 0; i < f10; i++) { g += `<line x1="0" y1="${yyf}" x2="5.8" y2="${yyf+1.6}" stroke="#dbeafe" stroke-width="1.25"/>`; yyf += 2.5; }
+    if (f5) g += `<line x1="0" y1="${yyf}" x2="3.8" y2="${yyf+1.0}" stroke="#dbeafe" stroke-width="1.25"/>`;
     g += `</g>`;
     return g;
   };
@@ -2279,9 +2284,11 @@ function renderMeteogramSvg(series) {
   // Approx altitude reference lines in wind panel (reversed orientation)
   const altRefs = [
     { z: 0, p: 1000 },
+    { z: 1500, p: 850 },
     { z: 3000, p: 700 },
-    { z: 5000, p: 540 },
-    { z: 10000, p: 260 },
+    { z: 4500, p: 600 },
+    { z: 5500, p: 500 },
+    { z: 7000, p: 400 },
   ];
   for (const a of altRefs) {
     const yy = yWind(a.p);
@@ -2297,6 +2304,19 @@ function renderMeteogramSvg(series) {
   }).filter(Boolean).join(' ');
   if (zeroDegPath) {
     svg += `<path d="${zeroDegPath}" fill="none" stroke="#ffd166" stroke-width="1.8" stroke-dasharray="6 4" opacity="0.95"/>`;
+  }
+
+  for (const i of majorTickIndices) {
+    const alt = v(rows[i], 'zeroDegAltM');
+    if (!Number.isFinite(alt)) continue;
+    const yy = yWindAlt(alt);
+    if (!Number.isFinite(yy)) continue;
+    const xx = x(i);
+    const label = alt < 1000 ? `${Math.round(alt)} m` : `${(alt / 1000).toFixed(1)} km`;
+    const labelW = Math.max(28, 7 + label.length * 5.2);
+    const labelY = Math.max(pWind.y + 10, Math.min(pWind.y + pWind.ph - 6, yy - 4));
+    svg += `<rect x="${(xx - labelW / 2).toFixed(1)}" y="${(labelY - 8).toFixed(1)}" width="${labelW.toFixed(1)}" height="11" rx="3" fill="rgba(21,27,45,0.78)" stroke="rgba(255,209,102,0.30)"/>`;
+    svg += `<text x="${xx.toFixed(1)}" y="${labelY.toFixed(1)}" fill="#ffd166" font-size="9" text-anchor="middle">${label}</text>`;
   }
 
   for (let i = 0; i < rows.length; i++) {
@@ -2327,7 +2347,7 @@ function renderMeteogramSvg(series) {
     svg += `<line x1="${m.l}" y1="${yZero.toFixed(1)}" x2="${W - m.r}" y2="${yZero.toFixed(1)}" stroke="rgba(255,255,255,0.35)" stroke-dasharray="4 3"/>`;
   }
 
-  svg += `<text x="6" y="${(pWind.y + 0).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Wind</text>`;
+  svg += `<text x="6" y="${(pWind.y + 0).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Wind (surface–~7 km)</text>`;
   if (zeroDegPath) svg += `<text x="52" y="${(pWind.y + 0).toFixed(1)}" fill="#ffd166" font-size="10">0°C level</text>`;
   svg += `<text x="6" y="${(pPre.y + 24).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Precip</text>`;
   if (hasSnow) svg += `<text x="${W - m.r + 8}" y="${(pPre.y + 24).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10" text-anchor="end">Snow</text>`;
@@ -2523,10 +2543,10 @@ async function openNowcastAt(lat, lon, model = 'icon_d2') {
   nowcastOverlay.style.display = 'flex';
   nowcastBody.innerHTML = '<div style="opacity:.8">Loading nowcast…</div>';
   try {
-    const key = `${Number(lat).toFixed(4)}|${Number(lon).toFixed(4)}|${model || ''}|12h`;
+    const key = `${Number(lat).toFixed(4)}|${Number(lon).toFixed(4)}|${model || ''}|24h`;
     let data = nowcastCache.get(key);
     if (!data) {
-      const res = await fetch(`/api/nowcast_point?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&model=icon_d2&hours=12`, { signal: abortCtrl.signal });
+      const res = await fetch(`/api/nowcast_point?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&model=icon_d2&hours=24`, { signal: abortCtrl.signal });
       if (!res.ok) await throwHttpError(res, 'API');
       data = await res.json();
       if (nowcastCache.has(key)) nowcastCache.delete(key);
@@ -2534,7 +2554,7 @@ async function openNowcastAt(lat, lon, model = 'icon_d2') {
       if (nowcastCache.size > NOWCAST_CACHE_MAX) nowcastCache.delete(nowcastCache.keys().next().value);
     }
     const p = data.point || {};
-    if (nowcastTitle) nowcastTitle.textContent = `Nowcast 12h · ${p.gridLat ?? lat}, ${p.gridLon ?? lon}`;
+    if (nowcastTitle) nowcastTitle.textContent = `Nowcast 24h · ${p.gridLat ?? lat}, ${p.gridLon ?? lon}`;
     nowcastBody.innerHTML = `
       <div id="nowcast-chart-a" class="nowcast-chart"></div>
       <div id="nowcast-chart-b" class="nowcast-chart"></div>`;

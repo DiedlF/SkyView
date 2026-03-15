@@ -68,5 +68,9 @@ LOW_ZOOM_PRECOMPUTED_BINS_ENABLED: bool = os.environ.get("SKYVIEW_LOW_ZOOM_PRECO
 # Emagram pressure levels (D2)
 EMAGRAM_D2_LEVELS_HPA: list[int] = [1000, 975, 950, 850, 700, 600, 500, 400, 300, 200]
 
+# Meteogram wind profile levels (D2) — trimmed for faster loads and better readability.
+# Approx. tops out around 7 km (~400 hPa).
+METEOGRAM_D2_LEVELS_HPA: list[int] = [1000, 975, 950, 850, 700, 600, 500, 400]
+
 # Standard gravity (m/s²)
 G0: float = 9.80665

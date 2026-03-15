@@ -27,6 +27,7 @@ from cache_state import symbols_cache_get, symbols_cache_set
 from constants import (
     CELL_SIZES_BY_ZOOM,
     EMAGRAM_D2_LEVELS_HPA,
+    METEOGRAM_D2_LEVELS_HPA,
     G0,
     SYMBOL_MODE_NATIVE_ZOOM_D2,
     SYMBOL_MODE_NATIVE_ZOOM_EU,
@@ -627,7 +628,7 @@ def build_weather_router(
             return cached
 
         level_keys: List[str] = []
-        for lev in EMAGRAM_D2_LEVELS_HPA:
+        for lev in METEOGRAM_D2_LEVELS_HPA:
             level_keys += [f"u_{lev}hpa", f"v_{lev}hpa"]
 
         needed_keys = ["lat", "lon", "validTime", "tot_prec", "h_snow", "t_2m", "td_2m", "hsurf", "hzerocl"] + level_keys
@@ -669,7 +670,7 @@ def build_weather_router(
             t2k = _g("t_2m")
             tdk = _g("td_2m")
             wind_levels: List[dict] = []
-            for lev in EMAGRAM_D2_LEVELS_HPA:
+            for lev in METEOGRAM_D2_LEVELS_HPA:
                 uu, vv = _g(f"u_{lev}hpa"), _g(f"v_{lev}hpa")
                 if uu is None or vv is None:
                     wind_levels.append({"pressureHpa": lev, "speedKt": None, "dirDeg": None})
