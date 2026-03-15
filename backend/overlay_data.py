@@ -12,6 +12,7 @@ from soaring import (
     calc_reachable_distance,
     classify_thermal_strength,
     calc_climb_rate_from_thermal_class,
+    calc_climb_rate_cape_enhanced,
 )
 from constants import PRECIP_RATE_FIELD_BY_LAYER_VAR
 
@@ -34,7 +35,14 @@ def build_overlay_keys(cfg: dict) -> list[str]:
         elif v == "dew_spread_2m":
             overlay_keys += ["t_2m", "td_2m"]
     else:
-        overlay_keys.append(cfg["var"])
+        if cfg["var"] == "climb_rate_cape":
+            overlay_keys += [
+                "climb_rate_cape",
+                "cape_ml", "cin_ml", "mh", "ashfl_s", "t_2m", "td_2m", "hsurf",
+                "u_10m", "v_10m", "u_850hpa", "v_850hpa", "u_700hpa", "v_700hpa", "u_500hpa", "v_500hpa", "u_300hpa", "v_300hpa",
+            ]
+        else:
+            overlay_keys.append(cfg["var"])
     return overlay_keys
 
 
@@ -49,9 +57,18 @@ def normalize_clouds_total_mod(arr: np.ndarray) -> np.ndarray:
 def get_precomputed_field_cropped(var: str, d: dict, li: np.ndarray, lo: np.ndarray) -> np.ndarray:
     """Return a cropped precomputed (non-computed) overlay field."""
     if var == "climb_rate_cape":
-        if "climb_rate_cape" not in d:
-            raise HTTPException(404, "climb_rate_cape not available (re-ingest needed)")
-        return d["climb_rate_cape"][np.ix_(li, lo)]
+        required = ("cape_ml", "cin_ml", "mh", "ashfl_s", "t_2m", "td_2m", "hsurf", "u_10m", "v_10m", "u_850hpa", "v_850hpa")
+        if all(k in d for k in required):
+            shape = (len(li), len(lo))
+            crop = lambda key: d[key][np.ix_(li, lo)] if key in d else np.full(shape, np.nan, dtype=np.float32)
+            return calc_climb_rate_cape_enhanced(
+                crop("cape_ml"), crop("cin_ml"), crop("mh"), crop("ashfl_s"), crop("t_2m"), crop("td_2m"),
+                crop("u_10m"), crop("v_10m"), crop("u_850hpa"), crop("v_850hpa"),
+                crop("hsurf"), crop("u_700hpa"), crop("v_700hpa"), crop("u_500hpa"), crop("v_500hpa"), crop("u_300hpa"), crop("v_300hpa"),
+            )
+        if "climb_rate_cape" in d:
+            return d["climb_rate_cape"][np.ix_(li, lo)]
+        raise HTTPException(404, "climb_rate_cape not available (re-ingest needed)")
     if var not in d:
         raise HTTPException(404, f"Variable {var} not available for this timestep")
     return d[var][np.ix_(li, lo)]
@@ -60,9 +77,17 @@ def get_precomputed_field_cropped(var: str, d: dict, li: np.ndarray, lo: np.ndar
 def get_precomputed_field_full(var: str, d: dict) -> np.ndarray:
     """Return a full-grid precomputed (non-computed) overlay field."""
     if var == "climb_rate_cape":
-        if "climb_rate_cape" not in d:
-            raise HTTPException(404, "climb_rate_cape not available (re-ingest needed)")
-        return d["climb_rate_cape"]
+        required = ("cape_ml", "cin_ml", "mh", "ashfl_s", "t_2m", "td_2m", "hsurf", "u_10m", "v_10m", "u_850hpa", "v_850hpa")
+        if all(k in d for k in required):
+            full = lambda key: d[key] if key in d else np.full_like(d["cape_ml"], np.nan, dtype=np.float32)
+            return calc_climb_rate_cape_enhanced(
+                full("cape_ml"), full("cin_ml"), full("mh"), full("ashfl_s"), full("t_2m"), full("td_2m"),
+                full("u_10m"), full("v_10m"), full("u_850hpa"), full("v_850hpa"),
+                full("hsurf"), full("u_700hpa"), full("v_700hpa"), full("u_500hpa"), full("v_500hpa"), full("u_300hpa"), full("v_300hpa"),
+            )
+        if "climb_rate_cape" in d:
+            return d["climb_rate_cape"]
+        raise HTTPException(404, "climb_rate_cape not available (re-ingest needed)")
     if var not in d:
         raise HTTPException(404, f"Variable {var} unavailable")
     return d[var]

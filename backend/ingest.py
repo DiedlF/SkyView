@@ -139,12 +139,29 @@ def _precompute_symbol_native_fields(arrays: dict, step: int | None = None, mode
 
     arrays["sym_code"] = sym_code
     arrays["cb_hm"] = cb_hm
-    # Climb rate estimate from CAPE: sqrt(CAPE_ML)/10, clipped to >= 0
-    cr_cape = np.where(
-        np.isfinite(cape),
-        np.maximum(0.0, np.sqrt(np.maximum(cape, 0.0)) / 10.0),
-        np.nan,
-    ).astype(np.float32)
+    # Enhanced thermal climb-rate estimate using CAPE/CIN + BL depth + heat flux + spread + shear.
+    from soaring import calc_climb_rate_cape_enhanced
+    cin = arrays.get("cin_ml", np.full_like(cape, np.nan, dtype=np.float32))
+    mh_arr = arrays.get("mh", np.full_like(cape, np.nan, dtype=np.float32))
+    ashfl_arr = arrays.get("ashfl_s", np.full_like(cape, np.nan, dtype=np.float32))
+    t2m_arr = arrays.get("t_2m", np.full_like(cape, np.nan, dtype=np.float32))
+    td2m_arr = arrays.get("td_2m", np.full_like(cape, np.nan, dtype=np.float32))
+    u10_arr = arrays.get("u_10m", np.full_like(cape, np.nan, dtype=np.float32))
+    v10_arr = arrays.get("v_10m", np.full_like(cape, np.nan, dtype=np.float32))
+    u850_arr = arrays.get("u_850hpa", np.full_like(cape, np.nan, dtype=np.float32))
+    v850_arr = arrays.get("v_850hpa", np.full_like(cape, np.nan, dtype=np.float32))
+    hsurf_arr = arrays.get("hsurf", np.full_like(cape, np.nan, dtype=np.float32))
+    u700_arr = arrays.get("u_700hpa", np.full_like(cape, np.nan, dtype=np.float32))
+    v700_arr = arrays.get("v_700hpa", np.full_like(cape, np.nan, dtype=np.float32))
+    u500_arr = arrays.get("u_500hpa", np.full_like(cape, np.nan, dtype=np.float32))
+    v500_arr = arrays.get("v_500hpa", np.full_like(cape, np.nan, dtype=np.float32))
+    u300_arr = arrays.get("u_300hpa", np.full_like(cape, np.nan, dtype=np.float32))
+    v300_arr = arrays.get("v_300hpa", np.full_like(cape, np.nan, dtype=np.float32))
+    cr_cape = calc_climb_rate_cape_enhanced(
+        cape, cin, mh_arr, ashfl_arr, t2m_arr, td2m_arr,
+        u10_arr, v10_arr, u850_arr, v850_arr,
+        hsurf_arr, u700_arr, v700_arr, u500_arr, v500_arr, u300_arr, v300_arr,
+    )
     arrays["climb_rate_cape"] = cr_cape
     msg = f"symbol precompute ok for {ctx}: wrote sym_code/cb_hm/climb_rate_cape"
     return True, msg

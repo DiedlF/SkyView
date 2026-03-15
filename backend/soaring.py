@@ -81,6 +81,102 @@ def calc_climb_rate(wstar, sink_rate=SINK_RATE):
     return np.maximum(wstar - sink_rate, 0.0)
 
 
+def calc_bulk_shear(u_low, v_low, u_high, v_high):
+    """Simple bulk shear magnitude (m/s) between two wind levels."""
+    du = u_high - u_low
+    dv = v_high - v_low
+    shear = np.sqrt(np.maximum(du * du + dv * dv, 0.0))
+    invalid = ~(
+        np.isfinite(u_low) & np.isfinite(v_low) & np.isfinite(u_high) & np.isfinite(v_high)
+    )
+    return np.where(invalid, np.nan, shear)
+
+
+def calc_climb_rate_cape_enhanced(
+    cape_ml,
+    cin_ml,
+    mh,
+    ashfl_s,
+    t_2m,
+    td_2m,
+    u_10m,
+    v_10m,
+    u_850hpa,
+    v_850hpa,
+    hsurf=None,
+    u_700hpa=None,
+    v_700hpa=None,
+    u_500hpa=None,
+    v_500hpa=None,
+    u_300hpa=None,
+    v_300hpa=None,
+    sink_rate=SINK_RATE,
+):
+    """Estimate usable thermal climb rate from buoyancy + BL structure.
+
+    Engineering-style heuristic for glider thermals, combining:
+    - W* from sensible heat flux + mixed-layer depth
+    - CAPE boost (available buoyant energy)
+    - CIN suppression (cap / activation barrier)
+    - dew point spread preference (too moist or too dry both less ideal)
+    - low-level bulk shear penalty (organized/tilted flow hurts coherent thermals)
+
+    Returns m/s climb-rate estimate, clipped to >= 0.
+    """
+    wstar = calc_wstar(ashfl_s, None, mh, t_2m)
+    base = np.maximum(wstar - sink_rate, 0.0)
+
+    cape = np.maximum(np.where(np.isfinite(cape_ml), cape_ml, 0.0), 0.0)
+    cin_abs = np.maximum(np.where(np.isfinite(cin_ml), np.abs(cin_ml), 0.0), 0.0)
+
+    # CAPE gives an extra buoyancy boost, but only moderately for soaring use.
+    cape_boost = 0.11 * np.sqrt(cape)
+    cin_factor = np.exp(-cin_abs / 40.0)
+
+    # Moderate spread is best for usable cumulus thermals; very moist or very dry is penalized.
+    spread_c = np.maximum((t_2m - td_2m), 0.0)
+    spread_opt = np.exp(-np.power((spread_c - 7.0) / 6.0, 2.0))
+    spread_factor = 0.75 + 0.35 * spread_opt
+
+    # Shear tends to disrupt narrow coherent thermals.
+    # Make the upper wind level terrain-aware so we do not compare against a level
+    # that is too close to the ground over high terrain.
+    if hsurf is None:
+        shear = calc_bulk_shear(u_10m, v_10m, u_850hpa, v_850hpa)
+    else:
+        hsurf_arr = np.asarray(hsurf)
+        u_top = np.array(u_850hpa, copy=True)
+        v_top = np.array(v_850hpa, copy=True)
+        if u_700hpa is not None and v_700hpa is not None:
+            m700 = np.isfinite(hsurf_arr) & (hsurf_arr > 1000.0) & np.isfinite(u_700hpa) & np.isfinite(v_700hpa)
+            u_top = np.where(m700, u_700hpa, u_top)
+            v_top = np.where(m700, v_700hpa, v_top)
+        if u_500hpa is not None and v_500hpa is not None:
+            m500 = np.isfinite(hsurf_arr) & (hsurf_arr > 2500.0) & np.isfinite(u_500hpa) & np.isfinite(v_500hpa)
+            u_top = np.where(m500, u_500hpa, u_top)
+            v_top = np.where(m500, v_500hpa, v_top)
+        if u_300hpa is not None and v_300hpa is not None:
+            m300 = np.isfinite(hsurf_arr) & (hsurf_arr > 4000.0) & np.isfinite(u_300hpa) & np.isfinite(v_300hpa)
+            u_top = np.where(m300, u_300hpa, u_top)
+            v_top = np.where(m300, v_300hpa, v_top)
+        shear = calc_bulk_shear(u_10m, v_10m, u_top, v_top)
+    shear_factor = np.where(np.isfinite(shear), np.exp(-np.maximum(shear - 6.0, 0.0) / 18.0), 1.0)
+
+    # BL-depth bonus beyond what W* already captures, but saturating.
+    mh_safe = np.maximum(np.where(np.isfinite(mh), mh, 0.0), 0.0)
+    mh_factor = 0.85 + 0.25 * np.clip(mh_safe / 1800.0, 0.0, 1.0)
+
+    out = (base + cape_boost * cin_factor) * spread_factor * shear_factor * mh_factor
+
+    valid = (
+        np.isfinite(mh)
+        & np.isfinite(ashfl_s)
+        & np.isfinite(t_2m)
+        & np.isfinite(td_2m)
+    )
+    return np.where(valid, np.maximum(out, 0.0), np.nan).astype(np.float32)
+
+
 def compute_lapse_factor(delta_t_forecast_c, delta_altitude_km):
     """Lapse factor = ΔT_forecast / ΔT_theoretical_dry_adiabatic.
 

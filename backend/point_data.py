@@ -10,6 +10,7 @@ from soaring import (
     calc_lcl,
     classify_thermal_strength,
     calc_climb_rate_from_thermal_class,
+    calc_climb_rate_cape_enhanced,
 )
 from constants import CELL_SIZES_BY_ZOOM, ICON_EU_STEP_3H_START
 
@@ -20,13 +21,13 @@ logger = logging.getLogger(__name__)
 POINT_KEYS_MINIMAL = [
     # Core weather / cloud
     "ww", "ceiling", "clcl", "clcm", "clch", "clct",
-    "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hsurf",
+    "cape_ml", "cin_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hsurf",
 ]
 
 POINT_KEYS = [
     # Core weather / cloud
     "ww", "ceiling", "clcl", "clcm", "clch", "clct", "clct_mod",
-    "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hsurf",
+    "cape_ml", "cin_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hsurf",
     # Precipitation (pre-computed rate fields, already mm/h equivalent)
     "tp_rate", "rain_rate", "snow_rate", "hail_rate",
     # Boundary layer / atmosphere
@@ -258,8 +259,46 @@ def build_overlay_values(
     hs = _safe_get(d, "h_snow", i0, j0)
     if hs is not None:
         ov["h_snow"] = round(hs, 3)
-    # Climb rate from CAPE (precomputed at ingest)
-    crc = _safe_get(d, "climb_rate_cape", i0, j0)
+    # Climb rate from CAPE / BL structure (prefer live derivation over stale precomputed values)
+    cin_ml = _safe_get(d, "cin_ml", i0, j0)
+    t2m_tmp = _safe_get(d, "t_2m", i0, j0)
+    td2m_tmp = _safe_get(d, "td_2m", i0, j0)
+    mh_tmp = _safe_get(d, "mh", i0, j0)
+    ashfl_tmp = _safe_get(d, "ashfl_s", i0, j0)
+    u10 = _safe_get(d, "u_10m", i0, j0)
+    v10 = _safe_get(d, "v_10m", i0, j0)
+    u850 = _safe_get(d, "u_850hpa", i0, j0)
+    v850 = _safe_get(d, "v_850hpa", i0, j0)
+    hsurf_tmp = _safe_get(d, "hsurf", i0, j0)
+    u700 = _safe_get(d, "u_700hpa", i0, j0)
+    v700 = _safe_get(d, "v_700hpa", i0, j0)
+    u500 = _safe_get(d, "u_500hpa", i0, j0)
+    v500 = _safe_get(d, "v_500hpa", i0, j0)
+    u300 = _safe_get(d, "u_300hpa", i0, j0)
+    v300 = _safe_get(d, "v_300hpa", i0, j0)
+    crc = None
+    if None not in (cape, cin_ml, mh_tmp, ashfl_tmp, t2m_tmp, td2m_tmp, u10, v10, u850, v850, hsurf_tmp):
+        crc = float(calc_climb_rate_cape_enhanced(
+            np.asarray(cape, dtype=np.float64),
+            np.asarray(cin_ml, dtype=np.float64),
+            np.asarray(mh_tmp, dtype=np.float64),
+            np.asarray(ashfl_tmp, dtype=np.float64),
+            np.asarray(t2m_tmp, dtype=np.float64),
+            np.asarray(td2m_tmp, dtype=np.float64),
+            np.asarray(u10, dtype=np.float64),
+            np.asarray(v10, dtype=np.float64),
+            np.asarray(u850, dtype=np.float64),
+            np.asarray(v850, dtype=np.float64),
+            np.asarray(hsurf_tmp, dtype=np.float64),
+            np.asarray(np.nan if u700 is None else u700, dtype=np.float64),
+            np.asarray(np.nan if v700 is None else v700, dtype=np.float64),
+            np.asarray(np.nan if u500 is None else u500, dtype=np.float64),
+            np.asarray(np.nan if v500 is None else v500, dtype=np.float64),
+            np.asarray(np.nan if u300 is None else u300, dtype=np.float64),
+            np.asarray(np.nan if v300 is None else v300, dtype=np.float64),
+        ))
+    if crc is None:
+        crc = _safe_get(d, "climb_rate_cape", i0, j0)
     if crc is not None:
         ov["climb_rate_cape"] = round(float(crc), 1)
 
