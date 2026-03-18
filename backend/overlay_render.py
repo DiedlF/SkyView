@@ -42,8 +42,6 @@ def colormap_sigwx(val):
     ww = int(val)
     if ww == 0:
         return None
-    if ww == 1:
-        return (205, 205, 205, 165)
     if ww == 2:
         return (145, 145, 145, 175)
     if ww == 3:
@@ -119,13 +117,11 @@ def colormap_sigwx_vectorized(v: np.ndarray, valid: np.ndarray) -> np.ndarray:
         return rgba
 
     ww = np.clip(v.astype(np.int16), 0, 255)
-    m = valid & (ww != 0)
+    m = valid & (ww >= 2)
     if not np.any(m):
         return rgba
 
     # Fixed grayscale buckets for light weather codes.
-    m1 = m & (ww == 1)
-    rgba[m1] = (205, 205, 205, 165)
     m2 = m & (ww == 2)
     rgba[m2] = (145, 145, 145, 175)
     m3 = m & (ww == 3)

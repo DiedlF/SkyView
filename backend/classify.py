@@ -63,7 +63,7 @@ def classify_point_with_base(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_s
             return "cu_hum", cb_hm
         return "clear", None
 
-    if not (np.isfinite(ww) and ww >= 1):
+    if not (np.isfinite(ww) and ww >= 2):
         return "clear", None
 
     valid_ceiling = np.isfinite(ceiling) and (ceiling > 0) and (ceiling < CEILING_VALID_MAX_METERS)
@@ -162,7 +162,7 @@ def classify_clouds_and_bases(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, h
     cb_hm[cu_hum_mask] = hbas_hm[cu_hum_mask]
 
     strat_mask = mask & ~is_convective
-    cloud_ww = strat_mask & np.isfinite(ww) & (ww >= 1)
+    cloud_ww = strat_mask & np.isfinite(ww) & (ww >= 2)
     valid_ceiling = cloud_ww & np.isfinite(ceiling) & (ceiling > 0) & (ceiling < CEILING_VALID_MAX_METERS)
 
     low_band = valid_ceiling & (ceiling < CEILING_LOW_MAX_METERS)

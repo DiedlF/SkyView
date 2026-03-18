@@ -201,7 +201,7 @@ def aggregate_symbol_cell(
             if not np.any(ceil_mask_s):
                 sym = "clear"
             else:
-                cloud_mask_s = np.isfinite(cell_ww[np.ix_(iter_cli, iter_clo)]) & (cell_ww[np.ix_(iter_cli, iter_clo)] >= 1) & (cell_ww[np.ix_(iter_cli, iter_clo)] <= 3)
+                cloud_mask_s = np.isfinite(cell_ww[np.ix_(iter_cli, iter_clo)]) & (cell_ww[np.ix_(iter_cli, iter_clo)] >= 2) & (cell_ww[np.ix_(iter_cli, iter_clo)] <= 3)
                 strat_mask_s = ceil_mask_s & cloud_mask_s
                 if not np.any(strat_mask_s):
                     sym = "clear"
