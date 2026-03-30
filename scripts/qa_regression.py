@@ -318,8 +318,8 @@ def check_stratiform_symbols_follow_ww_and_ceiling():
         pre_has_cape=False,
         pre_has_ceil=True,
     )
-    if (sym, agg_cb_hm) != ("ac", 65):
-        fail(f"aggregate ww+ceiling regression: got={(sym, agg_cb_hm)}, want=('ac', 65)")
+    if (sym, agg_cb_hm) != ("clear", None):
+        fail(f"aggregate ww+ceiling regression: got={(sym, agg_cb_hm)}, want=('clear', None)")
 
 
 

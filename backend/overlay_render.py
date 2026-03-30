@@ -261,6 +261,14 @@ def colormap_climb_rate_cape(v):
     return (int(50 + 205 * t), int(200 - 80 * t), int(50 * (1 - t)), int(100 + 130 * t))
 
 
+def colormap_climb_rate_gold(v):
+    """Gold formula climb rate: transparent at 0, green→yellow→red up to 5 m/s."""
+    if v is None or float(v) <= 0:
+        return None
+    t = min(float(v) / 5.0, 1.0)
+    return (int(50 + 205 * t), int(200 - 80 * t), int(50 * (1 - t)), int(100 + 130 * t))
+
+
 def colormap_lcl(v):
     if v < 50:
         return None
@@ -321,6 +329,7 @@ OVERLAY_CONFIGS = {
     "wstar": {"var": "wstar", "cmap": colormap_wstar, "computed": True},
     "climb_rate": {"var": "climb_rate", "cmap": colormap_climb_rate, "computed": True},
     "climb_rate_cape": {"var": "climb_rate_cape", "cmap": colormap_climb_rate_cape},
+    "climb_rate_gold": {"var": "climb_rate_gold", "cmap": colormap_climb_rate_gold, "computed": True},
     "lcl": {"var": "lcl", "cmap": colormap_lcl, "computed": True},
     "h_snow": {"var": "h_snow", "cmap": colormap_clouds},
     "reachable": {"var": "reachable", "cmap": colormap_reachable, "computed": True},
@@ -435,7 +444,7 @@ def colorize_layer_vectorized(layer: str, sampled: np.ndarray, valid: np.ndarray
             set_rgba(m, 50 + 205 * t, 180 * (1 - t), 50 * (1 - t), 90 + 130 * t)
         return rgba
 
-    if layer in ("wstar", "climb_rate"):
+    if layer in ("wstar", "climb_rate", "climb_rate_cape", "climb_rate_gold"):
         th = 0.2 if layer == "wstar" else 0.1
         m = valid & (v >= th)
         if np.any(m):

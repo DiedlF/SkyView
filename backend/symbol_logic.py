@@ -55,11 +55,11 @@ def aggregate_symbol_cell(
     c_clcl: np.ndarray,
     c_clcm: np.ndarray,
     c_clch: np.ndarray,
-    c_cape: np.ndarray,
+    c_cape_hourly_max: np.ndarray,
     c_htop_dc: np.ndarray,
-    c_hbas_sc: np.ndarray,
-    c_htop_sc: np.ndarray,
-    c_lpi: np.ndarray,
+    c_hbas_sc_hourly_max: np.ndarray,
+    c_htop_sc_hourly_max: np.ndarray,
+    c_lpi_max: np.ndarray,
     c_hsurf: np.ndarray,
     c_mh: np.ndarray,
     classify_point_fn: Callable,
@@ -115,24 +115,24 @@ def aggregate_symbol_cell(
     s_clcl   = c_clcl[np.ix_(iter_cli, iter_clo)]
     s_clcm   = c_clcm[np.ix_(iter_cli, iter_clo)]
     s_clch   = c_clch[np.ix_(iter_cli, iter_clo)]
-    s_cape   = c_cape[np.ix_(iter_cli, iter_clo)]
+    s_cape_hourly_max = c_cape_hourly_max[np.ix_(iter_cli, iter_clo)]
     s_htop_dc = c_htop_dc[np.ix_(iter_cli, iter_clo)]
-    s_hbas_sc = c_hbas_sc[np.ix_(iter_cli, iter_clo)]
-    s_htop_sc = c_htop_sc[np.ix_(iter_cli, iter_clo)]
-    s_lpi    = c_lpi[np.ix_(iter_cli, iter_clo)]
+    s_hbas_sc_hourly_max = c_hbas_sc_hourly_max[np.ix_(iter_cli, iter_clo)]
+    s_htop_sc_hourly_max = c_htop_sc_hourly_max[np.ix_(iter_cli, iter_clo)]
+    s_lpi_max = c_lpi_max[np.ix_(iter_cli, iter_clo)]
     s_hsurf  = c_hsurf[np.ix_(iter_cli, iter_clo)]
     s_mh     = c_mh[np.ix_(iter_cli, iter_clo)]
     s_ceil   = ceil_arr[np.ix_(iter_cli, iter_clo)]
 
     # ── Convection branch ─────────────────────────────────────────────────────
-    conv_mask_s   = np.isfinite(s_cape) & (s_cape > CAPE_CONV_THRESHOLD)
+    conv_mask_s   = np.isfinite(s_cape_hourly_max) & (s_cape_hourly_max > CAPE_CONV_THRESHOLD)
     cloud_depth_s = np.maximum(0.0, np.where(
-        np.isfinite(s_htop_sc) & np.isfinite(s_hbas_sc),
-        s_htop_sc - s_hbas_sc, 0.0,
+        np.isfinite(s_htop_sc_hourly_max) & np.isfinite(s_hbas_sc_hourly_max),
+        s_htop_sc_hourly_max - s_hbas_sc_hourly_max, 0.0,
     ))
-    hbas_agl_s = s_hbas_sc - s_hsurf
+    hbas_agl_s = s_hbas_sc_hourly_max - s_hsurf
     conv_cloud_ok_s = convective_cloud_mask(
-        s_hbas_sc,
+        s_hbas_sc_hourly_max,
         s_hsurf,
         s_mh,
         min_agl_m=AGL_CONV_MIN_METERS,
@@ -141,13 +141,13 @@ def aggregate_symbol_cell(
 
     if np.any(p2_mask_s):
         cb_mask_s   = p2_mask_s & (
-            (np.isfinite(s_lpi) & (s_lpi > LPI_CB_THRESHOLD))
-            | ((cloud_depth_s > CLOUD_DEPTH_CB_THRESHOLD) & np.isfinite(s_cape) & (s_cape > CAPE_CB_STRONG_THRESHOLD))
+            (np.isfinite(s_lpi_max) & (s_lpi_max > LPI_CB_THRESHOLD))
+            | ((cloud_depth_s > CLOUD_DEPTH_CB_THRESHOLD) & np.isfinite(s_cape_hourly_max) & (s_cape_hourly_max > CAPE_CB_STRONG_THRESHOLD))
         )
         cu_con_mask_s = p2_mask_s & (~cb_mask_s) & (cloud_depth_s > CLOUD_DEPTH_CU_CON_THRESHOLD)
 
         i_loc, j_loc = np.where(p2_mask_s)
-        vals = s_hbas_sc[i_loc, j_loc]
+        vals = s_hbas_sc_hourly_max[i_loc, j_loc]
         k = int(np.argmax(vals))
         ii_s, jj_s = int(i_loc[k]), int(j_loc[k])
         best_ii = int(iter_cli[ii_s])

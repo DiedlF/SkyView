@@ -94,14 +94,14 @@ def _precompute_symbol_native_fields(arrays: dict, step: int | None = None, mode
     clcl = arrays["clcl"]
     clcm = arrays["clcm"]
     clch = arrays["clch"]
-    cape = arrays["cape_ml"]
+    cape = arrays.get("cape_ml_hourly_max", arrays["cape_ml"])
     htop_dc = arrays["htop_dc"]
-    hbas_sc = arrays["hbas_sc"]
-    htop_sc = arrays["htop_sc"]
-    lpi = arrays.get("lpi_max", np.zeros_like(ww))
+    hbas_sc = arrays.get("hbas_sc_hourly_max", arrays["hbas_sc"])
+    htop_sc = arrays.get("htop_sc_hourly_max", arrays["htop_sc"])
+    lpi_max = arrays.get("lpi_max", arrays.get("lpi_hourly_max", np.zeros_like(ww)))
     hsurf = arrays["hsurf"]
 
-    cloud_type, cb_hm = classify_clouds_and_bases(ww, clcl, clcm, clch, cape, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf, arrays.get("mh"))
+    cloud_type, cb_hm = classify_clouds_and_bases(ww, clcl, clcm, clch, cape, htop_dc, hbas_sc, htop_sc, lpi_max, ceiling, hsurf, arrays.get("mh"))
 
     sym_code = np.zeros(ww.shape, dtype=np.int16)
     m = _symbol_code_map()
@@ -437,6 +437,7 @@ def download(url, dest):
 
 
 MULTI_MESSAGE_HOURLY_SELECT_VARS = {"cape_ml", "cin_ml", "hbas_sc", "htop_sc", "lpi"}
+HOURLY_MAX_FROM_SUBSTEPS_VARS = {"cape_ml", "hbas_sc", "htop_sc", "lpi"}
 # Quarter-hour substeps are most useful for short-range nowcast/overlay work.
 # Keep later D2 steps on the cheaper hourly path to limit ingest overhead.
 D2_SUBSTEP_MAX_STEP = int(os.environ.get("SKYVIEW_D2_SUBSTEP_MAX_STEP", "24"))
@@ -973,8 +974,11 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
                         pass
                 arrays[key] = data.astype(np.float32)
                 if substeps is not None and minutes:
-                    arrays[f"{key}_substeps"] = substeps.astype(np.float32)
+                    substeps = substeps.astype(np.float32)
+                    arrays[f"{key}_substeps"] = substeps
                     arrays[f"{key}_substep_minutes"] = np.asarray(minutes, dtype=np.int16)
+                    if key in HOURLY_MAX_FROM_SUBSTEPS_VARS:
+                        arrays[f"{key}_hourly_max"] = np.nanmax(substeps, axis=0).astype(np.float32)
                     logger.debug(f"Step {step:03d}: {key} substeps extracted minutes={minutes}")
                 else:
                     logger.warning(f"Step {step:03d}: {key} expected quarter-hour substeps but none were extracted")

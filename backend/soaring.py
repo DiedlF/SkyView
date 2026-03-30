@@ -224,6 +224,44 @@ def calc_climb_rate_from_thermal_class(thermal_class):
     return np.choose(np.clip(thermal_class, 0, 3), [0.0, 1.0, 2.0, 3.2]).astype(np.float32)
 
 
+def calc_climb_rate_gold(mh, hbas_sc=None, htop_sc=None):
+    """Gold-style thermal climb-rate estimate from thermal height above ground.
+
+    Formula:
+      climb_rate = a × H
+
+    where:
+      - H is thermal height above ground in kilometers
+      - a = 1.0 for blue thermals
+      - a = 1.2 + 0.3 * (Hw / 1500 m) for cumulus thermals
+      - Hw is convective cloud thickness in meters
+
+    Inputs:
+      - mh: mixed-layer / thermal height above ground (m)
+      - hbas_sc: convective cloud base (m AMSL)
+      - htop_sc: convective cloud top (m AMSL)
+
+    If positive convective cloud thickness is available, we treat the point as
+    cumulus convection; otherwise it falls back to blue thermal a=1.
+    """
+    mh_arr = np.asarray(mh, dtype=np.float32)
+    valid = np.isfinite(mh_arr) & (mh_arr > 0.0)
+    h_km = np.where(valid, mh_arr / 1000.0, np.nan)
+
+    hw_m = np.zeros_like(mh_arr, dtype=np.float32)
+    cu_mask = np.zeros_like(valid, dtype=bool)
+    if hbas_sc is not None and htop_sc is not None:
+        hbas_arr = np.asarray(hbas_sc, dtype=np.float32)
+        htop_arr = np.asarray(htop_sc, dtype=np.float32)
+        thick = htop_arr - hbas_arr
+        cu_mask = valid & np.isfinite(thick) & (thick > 0.0)
+        hw_m = np.where(cu_mask, np.maximum(thick, 0.0), 0.0)
+
+    a = np.where(cu_mask, 1.2 + 0.3 * (hw_m / 1500.0), 1.0)
+    out = a * h_km
+    return np.where(valid, np.maximum(out, 0.0), np.nan).astype(np.float32)
+
+
 def calc_lcl(t_2m, td_2m, hsurf):
     """Calculate Lifting Condensation Level (cumulus cloud base).
 

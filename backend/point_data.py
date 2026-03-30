@@ -11,6 +11,7 @@ from soaring import (
     classify_thermal_strength,
     calc_climb_rate_from_thermal_class,
     calc_climb_rate_cape_enhanced,
+    calc_climb_rate_gold,
 )
 from constants import CELL_SIZES_BY_ZOOM, ICON_EU_STEP_3H_START
 
@@ -301,6 +302,17 @@ def build_overlay_values(
         crc = _safe_get(d, "climb_rate_cape", i0, j0)
     if crc is not None:
         ov["climb_rate_cape"] = round(float(crc), 1)
+
+    hbas_tmp = _safe_get(d, "hbas_sc", i0, j0)
+    htop_tmp = _safe_get(d, "htop_sc", i0, j0)
+    if mh_tmp is not None:
+        crg = float(calc_climb_rate_gold(
+            np.asarray(mh_tmp, dtype=np.float64),
+            np.asarray(np.nan if hbas_tmp is None else hbas_tmp, dtype=np.float64),
+            np.asarray(np.nan if htop_tmp is None else htop_tmp, dtype=np.float64),
+        ))
+        if math.isfinite(crg):
+            ov["climb_rate_gold"] = round(float(crg), 1)
 
     # Extract shared temperature/humidity scalars once for reuse below
     t2m  = _safe_get(d, "t_2m",  i0, j0)

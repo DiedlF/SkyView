@@ -36,7 +36,11 @@ def load_coverage_damping_cfg() -> dict:
 
 SYMBOL_KEYS: list[str] = [
     "ww", "ceiling", "clcl", "clcm", "clch",
-    "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hsurf", "mh",
+    "cape_ml", "cape_ml_hourly_max",
+    "htop_dc",
+    "hbas_sc", "hbas_sc_hourly_max",
+    "htop_sc", "htop_sc_hourly_max",
+    "lpi_max", "hsurf", "mh",
     "sym_code", "cb_hm",
 ]
 
@@ -50,11 +54,11 @@ def _compute_native_symbols_from_points(
     src_clcl: np.ndarray,
     src_clcm: np.ndarray,
     src_clch: np.ndarray,
-    src_cape: np.ndarray,
+    src_cape_hourly_max: np.ndarray,
     src_htop_dc: np.ndarray,
-    src_hbas_sc: np.ndarray,
-    src_htop_sc: np.ndarray,
-    src_lpi: np.ndarray,
+    src_hbas_sc_hourly_max: np.ndarray,
+    src_htop_sc_hourly_max: np.ndarray,
+    src_lpi_max: np.ndarray,
     src_hsurf: np.ndarray,
     src_mh: np.ndarray,
     src_sym_code: np.ndarray | None = None,
@@ -80,11 +84,11 @@ def _compute_native_symbols_from_points(
                     clcl=float(src_clcl[ii, jj]) if np.isfinite(src_clcl[ii, jj]) else 0.0,
                     clcm=float(src_clcm[ii, jj]) if np.isfinite(src_clcm[ii, jj]) else 0.0,
                     clch=float(src_clch[ii, jj]) if np.isfinite(src_clch[ii, jj]) else 0.0,
-                    cape_ml=float(src_cape[ii, jj]) if np.isfinite(src_cape[ii, jj]) else 0.0,
+                    cape_ml=float(src_cape_hourly_max[ii, jj]) if np.isfinite(src_cape_hourly_max[ii, jj]) else 0.0,
                     htop_dc=float(src_htop_dc[ii, jj]) if np.isfinite(src_htop_dc[ii, jj]) else 0.0,
-                    hbas_sc=float(src_hbas_sc[ii, jj]) if np.isfinite(src_hbas_sc[ii, jj]) else 0.0,
-                    htop_sc=float(src_htop_sc[ii, jj]) if np.isfinite(src_htop_sc[ii, jj]) else 0.0,
-                    lpi=float(src_lpi[ii, jj]) if np.isfinite(src_lpi[ii, jj]) else 0.0,
+                    hbas_sc=float(src_hbas_sc_hourly_max[ii, jj]) if np.isfinite(src_hbas_sc_hourly_max[ii, jj]) else 0.0,
+                    htop_sc=float(src_htop_sc_hourly_max[ii, jj]) if np.isfinite(src_htop_sc_hourly_max[ii, jj]) else 0.0,
+                    lpi=float(src_lpi_max[ii, jj]) if np.isfinite(src_lpi_max[ii, jj]) else 0.0,
                     ceiling=float(src_ceil[ii, jj]) if np.isfinite(src_ceil[ii, jj]) else 0.0,
                     hsurf=float(src_hsurf[ii, jj]) if np.isfinite(src_hsurf[ii, jj]) else 0.0,
                     mh=float(src_mh[ii, jj]) if np.isfinite(src_mh[ii, jj]) else None,
@@ -182,25 +186,22 @@ def compute_symbols_payload(
     c_clcl = _slice_array(d["clcl"], li, lo) if "clcl" in d else np.zeros_like(ww)
     c_clcm = _slice_array(d["clcm"], li, lo) if "clcm" in d else np.zeros_like(ww)
     c_clch = _slice_array(d["clch"], li, lo) if "clch" in d else np.zeros_like(ww)
-    c_cape = _slice_array(d["cape_ml"], li, lo) if "cape_ml" in d else np.zeros_like(ww)
+    c_cape_hourly_max = _slice_array(d.get("cape_ml_hourly_max", d.get("cape_ml", np.zeros_like(ww))), li, lo)
     c_htop_dc = _slice_array(d["htop_dc"], li, lo) if "htop_dc" in d else np.zeros_like(ww)
-    c_hbas_sc = _slice_array(d["hbas_sc"], li, lo) if "hbas_sc" in d else np.zeros_like(ww)
-    c_htop_sc = _slice_array(d["htop_sc"], li, lo) if "htop_sc" in d else np.zeros_like(ww)
-    c_lpi = (
-        _slice_array(d["lpi_max"], li, lo) if "lpi_max" in d
-        else (_slice_array(d["lpi"], li, lo) if "lpi" in d else np.zeros_like(ww))
-    )
+    c_hbas_sc_hourly_max = _slice_array(d.get("hbas_sc_hourly_max", d.get("hbas_sc", np.zeros_like(ww))), li, lo)
+    c_htop_sc_hourly_max = _slice_array(d.get("htop_sc_hourly_max", d.get("htop_sc", np.zeros_like(ww))), li, lo)
+    c_lpi_max = _slice_array(d["lpi_max"], li, lo) if "lpi_max" in d else np.zeros_like(ww)
     c_hsurf = _slice_array(d["hsurf"], li, lo) if "hsurf" in d else np.zeros_like(ww)
     c_mh = _slice_array(d["mh"], li, lo) if "mh" in d else np.zeros_like(ww)
     c_sym_code = _slice_array(d["sym_code"], li, lo) if "sym_code" in d else None
     c_cb_hm = _slice_array(d["cb_hm"], li, lo) if "cb_hm" in d else None
 
-    if c_hbas_sc is not None and c_hsurf is not None and c_mh is not None:
-        c_hbas_sc, _ = filter_hbas_with_mh(c_hbas_sc, c_hsurf, c_mh, margin_m=500.0, hard_cap_agl_m=6500.0)
+    if c_hbas_sc_hourly_max is not None and c_hsurf is not None and c_mh is not None:
+        c_hbas_sc_hourly_max, _ = filter_hbas_with_mh(c_hbas_sc_hourly_max, c_hsurf, c_mh, margin_m=500.0, hard_cap_agl_m=6500.0)
 
     d_eu = c_lat_eu = c_lon_eu = ww_eu = ceil_arr_eu = None
-    c_clcl_eu = c_clcm_eu = c_clch_eu = c_cape_eu = None
-    c_htop_dc_eu = c_hbas_sc_eu = c_htop_sc_eu = c_lpi_eu = c_hsurf_eu = c_mh_eu = None
+    c_clcl_eu = c_clcm_eu = c_clch_eu = c_cape_hourly_max_eu = None
+    c_htop_dc_eu = c_hbas_sc_hourly_max_eu = c_htop_sc_hourly_max_eu = c_lpi_max_eu = c_hsurf_eu = c_mh_eu = None
     c_sym_code_eu = c_cb_hm_eu = None
     eu_data_missing = False
 
@@ -234,17 +235,14 @@ def compute_symbols_payload(
                     c_clcl_eu = _slice_array(d_eu["clcl"], li_eu, lo_eu) if "clcl" in d_eu else np.zeros_like(ww_eu)
                     c_clcm_eu = _slice_array(d_eu["clcm"], li_eu, lo_eu) if "clcm" in d_eu else np.zeros_like(ww_eu)
                     c_clch_eu = _slice_array(d_eu["clch"], li_eu, lo_eu) if "clch" in d_eu else np.zeros_like(ww_eu)
-                    c_cape_eu = _slice_array(d_eu["cape_ml"], li_eu, lo_eu) if "cape_ml" in d_eu else np.zeros_like(ww_eu)
+                    c_cape_hourly_max_eu = _slice_array(d_eu.get("cape_ml_hourly_max", d_eu.get("cape_ml", np.zeros_like(ww_eu))), li_eu, lo_eu)
                     c_htop_dc_eu = _slice_array(d_eu["htop_dc"], li_eu, lo_eu) if "htop_dc" in d_eu else np.zeros_like(ww_eu)
-                    c_hbas_sc_eu = _slice_array(d_eu["hbas_sc"], li_eu, lo_eu) if "hbas_sc" in d_eu else np.zeros_like(ww_eu)
-                    c_htop_sc_eu = _slice_array(d_eu["htop_sc"], li_eu, lo_eu) if "htop_sc" in d_eu else np.zeros_like(ww_eu)
-                    c_lpi_eu = (
-                        _slice_array(d_eu["lpi_max"], li_eu, lo_eu) if "lpi_max" in d_eu
-                        else (_slice_array(d_eu["lpi"], li_eu, lo_eu) if "lpi" in d_eu else np.zeros_like(ww_eu))
-                    )
+                    c_hbas_sc_hourly_max_eu = _slice_array(d_eu.get("hbas_sc_hourly_max", d_eu.get("hbas_sc", np.zeros_like(ww_eu))), li_eu, lo_eu)
+                    c_htop_sc_hourly_max_eu = _slice_array(d_eu.get("htop_sc_hourly_max", d_eu.get("htop_sc", np.zeros_like(ww_eu))), li_eu, lo_eu)
+                    c_lpi_max_eu = _slice_array(d_eu["lpi_max"], li_eu, lo_eu) if "lpi_max" in d_eu else np.zeros_like(ww_eu)
                     c_hsurf_eu = _slice_array(d_eu["hsurf"], li_eu, lo_eu) if "hsurf" in d_eu else np.zeros_like(ww_eu)
                     c_mh_eu = _slice_array(d_eu["mh"], li_eu, lo_eu) if "mh" in d_eu else np.zeros_like(ww_eu)
-                    c_hbas_sc_eu, _ = filter_hbas_with_mh(c_hbas_sc_eu, c_hsurf_eu, c_mh_eu, margin_m=500.0, hard_cap_agl_m=6500.0)
+                    c_hbas_sc_hourly_max_eu, _ = filter_hbas_with_mh(c_hbas_sc_hourly_max_eu, c_hsurf_eu, c_mh_eu, margin_m=500.0, hard_cap_agl_m=6500.0)
                     c_sym_code_eu = _slice_array(d_eu["sym_code"], li_eu, lo_eu) if "sym_code" in d_eu else None
                     c_cb_hm_eu = _slice_array(d_eu["cb_hm"], li_eu, lo_eu) if "cb_hm" in d_eu else None
 
@@ -257,11 +255,11 @@ def compute_symbols_payload(
             src_clcl=c_clcl,
             src_clcm=c_clcm,
             src_clch=c_clch,
-            src_cape=c_cape,
+            src_cape_hourly_max=c_cape_hourly_max,
             src_htop_dc=c_htop_dc,
-            src_hbas_sc=c_hbas_sc,
-            src_htop_sc=c_htop_sc,
-            src_lpi=c_lpi,
+            src_hbas_sc_hourly_max=c_hbas_sc_hourly_max,
+            src_htop_sc_hourly_max=c_htop_sc_hourly_max,
+            src_lpi_max=c_lpi_max,
             src_hsurf=c_hsurf,
             src_mh=c_mh,
             src_sym_code=c_sym_code,
@@ -292,11 +290,11 @@ def compute_symbols_payload(
                     src_clcl=c_clcl_eu,
                     src_clcm=c_clcm_eu,
                     src_clch=c_clch_eu,
-                    src_cape=c_cape_eu,
+                    src_cape_hourly_max=c_cape_hourly_max_eu,
                     src_htop_dc=c_htop_dc_eu,
-                    src_hbas_sc=c_hbas_sc_eu,
-                    src_htop_sc=c_htop_sc_eu,
-                    src_lpi=c_lpi_eu,
+                    src_hbas_sc_hourly_max=c_hbas_sc_hourly_max_eu,
+                    src_htop_sc_hourly_max=c_htop_sc_hourly_max_eu,
+                    src_lpi_max=c_lpi_max_eu,
                     src_hsurf=c_hsurf_eu,
                     src_mh=c_mh_eu,
                     src_sym_code=c_sym_code_eu,
@@ -354,10 +352,10 @@ def compute_symbols_payload(
         c_lon_eu=c_lon_eu if d_eu is not None else None,
     )
 
-    pre_d2 = scatter_cell_stats(c_lat, c_lon, ctx, ww, c_cape, ceil_arr, CAPE_CONV_THRESHOLD, CEILING_VALID_MAX_METERS)
+    pre_d2 = scatter_cell_stats(c_lat, c_lon, ctx, ww, c_cape_hourly_max, ceil_arr, CAPE_CONV_THRESHOLD, CEILING_VALID_MAX_METERS)
     pre_eu = None
     if d_eu is not None and c_lat_eu is not None and ww_eu is not None:
-        pre_eu = scatter_cell_stats(c_lat_eu, c_lon_eu, ctx, ww_eu, c_cape_eu, ceil_arr_eu, CAPE_CONV_THRESHOLD, CEILING_VALID_MAX_METERS)
+        pre_eu = scatter_cell_stats(c_lat_eu, c_lon_eu, ctx, ww_eu, c_cape_hourly_max_eu, ceil_arr_eu, CAPE_CONV_THRESHOLD, CEILING_VALID_MAX_METERS)
 
     cd_cfg = load_coverage_damping_cfg()
     best_sym_d2 = best_cb_d2 = best_lat_d2 = best_lon_d2 = None
@@ -397,17 +395,17 @@ def compute_symbols_payload(
                 src_lat, src_lon = c_lat_eu, c_lon_eu
                 src_ww, src_ceil = ww_eu, ceil_arr_eu
                 src_clcl, src_clcm, src_clch = c_clcl_eu, c_clcm_eu, c_clch_eu
-                src_cape, src_htop_dc = c_cape_eu, c_htop_dc_eu
-                src_hbas_sc, src_htop_sc = c_hbas_sc_eu, c_htop_sc_eu
-                src_lpi, src_hsurf, src_mh = c_lpi_eu, c_hsurf_eu, c_mh_eu
+                src_cape_hourly_max, src_htop_dc = c_cape_hourly_max_eu, c_htop_dc_eu
+                src_hbas_sc_hourly_max, src_htop_sc_hourly_max = c_hbas_sc_hourly_max_eu, c_htop_sc_hourly_max_eu
+                src_lpi_max, src_hsurf, src_mh = c_lpi_max_eu, c_hsurf_eu, c_mh_eu
                 src_sym_code, src_cb_hm = c_sym_code_eu, c_cb_hm_eu
             else:
                 src_lat, src_lon = c_lat, c_lon
                 src_ww, src_ceil = ww, ceil_arr
                 src_clcl, src_clcm, src_clch = c_clcl, c_clcm, c_clch
-                src_cape, src_htop_dc = c_cape, c_htop_dc
-                src_hbas_sc, src_htop_sc = c_hbas_sc, c_htop_sc
-                src_lpi, src_hsurf, src_mh = c_lpi, c_hsurf, c_mh
+                src_cape_hourly_max, src_htop_dc = c_cape_hourly_max, c_htop_dc
+                src_hbas_sc_hourly_max, src_htop_sc_hourly_max = c_hbas_sc_hourly_max, c_htop_sc_hourly_max
+                src_lpi_max, src_hsurf, src_mh = c_lpi_max, c_hsurf, c_mh
                 src_sym_code, src_cb_hm = c_sym_code, c_cb_hm
 
             cli = np.asarray(cli_list, dtype=int) if cli_list else np.empty((0,), dtype=int)
@@ -418,9 +416,9 @@ def compute_symbols_payload(
                 src_lat, src_lon = c_lat_eu, c_lon_eu
                 src_ww, src_ceil = ww_eu, ceil_arr_eu
                 src_clcl, src_clcm, src_clch = c_clcl_eu, c_clcm_eu, c_clch_eu
-                src_cape, src_htop_dc = c_cape_eu, c_htop_dc_eu
-                src_hbas_sc, src_htop_sc = c_hbas_sc_eu, c_htop_sc_eu
-                src_lpi, src_hsurf, src_mh = c_lpi_eu, c_hsurf_eu, c_mh_eu
+                src_cape_hourly_max, src_htop_dc = c_cape_hourly_max_eu, c_htop_dc_eu
+                src_hbas_sc_hourly_max, src_htop_sc_hourly_max = c_hbas_sc_hourly_max_eu, c_htop_sc_hourly_max_eu
+                src_lpi_max, src_hsurf, src_mh = c_lpi_max_eu, c_hsurf_eu, c_mh_eu
                 src_sym_code, src_cb_hm = c_sym_code_eu, c_cb_hm_eu
                 cli_list = ctx.eu.lat_groups[i]
                 clo_list = ctx.eu.lon_groups[j]
@@ -477,11 +475,11 @@ def compute_symbols_payload(
                         clcl=float(src_clcl[best_ii, best_jj]) if np.isfinite(src_clcl[best_ii, best_jj]) else 0.0,
                         clcm=float(src_clcm[best_ii, best_jj]) if np.isfinite(src_clcm[best_ii, best_jj]) else 0.0,
                         clch=float(src_clch[best_ii, best_jj]) if np.isfinite(src_clch[best_ii, best_jj]) else 0.0,
-                        cape_ml=float(src_cape[best_ii, best_jj]) if np.isfinite(src_cape[best_ii, best_jj]) else 0.0,
+                        cape_ml=float(src_cape_hourly_max[best_ii, best_jj]) if np.isfinite(src_cape_hourly_max[best_ii, best_jj]) else 0.0,
                         htop_dc=float(src_htop_dc[best_ii, best_jj]) if np.isfinite(src_htop_dc[best_ii, best_jj]) else 0.0,
-                        hbas_sc=float(src_hbas_sc[best_ii, best_jj]) if np.isfinite(src_hbas_sc[best_ii, best_jj]) else 0.0,
-                        htop_sc=float(src_htop_sc[best_ii, best_jj]) if np.isfinite(src_htop_sc[best_ii, best_jj]) else 0.0,
-                        lpi=float(src_lpi[best_ii, best_jj]) if np.isfinite(src_lpi[best_ii, best_jj]) else 0.0,
+                        hbas_sc=float(src_hbas_sc_hourly_max[best_ii, best_jj]) if np.isfinite(src_hbas_sc_hourly_max[best_ii, best_jj]) else 0.0,
+                        htop_sc=float(src_htop_sc_hourly_max[best_ii, best_jj]) if np.isfinite(src_htop_sc_hourly_max[best_ii, best_jj]) else 0.0,
+                        lpi=float(src_lpi_max[best_ii, best_jj]) if np.isfinite(src_lpi_max[best_ii, best_jj]) else 0.0,
                         ceiling=float(src_ceil[best_ii, best_jj]) if np.isfinite(src_ceil[best_ii, best_jj]) else 0.0,
                         hsurf=float(src_hsurf[best_ii, best_jj]) if np.isfinite(src_hsurf[best_ii, best_jj]) else 0.0,
                         mh=float(src_mh[best_ii, best_jj]) if np.isfinite(src_mh[best_ii, best_jj]) else None,
@@ -517,9 +515,9 @@ def compute_symbols_payload(
                     sym, cb_hm, best_ii, best_jj = aggregate_symbol_cell(
                         cli=cli, clo=clo, cell_ww=cell_ww,
                         ceil_arr=src_ceil, c_clcl=src_clcl, c_clcm=src_clcm,
-                        c_clch=src_clch, c_cape=src_cape, c_htop_dc=src_htop_dc,
-                        c_hbas_sc=src_hbas_sc, c_htop_sc=src_htop_sc,
-                        c_lpi=src_lpi, c_hsurf=src_hsurf, c_mh=src_mh,
+                        c_clch=src_clch, c_cape_hourly_max=src_cape_hourly_max, c_htop_dc=src_htop_dc,
+                        c_hbas_sc_hourly_max=src_hbas_sc_hourly_max, c_htop_sc_hourly_max=src_htop_sc_hourly_max,
+                        c_lpi_max=src_lpi_max, c_hsurf=src_hsurf, c_mh=src_mh,
                         classify_point_fn=_classify_point_core,
                         zoom=zoom, pre_has_cape=pre_any_cape, pre_has_ceil=pre_any_ceil,
                     )

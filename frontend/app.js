@@ -1,6 +1,7 @@
 // app.js - Main application logic
 
 let map, symbolLayer, windLayer, markerLayer, d2BorderLayer = null, overlayLayer = null, debounceTimer, overlayDebounce, windDebounce, timesteps = [], currentTimeIndex = 0, currentRun = '';
+let currentTimelineSignature = null;
 let overlayRequestSeq = 0;
 let symbolsRequestSeq = 0;
 let windRequestSeq = 0;
@@ -194,8 +195,9 @@ const I18N = {
     'layer.hzerocl': 'Freezing level',
     'layer.h_snow': 'Snow depth',
     'layer.experimental': 'Experimental',
-    'layer.climbrate': 'Climb Rate (lapse_rate)',
-    'layer.climbrateape': 'Climb Rate (CAPE)',
+    'layer.climbrate': 'Climb Rate (Lapse Rate)',
+    'layer.climbrateape': 'Climb Rate (CAPE Enhanced)',
+    'layer.climbrategold': 'Climb Rate (Gold)',
     'layer.lcl': 'Cloud Base (spread * 125)',
     'layer.marker': 'Marker',
     helpTitle: 'How to read Skyview',
@@ -305,8 +307,9 @@ const I18N = {
     'layer.hzerocl': 'Nullgradgrenze',
     'layer.h_snow': 'Schneehöhe',
     'layer.experimental': 'Experimentell',
-    'layer.climbrate': 'Steigwerte (lapse_rate)',
-    'layer.climbrateape': 'Steigwerte (CAPE)',
+    'layer.climbrate': 'Steigwerte (Lapse Rate)',
+    'layer.climbrateape': 'Steigwerte (CAPE Enhanced)',
+    'layer.climbrategold': 'Steigwerte (Gold)',
     'layer.lcl': 'Wolkenbasis (Spread * 125)',
     'layer.marker': 'Markierung',
     helpTitle: 'Skyview Erklärung',
@@ -542,8 +545,9 @@ const LEGEND_CONFIGS = {
   cin_ml: { title: 'CIN (mixed layer)', gradient: 'linear-gradient(to right, rgb(255,80,80), rgb(220,160,60), rgb(80,200,120))', labels: ['-500 J/kg', '0 J/kg'] },
   hzerocl: { title: 'Freezing level', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '5000m+'] },
   thermals: { title: 'CAPE_ml', gradient: 'linear-gradient(to right, rgb(50,180,50), rgb(150,150,50), rgb(220,100,30), rgb(255,50,50))', labels: ['0 J/kg', '500+ J/kg'] },
-  climb_rate: { title: 'Climb Rate', gradient: 'linear-gradient(to right, rgb(50,200,50), rgb(180,200,50), rgb(220,150,30), rgb(255,50,50))', labels: ['0 m/s', '5 m/s'] },
-  climb_rate_cape: { title: 'Climb Rate (CAPE)', gradient: 'linear-gradient(to right, rgb(50,200,50), rgb(180,200,50), rgb(220,150,30), rgb(255,50,50))', labels: ['0 m/s', '5+ m/s'] },
+  climb_rate: { title: 'Climb Rate (Lapse Rate)', gradient: 'linear-gradient(to right, rgb(50,200,50), rgb(180,200,50), rgb(220,150,30), rgb(255,50,50))', labels: ['0 m/s', '5 m/s'] },
+  climb_rate_cape: { title: 'Climb Rate (CAPE Enhanced)', gradient: 'linear-gradient(to right, rgb(50,200,50), rgb(180,200,50), rgb(220,150,30), rgb(255,50,50))', labels: ['0 m/s', '5+ m/s'] },
+  climb_rate_gold: { title: 'Climb Rate (Gold)', gradient: 'linear-gradient(to right, rgb(50,200,50), rgb(180,200,50), rgb(220,150,30), rgb(255,50,50))', labels: ['0 m/s', '5+ m/s'] },
   lcl: { title: 'Cloud Base (LCL) MSL', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '5000m MSL'] },
   h_snow: { title: 'Snow depth', gradient: 'linear-gradient(to right, rgba(255,255,255,0), rgb(220,235,255), rgb(160,200,255), rgb(100,150,240))', labels: ['0', '100+ cm'] },
   ashfl_s: { title: 'Surface heat flux', gradient: 'linear-gradient(to right, rgb(70,170,240), rgb(162,115,130), rgb(255,60,20))', labels: ['20 W/m²', '400+ W/m²'] },
@@ -688,6 +692,7 @@ async function loadTimesteps() {
       timesteps = merged.steps;
       currentTimeIndex = 0;
       currentRun = merged.run;
+      currentTimelineSignature = buildTimelineSignature(merged);
       document.getElementById('run-time').textContent = merged.runTime ? formatDateShort(new Date(merged.runTime)) : 'N/A';
       document.getElementById('model').textContent = 'ICON-D2 + EU';
     } else {
@@ -697,6 +702,7 @@ async function loadTimesteps() {
       timesteps = latestRun.steps;
       currentTimeIndex = 0;
       currentRun = latestRun.run;
+      currentTimelineSignature = buildTimelineSignature(latestRun);
       document.getElementById('run-time').textContent = latestRun.runTime ? formatDateShort(new Date(latestRun.runTime)) : 'N/A';
       document.getElementById('model').textContent = latestRun.model ? latestRun.model.toUpperCase().replace('_', '-') : 'ICON-D2';
     }
@@ -716,6 +722,13 @@ async function loadTimesteps() {
 // Update valid time in info panel
 function updateValidTime() {
   // Valid time display removed — kept as no-op for call sites
+}
+
+function buildTimelineSignature(source) {
+  if (!source || !Array.isArray(source.steps)) return null;
+  const runBits = [source.run || '', source.runTime || '', source.model || '', source.d2Run || '', source.euRun || ''];
+  const stepBits = source.steps.map((step) => `${step.validTime || ''}|${step.model || ''}|${step.run || ''}|${step.step ?? ''}`);
+  return `${runBits.join('|')}::${stepBits.join(',')}`;
 }
 
 // Load symbols
@@ -814,8 +827,9 @@ const OVERLAY_META = {
   cin_ml: { label: 'CIN', unit: 'J/kg', decimals: 1 },
   hzerocl: { label: 'Freezing level', unit: 'm', integer: true },
   thermals: { label: 'CAPE_ml', unit: 'J/kg', decimals: 1 },
-  climb_rate: { label: 'Climb', unit: 'm/s', decimals: 1 },
-  climb_rate_cape: { label: 'Climb (CAPE)', unit: 'm/s', decimals: 1 },
+  climb_rate: { label: 'Climb (Lapse Rate)', unit: 'm/s', decimals: 1 },
+  climb_rate_cape: { label: 'Climb (CAPE Enhanced)', unit: 'm/s', decimals: 1 },
+  climb_rate_gold: { label: 'Climb (Gold)', unit: 'm/s', decimals: 1 },
   lcl: { label: 'Cloud base (LCL)', unit: 'm MSL', integer: true },
   h_snow: { label: 'Snow depth', unit: 'm', decimals: 2 },
   ashfl_s: { label: 'Surface heat flux', unit: 'W/m²', decimals: 0 },
@@ -2787,6 +2801,7 @@ async function refreshTimelineIfChanged() {
     const newRun = source.run || source.run;
     const newSteps = source.steps;
     const newRunTime = source.runTime;
+    const newTimelineSignature = buildTimelineSignature(source);
 
     if (currentRun && newRun !== currentRun) {
       const wasAtStart = currentTimeIndex === 0;
@@ -2795,6 +2810,7 @@ async function refreshTimelineIfChanged() {
 
       timesteps = newSteps;
       currentRun = newRun;
+      currentTimelineSignature = newTimelineSignature;
       document.getElementById('run-time').textContent = newRunTime ? formatDateShort(new Date(newRunTime)) : 'N/A';
       document.getElementById('model').textContent = merged ? 'ICON-D2 + EU' : (source.model ? source.model.toUpperCase().replace('_', '-') : 'ICON-D2');
 
@@ -2821,13 +2837,36 @@ async function refreshTimelineIfChanged() {
       const runEl = document.getElementById('run-time');
       runEl.style.color = '#00AA00';
       setTimeout(() => { runEl.style.color = ''; }, 3000);
-    } else if (newRun === currentRun && newSteps.length > timesteps.length) {
+    } else if (newTimelineSignature && newTimelineSignature !== currentTimelineSignature) {
       const oldLen = timesteps.length;
+      const wasAtStart = currentTimeIndex === 0;
+      const wasAtEnd = currentTimeIndex === oldLen - 1;
+      const oldValidTime = timesteps[currentTimeIndex]?.validTime;
+
       timesteps = newSteps;
-      if (currentTimeIndex === oldLen - 1) currentTimeIndex = timesteps.length - 1;
+      currentRun = newRun;
+      currentTimelineSignature = newTimelineSignature;
+      document.getElementById('run-time').textContent = newRunTime ? formatDateShort(new Date(newRunTime)) : 'N/A';
+      document.getElementById('model').textContent = merged ? 'ICON-D2 + EU' : (source.model ? source.model.toUpperCase().replace('_', '-') : 'ICON-D2');
+
+      if (wasAtStart) {
+        currentTimeIndex = 0;
+      } else if (wasAtEnd) {
+        currentTimeIndex = timesteps.length - 1;
+      } else if (oldValidTime) {
+        let bestIdx = 0, bestDist = Infinity;
+        timesteps.forEach((s, i) => {
+          const dist = Math.abs(new Date(s.validTime) - new Date(oldValidTime));
+          if (dist < bestDist) { bestDist = dist; bestIdx = i; }
+        });
+        currentTimeIndex = bestIdx;
+      }
+
       buildTimeline();
       updateTimeline();
+      loadSymbols();
       loadOverlay();
+      loadWind();
       loadD2Border();
     }
   } catch (_) {
