@@ -262,10 +262,10 @@ def colormap_climb_rate_cape(v):
 
 
 def colormap_climb_rate_gold(v):
-    """Gold formula climb rate: transparent at 0, green→yellow→red up to 5 m/s."""
-    if v is None or float(v) <= 0:
+    """Gold formula climb rate: transparent below 0.5, capped color scale at 3.5 m/s."""
+    if v is None or float(v) < 0.5:
         return None
-    t = min(float(v) / 5.0, 1.0)
+    t = min(float(v) / 3.5, 1.0)
     return (int(50 + 205 * t), int(200 - 80 * t), int(50 * (1 - t)), int(100 + 130 * t))
 
 
@@ -445,10 +445,18 @@ def colorize_layer_vectorized(layer: str, sampled: np.ndarray, valid: np.ndarray
         return rgba
 
     if layer in ("wstar", "climb_rate", "climb_rate_cape", "climb_rate_gold"):
-        th = 0.2 if layer == "wstar" else 0.1
+        if layer == "wstar":
+            th = 0.2
+            scale_max = 5.0
+        elif layer == "climb_rate_gold":
+            th = 0.5
+            scale_max = 3.5
+        else:
+            th = 0.1
+            scale_max = 5.0
         m = valid & (v >= th)
         if np.any(m):
-            t = np.clip(v / 5.0, 0.0, 1.0)
+            t = np.clip(v / scale_max, 0.0, 1.0)
             set_rgba(m, 50 + 205 * t, 200 - 80 * t, 50 * (1 - t), 100 + 130 * t)
         return rgba
 

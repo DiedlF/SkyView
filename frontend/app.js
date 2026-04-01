@@ -547,7 +547,7 @@ const LEGEND_CONFIGS = {
   thermals: { title: 'CAPE_ml', gradient: 'linear-gradient(to right, rgb(50,180,50), rgb(150,150,50), rgb(220,100,30), rgb(255,50,50))', labels: ['0 J/kg', '500+ J/kg'] },
   climb_rate: { title: 'Climb Rate (Lapse Rate)', gradient: 'linear-gradient(to right, rgb(50,200,50), rgb(180,200,50), rgb(220,150,30), rgb(255,50,50))', labels: ['0 m/s', '5 m/s'] },
   climb_rate_cape: { title: 'Climb Rate (CAPE Enhanced)', gradient: 'linear-gradient(to right, rgb(50,200,50), rgb(180,200,50), rgb(220,150,30), rgb(255,50,50))', labels: ['0 m/s', '5+ m/s'] },
-  climb_rate_gold: { title: 'Climb Rate (Gold)', gradient: 'linear-gradient(to right, rgb(50,200,50), rgb(180,200,50), rgb(220,150,30), rgb(255,50,50))', labels: ['0 m/s', '5+ m/s'] },
+  climb_rate_gold: { title: 'Climb Rate (Gold)', gradient: 'linear-gradient(to right, rgba(50,200,50,0), rgb(50,200,50), rgb(180,200,50), rgb(220,150,30), rgb(255,50,50))', labels: ['0.5 m/s', '3.5+ m/s'] },
   lcl: { title: 'Cloud Base (LCL) MSL', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '5000m MSL'] },
   h_snow: { title: 'Snow depth', gradient: 'linear-gradient(to right, rgba(255,255,255,0), rgb(220,235,255), rgb(160,200,255), rgb(100,150,240))', labels: ['0', '100+ cm'] },
   ashfl_s: { title: 'Surface heat flux', gradient: 'linear-gradient(to right, rgb(70,170,240), rgb(162,115,130), rgb(255,60,20))', labels: ['20 W/m²', '400+ W/m²'] },
