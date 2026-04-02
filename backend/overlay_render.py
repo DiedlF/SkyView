@@ -297,6 +297,24 @@ def colormap_lpi(v):
     return (int(70 + 185 * t), int(190 * (1 - t) + 70 * t), int(80 * (1 - t) + 40 * t), int(120 + 110 * t))
 
 
+def colormap_wave(v):
+    if v is None:
+        return None
+    val = float(v)
+    t = (max(-5.0, min(5.0, val)) + 5.0) / 10.0
+    if t <= 0.5:
+        u = t / 0.5
+        r = int(40 + (245 - 40) * u)
+        g = int(80 + (245 - 80) * u)
+        b = int(220 + (245 - 220) * u)
+    else:
+        u = (t - 0.5) / 0.5
+        r = int(245 + (220 - 245) * u)
+        g = int(245 + (40 - 245) * u)
+        b = int(245 + (40 - 245) * u)
+    return (r, g, b, 170)
+
+
 OVERLAY_CONFIGS = {
     "total_precip": {"var": "total_precip", "cmap": colormap_total_precip, "computed": True},
     "rain": {"var": "rain_amount", "cmap": colormap_rain, "computed": True},
@@ -330,10 +348,10 @@ OVERLAY_CONFIGS = {
     "climb_rate": {"var": "climb_rate", "cmap": colormap_climb_rate, "computed": True},
     "climb_rate_cape": {"var": "climb_rate_cape", "cmap": colormap_climb_rate_cape},
     "climb_rate_gold": {"var": "climb_rate_gold", "cmap": colormap_climb_rate_gold, "computed": True},
-    "wave_850": {"var": "wave_850", "cmap": colormap_lpi, "computed": True},
-    "wave_700": {"var": "wave_700", "cmap": colormap_lpi, "computed": True},
-    "wave_600": {"var": "wave_600", "cmap": colormap_lpi, "computed": True},
-    "wave_500": {"var": "wave_500", "cmap": colormap_lpi, "computed": True},
+    "wave_850": {"var": "wave_850", "cmap": colormap_wave, "computed": True},
+    "wave_700": {"var": "wave_700", "cmap": colormap_wave, "computed": True},
+    "wave_600": {"var": "wave_600", "cmap": colormap_wave, "computed": True},
+    "wave_500": {"var": "wave_500", "cmap": colormap_wave, "computed": True},
     "lcl": {"var": "lcl", "cmap": colormap_lcl, "computed": True},
     "h_snow": {"var": "h_snow", "cmap": colormap_clouds},
     "reachable": {"var": "reachable", "cmap": colormap_reachable, "computed": True},
@@ -462,6 +480,16 @@ def colorize_layer_vectorized(layer: str, sampled: np.ndarray, valid: np.ndarray
         if np.any(m):
             t = np.clip(v / scale_max, 0.0, 1.0)
             set_rgba(m, 50 + 205 * t, 200 - 80 * t, 50 * (1 - t), 100 + 130 * t)
+        return rgba
+
+    if layer in ("wave_850", "wave_700", "wave_600", "wave_500"):
+        m = valid & np.isfinite(v)
+        if np.any(m):
+            t = np.clip((v + 5.0) / 10.0, 0.0, 1.0)
+            r = np.where(t <= 0.5, 40 + (245 - 40) * (t / 0.5), 245 + (220 - 245) * ((t - 0.5) / 0.5))
+            g = np.where(t <= 0.5, 80 + (245 - 80) * (t / 0.5), 245 + (40 - 245) * ((t - 0.5) / 0.5))
+            b = np.where(t <= 0.5, 220 + (245 - 220) * (t / 0.5), 245 + (40 - 245) * ((t - 0.5) / 0.5))
+            set_rgba(m, r, g, b, 170)
         return rgba
 
 
