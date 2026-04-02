@@ -224,33 +224,29 @@ def calc_climb_rate_from_thermal_class(thermal_class):
     return np.choose(np.clip(thermal_class, 0, 3), [0.0, 1.0, 2.0, 3.2]).astype(np.float32)
 
 
-def calc_climb_rate_gold(hsurf, hbas_sc=None, htop_sc=None, hbas_dc=None, cape_ml=None, cape_conv_threshold=2.0):
-    """Gold-style thermal climb-rate estimate using a base-above-ground height.
+def calc_climb_rate_gold(hsurf, hbas_sc=None, htop_sc=None, htop_dc=None):
+    """Gold-style thermal climb-rate estimate using dry-convection top as minimum requirement.
 
     Requested definition:
-      - H = (base - hsurf) / 1000
-      - base = hbas_sc if available
-      - else hbas_dc for cells with enough CAPE_ML
-      - for cells that have hbas_sc:
-          a = 1.2 + 0.3 * ((htop_sc - hbas_sc) / 1500)
-      - otherwise a = 1.0
+      - Minimum requirement: htop_dc exists
+      - H = (htop_dc - hsurf) / 1000
+      - default a = 1.0
+      - if hbas_sc and htop_sc also exist:
+          Hw = htop_sc - hbas_sc
+          a = 1.2 + 0.3 * (Hw / 1500)
 
     All height inputs are AMSL in meters; output is m/s.
     """
     hsurf_arr = np.asarray(hsurf, dtype=np.float32)
+    htop_dc_arr = np.asarray(htop_dc, dtype=np.float32) if htop_dc is not None else np.full_like(hsurf_arr, np.nan, dtype=np.float32)
     hbas_sc_arr = np.asarray(hbas_sc, dtype=np.float32) if hbas_sc is not None else np.full_like(hsurf_arr, np.nan, dtype=np.float32)
     htop_sc_arr = np.asarray(htop_sc, dtype=np.float32) if htop_sc is not None else np.full_like(hsurf_arr, np.nan, dtype=np.float32)
-    hbas_dc_arr = np.asarray(hbas_dc, dtype=np.float32) if hbas_dc is not None else np.full_like(hsurf_arr, np.nan, dtype=np.float32)
-    cape_arr = np.asarray(cape_ml, dtype=np.float32) if cape_ml is not None else np.full_like(hsurf_arr, np.nan, dtype=np.float32)
 
-    sc_mask = np.isfinite(hbas_sc_arr) & np.isfinite(hsurf_arr) & (hbas_sc_arr > hsurf_arr)
-    dc_mask = (~sc_mask) & np.isfinite(hbas_dc_arr) & np.isfinite(hsurf_arr) & (hbas_dc_arr > hsurf_arr) & np.isfinite(cape_arr) & (cape_arr > float(cape_conv_threshold))
+    valid = np.isfinite(htop_dc_arr) & np.isfinite(hsurf_arr) & (htop_dc_arr > hsurf_arr)
+    h_km = np.where(valid, (htop_dc_arr - hsurf_arr) / 1000.0, np.nan)
 
-    base = np.where(sc_mask, hbas_sc_arr, np.where(dc_mask, hbas_dc_arr, np.nan))
-    h_km = (base - hsurf_arr) / 1000.0
-    valid = np.isfinite(h_km) & (h_km > 0.0)
-
-    hw_m = np.where(sc_mask & np.isfinite(htop_sc_arr), np.maximum(htop_sc_arr - hbas_sc_arr, 0.0), 0.0)
+    sc_mask = valid & np.isfinite(hbas_sc_arr) & np.isfinite(htop_sc_arr) & (hbas_sc_arr > hsurf_arr) & (htop_sc_arr > hbas_sc_arr)
+    hw_m = np.where(sc_mask, np.maximum(htop_sc_arr - hbas_sc_arr, 0.0), 0.0)
     a = np.where(sc_mask, 1.2 + 0.3 * (hw_m / 1500.0), 1.0)
 
     out = a * h_km

@@ -331,7 +331,6 @@ def build_overlay_values(
             np.asarray(np.nan if hbas_tmp is None else hbas_tmp, dtype=np.float64),
             np.asarray(np.nan if htop_tmp is None else htop_tmp, dtype=np.float64),
             np.asarray(htop_dc_tmp, dtype=np.float64),
-            np.asarray(np.nan if cape is None else cape, dtype=np.float64),
         ))
         if math.isfinite(crg):
             ov["climb_rate_gold"] = round(float(crg), 1)
