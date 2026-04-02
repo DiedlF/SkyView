@@ -305,11 +305,14 @@ def build_overlay_values(
 
     hbas_tmp = _safe_get(d, "hbas_sc", i0, j0)
     htop_tmp = _safe_get(d, "htop_sc", i0, j0)
-    if mh_tmp is not None:
+    htop_dc_tmp = _safe_get(d, "htop_dc", i0, j0)
+    if hsurf_tmp is not None and htop_dc_tmp is not None:
         crg = float(calc_climb_rate_gold(
-            np.asarray(mh_tmp, dtype=np.float64),
+            np.asarray(hsurf_tmp, dtype=np.float64),
             np.asarray(np.nan if hbas_tmp is None else hbas_tmp, dtype=np.float64),
             np.asarray(np.nan if htop_tmp is None else htop_tmp, dtype=np.float64),
+            np.asarray(htop_dc_tmp, dtype=np.float64),
+            np.asarray(np.nan if cape is None else cape, dtype=np.float64),
         ))
         if math.isfinite(crg):
             ov["climb_rate_gold"] = round(float(crg), 1)
