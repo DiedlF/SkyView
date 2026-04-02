@@ -9,7 +9,7 @@ def convective_cloud_mask(
     mh_agl: np.ndarray | None,
     *,
     min_agl_m: float,
-    margin_m: float = 500.0,
+    margin_m: float = 1500.0,
     hard_cap_agl_m: float = 6500.0,
 ) -> np.ndarray:
     """Return mask where convective cloud base is physically plausible."""
@@ -32,7 +32,7 @@ def filter_hbas_with_mh(
     hsurf_amsl: np.ndarray,
     mh_agl: np.ndarray | None,
     *,
-    margin_m: float = 500.0,
+    margin_m: float = 1500.0,
     hard_cap_agl_m: float = 6500.0,
     return_quality: bool = False,
 ):

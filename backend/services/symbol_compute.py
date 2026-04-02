@@ -197,7 +197,7 @@ def compute_symbols_payload(
     c_cb_hm = _slice_array(d["cb_hm"], li, lo) if "cb_hm" in d else None
 
     if c_hbas_sc_hourly_max is not None and c_hsurf is not None and c_mh is not None:
-        c_hbas_sc_hourly_max, _ = filter_hbas_with_mh(c_hbas_sc_hourly_max, c_hsurf, c_mh, margin_m=500.0, hard_cap_agl_m=6500.0)
+        c_hbas_sc_hourly_max, _ = filter_hbas_with_mh(c_hbas_sc_hourly_max, c_hsurf, c_mh, margin_m=1500.0, hard_cap_agl_m=6500.0)
 
     d_eu = c_lat_eu = c_lon_eu = ww_eu = ceil_arr_eu = None
     c_clcl_eu = c_clcm_eu = c_clch_eu = c_cape_hourly_max_eu = None
@@ -242,7 +242,7 @@ def compute_symbols_payload(
                     c_lpi_max_eu = _slice_array(d_eu["lpi_max"], li_eu, lo_eu) if "lpi_max" in d_eu else np.zeros_like(ww_eu)
                     c_hsurf_eu = _slice_array(d_eu["hsurf"], li_eu, lo_eu) if "hsurf" in d_eu else np.zeros_like(ww_eu)
                     c_mh_eu = _slice_array(d_eu["mh"], li_eu, lo_eu) if "mh" in d_eu else np.zeros_like(ww_eu)
-                    c_hbas_sc_hourly_max_eu, _ = filter_hbas_with_mh(c_hbas_sc_hourly_max_eu, c_hsurf_eu, c_mh_eu, margin_m=500.0, hard_cap_agl_m=6500.0)
+                    c_hbas_sc_hourly_max_eu, _ = filter_hbas_with_mh(c_hbas_sc_hourly_max_eu, c_hsurf_eu, c_mh_eu, margin_m=1500.0, hard_cap_agl_m=6500.0)
                     c_sym_code_eu = _slice_array(d_eu["sym_code"], li_eu, lo_eu) if "sym_code" in d_eu else None
                     c_cb_hm_eu = _slice_array(d_eu["cb_hm"], li_eu, lo_eu) if "cb_hm" in d_eu else None
 
