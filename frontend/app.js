@@ -198,10 +198,7 @@ const I18N = {
     'layer.climbrate': 'Climb Rate (Lapse Rate)',
     'layer.climbrateape': 'Climb Rate (CAPE Enhanced)',
     'layer.climbrategold': 'Climb Rate (Gold)',
-    'layer.wave850': 'Wave 850 hPa',
-    'layer.wave700': 'Wave 700 hPa',
-    'layer.wave600': 'Wave 600 hPa',
-    'layer.wave500': 'Wave 500 hPa',
+    'layer.wave': 'Wave',
     'layer.lcl': 'Cloud Base (spread * 125)',
     'layer.marker': 'Marker',
     helpTitle: 'How to read Skyview',
@@ -314,10 +311,7 @@ const I18N = {
     'layer.climbrate': 'Steigwerte (Lapse Rate)',
     'layer.climbrateape': 'Steigwerte (CAPE Enhanced)',
     'layer.climbrategold': 'Steigwerte (Gold)',
-    'layer.wave850': 'Welle 850 hPa',
-    'layer.wave700': 'Welle 700 hPa',
-    'layer.wave600': 'Welle 600 hPa',
-    'layer.wave500': 'Welle 500 hPa',
+    'layer.wave': 'Welle',
     'layer.lcl': 'Wolkenbasis (Spread * 125)',
     'layer.marker': 'Markierung',
     helpTitle: 'Skyview Erklärung',
@@ -556,10 +550,10 @@ const LEGEND_CONFIGS = {
   climb_rate: { title: 'Climb Rate (Lapse Rate)', gradient: 'linear-gradient(to right, rgb(50,200,50), rgb(180,200,50), rgb(220,150,30), rgb(255,50,50))', labels: ['0 m/s', '5 m/s'] },
   climb_rate_cape: { title: 'Climb Rate (CAPE Enhanced)', gradient: 'linear-gradient(to right, rgb(50,200,50), rgb(180,200,50), rgb(220,150,30), rgb(255,50,50))', labels: ['0 m/s', '5+ m/s'] },
   climb_rate_gold: { title: 'Climb Rate (Gold)', gradient: 'linear-gradient(to right, rgba(50,200,50,0), rgb(50,200,50), rgb(180,200,50), rgb(220,150,30), rgb(255,50,50))', labels: ['0.5 m/s', '3.5+ m/s'] },
-  wave_850: { title: 'Wave 850 hPa', gradient: 'linear-gradient(to right, rgba(255,80,80,0.85), rgb(220,180,80), rgba(0,0,0,0), rgb(120,200,90), rgb(40,120,220))', labels: ['sink', 'lift'] },
-  wave_700: { title: 'Wave 700 hPa', gradient: 'linear-gradient(to right, rgba(255,80,80,0.85), rgb(220,180,80), rgba(0,0,0,0), rgb(120,200,90), rgb(40,120,220))', labels: ['sink', 'lift'] },
-  wave_600: { title: 'Wave 600 hPa', gradient: 'linear-gradient(to right, rgba(255,80,80,0.85), rgb(220,180,80), rgba(0,0,0,0), rgb(120,200,90), rgb(40,120,220))', labels: ['sink', 'lift'] },
-  wave_500: { title: 'Wave 500 hPa', gradient: 'linear-gradient(to right, rgba(255,80,80,0.85), rgb(220,180,80), rgba(0,0,0,0), rgb(120,200,90), rgb(40,120,220))', labels: ['sink', 'lift'] },
+  wave_850: { title: 'Wave 850 hPa (~1500m)', gradient: 'linear-gradient(to right, rgb(40,80,220), rgb(120,170,255), rgb(245,245,245), rgb(255,170,120), rgb(220,40,40))', labels: ['-5 m/s', '0 m/s', '+5 m/s'] },
+  wave_700: { title: 'Wave 700 hPa (~3000m)', gradient: 'linear-gradient(to right, rgb(40,80,220), rgb(120,170,255), rgb(245,245,245), rgb(255,170,120), rgb(220,40,40))', labels: ['-5 m/s', '0 m/s', '+5 m/s'] },
+  wave_600: { title: 'Wave 600 hPa (~4200m)', gradient: 'linear-gradient(to right, rgb(40,80,220), rgb(120,170,255), rgb(245,245,245), rgb(255,170,120), rgb(220,40,40))', labels: ['-5 m/s', '0 m/s', '+5 m/s'] },
+  wave_500: { title: 'Wave 500 hPa (~5500m)', gradient: 'linear-gradient(to right, rgb(40,80,220), rgb(120,170,255), rgb(245,245,245), rgb(255,170,120), rgb(220,40,40))', labels: ['-5 m/s', '0 m/s', '+5 m/s'] },
   lcl: { title: 'Cloud Base (LCL) MSL', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '5000m MSL'] },
   h_snow: { title: 'Snow depth', gradient: 'linear-gradient(to right, rgba(255,255,255,0), rgb(220,235,255), rgb(160,200,255), rgb(100,150,240))', labels: ['0', '100+ cm'] },
   ashfl_s: { title: 'Surface heat flux', gradient: 'linear-gradient(to right, rgb(70,170,240), rgb(162,115,130), rgb(255,60,20))', labels: ['20 W/m²', '400+ W/m²'] },
@@ -1158,6 +1152,10 @@ function getEffectiveOverlayLayer() {
   if (currentOverlay === 'clouds') {
     return document.getElementById('clouds-type')?.value || 'clouds_total';
   }
+  if (currentOverlay === 'wave') {
+    const level = document.getElementById('wave-level')?.value || '600';
+    return `wave_${level}`;
+  }
   return currentOverlay;
 }
 
@@ -1467,13 +1465,15 @@ function updateLegend() {
   }
 
   const config = LEGEND_CONFIGS[effectiveOverlay];
+  const labels = config.labels || [];
+  const labelsHtml = labels.length <= 2
+    ? `<span>${labels[0] || ''}</span><span>${labels[labels.length - 1] || ''}</span>`
+    : labels.map(l => `<span>${l}</span>`).join('');
+
   legendEl.innerHTML = `
     <div class="legend-title">${config.title}</div>
     <div class="legend-gradient" style="background: ${config.gradient};"></div>
-    <div class="legend-labels">
-      <span>${config.labels[0]}</span>
-      <span>${config.labels[config.labels.length - 1]}</span>
-    </div>
+    <div class="legend-labels">${labelsHtml}</div>
   `;
   legendEl.style.display = 'block';
 }
@@ -1612,6 +1612,17 @@ const cloudsType = document.getElementById('clouds-type');
 if (cloudsType) {
   cloudsType.addEventListener('change', () => {
     if (currentOverlay === 'clouds') {
+      updateLegend();
+      updateInfoPanel();
+      loadOverlay();
+    }
+  });
+}
+
+const waveLevel = document.getElementById('wave-level');
+if (waveLevel) {
+  waveLevel.addEventListener('change', () => {
+    if (currentOverlay === 'wave') {
       updateLegend();
       updateInfoPanel();
       loadOverlay();

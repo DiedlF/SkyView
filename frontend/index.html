@@ -111,10 +111,15 @@
     <label><input type="radio" name="overlay" value="climb_rate"> <span data-i18n="layer.climbrate">Climb Rate (Lapse Rate)</span></label>
     <label><input type="radio" name="overlay" value="climb_rate_cape"> <span data-i18n="layer.climbrateape">Climb Rate (CAPE Enhanced)</span></label>
     <label><input type="radio" name="overlay" value="climb_rate_gold"> <span data-i18n="layer.climbrategold">Climb Rate (Gold)</span></label>
-    <label><input type="radio" name="overlay" value="wave_850"> <span data-i18n="layer.wave850">Wave 850 hPa</span></label>
-    <label><input type="radio" name="overlay" value="wave_700"> <span data-i18n="layer.wave700">Wave 700 hPa</span></label>
-    <label><input type="radio" name="overlay" value="wave_600"> <span data-i18n="layer.wave600">Wave 600 hPa</span></label>
-    <label><input type="radio" name="overlay" value="wave_500"> <span data-i18n="layer.wave500">Wave 500 hPa</span></label>
+    <label style="display:flex;align-items:center;gap:6px;">
+      <input type="radio" name="overlay" value="wave"> <span data-i18n="layer.wave">Wave</span>
+      <select id="wave-level" style="font-size:11px;background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 4px;">
+        <option value="850">850 hPa (~1500m)</option>
+        <option value="700">700 hPa (~3000m)</option>
+        <option value="600" selected>600 hPa (~4200m)</option>
+        <option value="500">500 hPa (~5500m)</option>
+      </select>
+    </label>
     <label><input type="radio" name="overlay" value="lcl"> <span data-i18n="layer.lcl">Cloud Base (LCL)</span></label>
     <div class="layer-divider"></div>
     <div class="layer-subtitle" data-i18n="layer.marker">Marker</div>
