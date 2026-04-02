@@ -301,18 +301,20 @@ def colormap_wave(v):
     if v is None:
         return None
     val = float(v)
-    t = (max(-5.0, min(5.0, val)) + 5.0) / 10.0
+    x = max(-3.0, min(3.0, val)) / 3.0
+    y = np.sign(x) * (abs(x) ** 0.75)
+    t = (y + 1.0) / 2.0
     if t <= 0.5:
         u = t / 0.5
-        r = int(40 + (245 - 40) * u)
-        g = int(80 + (245 - 80) * u)
-        b = int(220 + (245 - 220) * u)
+        r = int(30 + (245 - 30) * u)
+        g = int(60 + (245 - 60) * u)
+        b = int(210 + (245 - 210) * u)
     else:
         u = (t - 0.5) / 0.5
-        r = int(245 + (220 - 245) * u)
-        g = int(245 + (40 - 245) * u)
-        b = int(245 + (40 - 245) * u)
-    return (r, g, b, 170)
+        r = int(245 + (210 - 245) * u)
+        g = int(245 + (30 - 245) * u)
+        b = int(245 + (30 - 245) * u)
+    return (r, g, b, 185)
 
 
 OVERLAY_CONFIGS = {
@@ -485,11 +487,13 @@ def colorize_layer_vectorized(layer: str, sampled: np.ndarray, valid: np.ndarray
     if layer in ("wave_850", "wave_700", "wave_600", "wave_500"):
         m = valid & np.isfinite(v)
         if np.any(m):
-            t = np.clip((v + 5.0) / 10.0, 0.0, 1.0)
-            r = np.where(t <= 0.5, 40 + (245 - 40) * (t / 0.5), 245 + (220 - 245) * ((t - 0.5) / 0.5))
-            g = np.where(t <= 0.5, 80 + (245 - 80) * (t / 0.5), 245 + (40 - 245) * ((t - 0.5) / 0.5))
-            b = np.where(t <= 0.5, 220 + (245 - 220) * (t / 0.5), 245 + (40 - 245) * ((t - 0.5) / 0.5))
-            set_rgba(m, r, g, b, 170)
+            x = np.clip(v / 3.0, -1.0, 1.0)
+            y = np.sign(x) * (np.abs(x) ** 0.75)
+            t = (y + 1.0) / 2.0
+            r = np.where(t <= 0.5, 30 + (245 - 30) * (t / 0.5), 245 + (210 - 245) * ((t - 0.5) / 0.5))
+            g = np.where(t <= 0.5, 60 + (245 - 60) * (t / 0.5), 245 + (30 - 245) * ((t - 0.5) / 0.5))
+            b = np.where(t <= 0.5, 210 + (245 - 210) * (t / 0.5), 245 + (30 - 245) * ((t - 0.5) / 0.5))
+            set_rgba(m, r, g, b, 185)
         return rgba
 
 
