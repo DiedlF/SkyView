@@ -224,7 +224,7 @@ def calc_climb_rate_from_thermal_class(thermal_class):
     return np.choose(np.clip(thermal_class, 0, 3), [0.0, 1.0, 2.0, 3.2]).astype(np.float32)
 
 
-def calc_climb_rate_gold(hsurf, hbas_sc=None, htop_sc=None, hbas_dc=None, cape_ml=None, cape_conv_threshold=50.0):
+def calc_climb_rate_gold(hsurf, hbas_sc=None, htop_sc=None, hbas_dc=None, cape_ml=None, cape_conv_threshold=2.0):
     """Gold-style thermal climb-rate estimate using a base-above-ground height.
 
     Requested definition:
