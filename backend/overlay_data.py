@@ -195,7 +195,8 @@ def compute_computed_field_cropped(var: str, d: dict, li: np.ndarray, lo: np.nda
             hbas_sc = d["hbas_sc"][np.ix_(li, lo)] if "hbas_sc" in d else None
             htop_sc = d["htop_sc"][np.ix_(li, lo)] if "htop_sc" in d else None
             htop_dc = d["htop_dc"][np.ix_(li, lo)]
-            return calc_climb_rate_gold(hsurf, hbas_sc, htop_sc, htop_dc)
+            cape_ml = d["cape_ml"][np.ix_(li, lo)] if "cape_ml" in d else None
+            return calc_climb_rate_gold(hsurf, hbas_sc, htop_sc, htop_dc, cape_ml)
 
         if var in ("wave_850", "wave_700", "wave_600", "wave_500"):
             level = var.split("_")[1]
@@ -277,7 +278,7 @@ def compute_computed_field_full(var: str, d: dict, model_used: str, step: int) -
     if var == "climb_rate_gold":
         if "htop_dc" not in d or "hsurf" not in d:
             raise HTTPException(404, "Gold climb-rate data not available for this timestep (missing htop_dc/hsurf)")
-        return calc_climb_rate_gold(d["hsurf"], d.get("hbas_sc"), d.get("htop_sc"), d.get("htop_dc"))
+        return calc_climb_rate_gold(d["hsurf"], d.get("hbas_sc"), d.get("htop_sc"), d.get("htop_dc"), d.get("cape_ml"))
     if var in ("wave_850", "wave_700", "wave_600", "wave_500"):
         level = var.split("_")[1]
         omega_key = f"omega_{level}hpa"

@@ -224,11 +224,12 @@ def calc_climb_rate_from_thermal_class(thermal_class):
     return np.choose(np.clip(thermal_class, 0, 3), [0.0, 1.0, 2.0, 3.2]).astype(np.float32)
 
 
-def calc_climb_rate_gold(hsurf, hbas_sc=None, htop_sc=None, htop_dc=None):
-    """Gold-style thermal climb-rate estimate using dry-convection top as minimum requirement.
+def calc_climb_rate_gold(hsurf, hbas_sc=None, htop_sc=None, htop_dc=None, cape_ml=None, cape_conv_threshold=2.0):
+    """Gold-style thermal climb-rate estimate using dry-convection top plus symbol-consistent CAPE gate.
 
     Requested definition:
       - Minimum requirement: htop_dc exists
+      - Use the same CAPE threshold as symbol logic for dry-convection eligibility
       - H = (htop_dc - hsurf) / 1000
       - default a = 1.0
       - if hbas_sc and htop_sc also exist:
@@ -241,8 +242,9 @@ def calc_climb_rate_gold(hsurf, hbas_sc=None, htop_sc=None, htop_dc=None):
     htop_dc_arr = np.asarray(htop_dc, dtype=np.float32) if htop_dc is not None else np.full_like(hsurf_arr, np.nan, dtype=np.float32)
     hbas_sc_arr = np.asarray(hbas_sc, dtype=np.float32) if hbas_sc is not None else np.full_like(hsurf_arr, np.nan, dtype=np.float32)
     htop_sc_arr = np.asarray(htop_sc, dtype=np.float32) if htop_sc is not None else np.full_like(hsurf_arr, np.nan, dtype=np.float32)
+    cape_arr = np.asarray(cape_ml, dtype=np.float32) if cape_ml is not None else np.full_like(hsurf_arr, np.nan, dtype=np.float32)
 
-    valid = np.isfinite(htop_dc_arr) & np.isfinite(hsurf_arr) & (htop_dc_arr > hsurf_arr)
+    valid = np.isfinite(htop_dc_arr) & np.isfinite(hsurf_arr) & (htop_dc_arr > hsurf_arr) & np.isfinite(cape_arr) & (cape_arr > float(cape_conv_threshold))
     h_km = np.where(valid, (htop_dc_arr - hsurf_arr) / 1000.0, np.nan)
 
     sc_mask = valid & np.isfinite(hbas_sc_arr) & np.isfinite(htop_sc_arr) & (hbas_sc_arr > hsurf_arr) & (htop_sc_arr > hbas_sc_arr)
