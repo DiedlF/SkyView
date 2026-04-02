@@ -14,6 +14,7 @@ from soaring import (
     calc_climb_rate_from_thermal_class,
     calc_climb_rate_cape_enhanced,
     calc_climb_rate_gold,
+    calc_pressure_vertical_velocity_to_w_ms,
 )
 from constants import PRECIP_RATE_FIELD_BY_LAYER_VAR
 
@@ -33,6 +34,9 @@ def build_overlay_keys(cfg: dict) -> list[str]:
             overlay_keys += ["t_2m", "td_2m", "hsurf", "mh", "ww", "t_850hpa", "t_700hpa", "t_500hpa", "t_300hpa"]
         elif v == "climb_rate_gold":
             overlay_keys += ["htop_dc", "hsurf", "hbas_sc", "htop_sc", "cape_ml"]
+        elif v in ("wave_850", "wave_700", "wave_600", "wave_500"):
+            level = v.split("_")[1]
+            overlay_keys += [f"omega_{level}hpa", f"t_{level}hpa"]
         elif v in ("lcl", "reachable"):
             overlay_keys += ["ashfl_s", "mh", "t_2m", "td_2m", "hsurf"]
         elif v == "dew_spread_2m":
@@ -130,7 +134,7 @@ def compute_computed_field_cropped(var: str, d: dict, li: np.ndarray, lo: np.nda
             raise HTTPException(404, "Dew spread data not available for this timestep")
         return d["t_2m"][np.ix_(li, lo)] - d["td_2m"][np.ix_(li, lo)]
 
-    if var in ("wstar", "climb_rate", "climb_rate_gold", "lcl", "reachable"):
+    if var in ("wstar", "climb_rate", "climb_rate_gold", "wave_850", "wave_700", "wave_600", "wave_500", "lcl", "reachable"):
         if var == "wstar":
             if "ashfl_s" not in d or "mh" not in d or "t_2m" not in d:
                 raise HTTPException(404, "Soaring data not available for this timestep (re-ingestion needed)")
@@ -186,6 +190,18 @@ def compute_computed_field_cropped(var: str, d: dict, li: np.ndarray, lo: np.nda
             hbas_dc = d["htop_dc"][np.ix_(li, lo)]
             cape_ml = d["cape_ml"][np.ix_(li, lo)] if "cape_ml" in d else None
             return calc_climb_rate_gold(hsurf, hbas_sc, htop_sc, hbas_dc, cape_ml)
+
+        if var in ("wave_850", "wave_700", "wave_600", "wave_500"):
+            level = var.split("_")[1]
+            omega_key = f"omega_{level}hpa"
+            temp_key = f"t_{level}hpa"
+            if omega_key not in d or temp_key not in d:
+                raise HTTPException(404, f"Wave data not available for this timestep (missing {omega_key}/{temp_key})")
+            return calc_pressure_vertical_velocity_to_w_ms(
+                d[omega_key][np.ix_(li, lo)],
+                d[temp_key][np.ix_(li, lo)],
+                float(level),
+            )
 
         if "ashfl_s" not in d or "mh" not in d or "t_2m" not in d:
             raise HTTPException(404, "Soaring data not available for this timestep (re-ingestion needed)")
@@ -252,6 +268,13 @@ def compute_computed_field_full(var: str, d: dict, model_used: str, step: int) -
         if "htop_dc" not in d or "hsurf" not in d:
             raise HTTPException(404, "Gold climb-rate data not available for this timestep (missing htop_dc/hsurf)")
         return calc_climb_rate_gold(d["hsurf"], d.get("hbas_sc"), d.get("htop_sc"), d.get("htop_dc"), d.get("cape_ml"))
+    if var in ("wave_850", "wave_700", "wave_600", "wave_500"):
+        level = var.split("_")[1]
+        omega_key = f"omega_{level}hpa"
+        temp_key = f"t_{level}hpa"
+        if omega_key not in d or temp_key not in d:
+            raise HTTPException(404, f"Wave data not available for this timestep (missing {omega_key}/{temp_key})")
+        return calc_pressure_vertical_velocity_to_w_ms(d[omega_key], d[temp_key], float(level))
     if var == "dew_spread_2m":
         if "t_2m" not in d or "td_2m" not in d:
             raise HTTPException(404, "Dew spread data not available for this timestep")

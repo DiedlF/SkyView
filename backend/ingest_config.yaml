@@ -76,7 +76,7 @@ profiles:
       - hzerocl
     pressure_levels:
       # D2 supports emagram + meteogram + selectable overlays
-      variables: [u, v, t, fi, relhum]
+      variables: [u, v, t, fi, relhum, omega]
       levels: [1000, 975, 950, 850, 700, 600, 500, 400, 300, 200]
 
   skyview_eu_core:
@@ -116,8 +116,8 @@ profiles:
     pressure_levels:
       # Reduced EU pressure coverage to selectable overlay/wind levels only.
       # No emagram/meteogram levels on EU.
-      variables: [u, v, t]
-      levels: [950, 850, 700, 500, 300]
+      variables: [u, v, t, omega]
+      levels: [950, 850, 700, 600, 500, 300]
 
 groups:
   aviation:
@@ -190,7 +190,7 @@ static_variables:
   - hsurf
 
 pressure_levels:
-  variables: [u, v, t, fi, relhum]
+  variables: [u, v, t, fi, relhum, omega]
   levels: [1000, 975, 950, 850, 700, 600, 500, 400, 300, 200]
 
 # Variables that may not exist in ICON-EU (will be skipped gracefully)

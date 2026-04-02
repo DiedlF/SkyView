@@ -12,6 +12,7 @@ from soaring import (
     calc_climb_rate_from_thermal_class,
     calc_climb_rate_cape_enhanced,
     calc_climb_rate_gold,
+    calc_pressure_vertical_velocity_to_w_ms,
 )
 from constants import CELL_SIZES_BY_ZOOM, ICON_EU_STEP_3H_START
 
@@ -34,11 +35,13 @@ POINT_KEYS = [
     # Boundary layer / atmosphere
     "mh", "ashfl_s", "relhum_2m",
     "t_2m", "td_2m", "h_snow",
-    "t_950hpa", "t_850hpa", "t_700hpa", "t_500hpa", "t_300hpa",
+    "t_950hpa", "t_850hpa", "t_700hpa", "t_600hpa", "t_500hpa", "t_300hpa",
+    "omega_850hpa", "omega_700hpa", "omega_600hpa", "omega_500hpa",
     # Wind
     "u_10m", "v_10m", "vmax_10m",
     "u_850hpa", "v_850hpa",
     "u_700hpa", "v_700hpa",
+    "u_600hpa", "v_600hpa",
     "u_500hpa", "v_500hpa",
     "u_300hpa", "v_300hpa",
 ]
@@ -150,10 +153,22 @@ def build_overlay_values_from_raw(
         ov["dew_spread_2m"] = round(float(values["t_2m"]) - float(values["td_2m"]), 1)
 
     # Temperature levels
-    for tk in ("t_2m", "t_950hpa", "t_850hpa", "t_700hpa", "t_500hpa", "t_300hpa"):
+    for tk in ("t_2m", "t_950hpa", "t_850hpa", "t_700hpa", "t_600hpa", "t_500hpa", "t_300hpa"):
         tv = values.get(tk)
         if tv is not None:
             ov[tk] = round(_to_celsius(float(tv)), 1)
+
+    for level in (850, 700, 600, 500):
+        omega_v = values.get(f"omega_{level}hpa")
+        temp_v = values.get(f"t_{level}hpa")
+        if omega_v is not None and temp_v is not None:
+            wave_v = float(calc_pressure_vertical_velocity_to_w_ms(
+                np.asarray(omega_v, dtype=np.float64),
+                np.asarray(temp_v, dtype=np.float64),
+                float(level),
+            ))
+            if math.isfinite(wave_v):
+                ov[f"wave_{level}"] = round(float(wave_v), 1)
 
     # Weather
     if values.get("ww") is not None:
@@ -317,6 +332,18 @@ def build_overlay_values(
         if math.isfinite(crg):
             ov["climb_rate_gold"] = round(float(crg), 1)
 
+    for level in (850, 700, 600, 500):
+        omega_v = _safe_get(d, f"omega_{level}hpa", i0, j0)
+        temp_v = _safe_get(d, f"t_{level}hpa", i0, j0)
+        if omega_v is not None and temp_v is not None:
+            wave_v = float(calc_pressure_vertical_velocity_to_w_ms(
+                np.asarray(omega_v, dtype=np.float64),
+                np.asarray(temp_v, dtype=np.float64),
+                float(level),
+            ))
+            if math.isfinite(wave_v):
+                ov[f"wave_{level}"] = round(float(wave_v), 1)
+
     # Extract shared temperature/humidity scalars once for reuse below
     t2m  = _safe_get(d, "t_2m",  i0, j0)
     td2m = _safe_get(d, "td_2m", i0, j0)
@@ -328,7 +355,7 @@ def build_overlay_values(
         ov["dew_spread_2m"] = round(t2m - td2m, 1)
 
     # Temperature levels → Celsius
-    for tk in ("t_2m", "t_950hpa", "t_850hpa", "t_700hpa", "t_500hpa", "t_300hpa"):
+    for tk in ("t_2m", "t_950hpa", "t_850hpa", "t_700hpa", "t_600hpa", "t_500hpa", "t_300hpa"):
         v = _safe_get(d, tk, i0, j0)
         if v is not None:
             ov[tk] = round(_to_celsius(v), 1)

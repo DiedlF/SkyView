@@ -257,6 +257,20 @@ def calc_climb_rate_gold(hsurf, hbas_sc=None, htop_sc=None, hbas_dc=None, cape_m
     return np.where(valid, np.maximum(out, 0.0), np.nan).astype(np.float32)
 
 
+def calc_pressure_vertical_velocity_to_w_ms(omega_pa_s, temp_k, pressure_hpa):
+    """Convert pressure vertical velocity omega (Pa/s) to geometric w (m/s).
+
+    Positive output means ascending air. Uses hydrostatic approximation:
+      w = -omega * (R_d * T) / (p * g)
+    """
+    omega = np.asarray(omega_pa_s, dtype=np.float32)
+    temp = np.asarray(temp_k, dtype=np.float32)
+    p_pa = float(pressure_hpa) * 100.0
+    factor = (287.05 * temp) / (p_pa * 9.80665)
+    out = -omega * factor
+    return np.where(np.isfinite(omega) & np.isfinite(temp), out, np.nan).astype(np.float32)
+
+
 def calc_lcl(t_2m, td_2m, hsurf):
     """Calculate Lifting Condensation Level (cumulus cloud base).
 
