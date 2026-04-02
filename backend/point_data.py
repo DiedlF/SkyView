@@ -268,7 +268,11 @@ def build_overlay_values(
     if cape is not None:
         ov["thermals"] = round(cape, 1)
 
-    for key in ("mh", "ashfl_s", "relhum_2m"):
+    mh_point = _safe_get(d, "mh", i0, j0)
+    hsurf_point = _safe_get(d, "hsurf", i0, j0)
+    if mh_point is not None and hsurf_point is not None:
+        ov["mh"] = round(mh_point + hsurf_point, 1)
+    for key in ("ashfl_s", "relhum_2m"):
         v = _safe_get(d, key, i0, j0)
         if v is not None:
             ov[key] = round(v, 1)

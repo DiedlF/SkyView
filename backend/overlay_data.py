@@ -30,6 +30,8 @@ def build_overlay_keys(cfg: dict) -> list[str]:
             overlay_keys += ["htop_sc", "hbas_sc"]
         elif v == "wstar":
             overlay_keys += ["ashfl_s", "mh", "t_2m"]
+        elif v == "mh":
+            overlay_keys += ["mh", "hsurf"]
         elif v == "climb_rate":
             overlay_keys += ["t_2m", "td_2m", "hsurf", "mh", "ww", "t_850hpa", "t_700hpa", "t_500hpa", "t_300hpa"]
         elif v == "climb_rate_gold":
@@ -134,7 +136,12 @@ def compute_computed_field_cropped(var: str, d: dict, li: np.ndarray, lo: np.nda
             raise HTTPException(404, "Dew spread data not available for this timestep")
         return d["t_2m"][np.ix_(li, lo)] - d["td_2m"][np.ix_(li, lo)]
 
-    if var in ("wstar", "climb_rate", "climb_rate_gold", "wave_850", "wave_700", "wave_600", "wave_500", "lcl", "reachable"):
+    if var in ("mh", "wstar", "climb_rate", "climb_rate_gold", "wave_850", "wave_700", "wave_600", "wave_500", "lcl", "reachable"):
+        if var == "mh":
+            if "mh" not in d or "hsurf" not in d:
+                raise HTTPException(404, "MH overlay data not available for this timestep (missing mh/hsurf)")
+            return d["mh"][np.ix_(li, lo)] + d["hsurf"][np.ix_(li, lo)]
+
         if var == "wstar":
             if "ashfl_s" not in d or "mh" not in d or "t_2m" not in d:
                 raise HTTPException(404, "Soaring data not available for this timestep (re-ingestion needed)")
@@ -231,6 +238,10 @@ def compute_computed_field_full(var: str, d: dict, model_used: str, step: int) -
         return _precip_precomputed_field(var, d)
     if var == "conv_thickness":
         return np.maximum(0, d["htop_sc"] - d["hbas_sc"])
+    if var == "mh":
+        if "mh" not in d or "hsurf" not in d:
+            raise HTTPException(404, "MH overlay data not available for this timestep (missing mh/hsurf)")
+        return d["mh"] + d["hsurf"]
     if var == "wstar":
         if "ashfl_s" not in d or "mh" not in d or "t_2m" not in d:
             raise HTTPException(404, "Soaring data not available for this timestep (re-ingestion needed)")
