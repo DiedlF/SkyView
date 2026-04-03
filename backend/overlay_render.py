@@ -317,6 +317,40 @@ def colormap_wave(v):
     return (r, g, b, 185)
 
 
+def colormap_geopotential_height(v):
+    if v is None:
+        return None
+    val = float(v)
+    # broad altitude-oriented scale in meters; clipped for stable colors
+    t = np.clip(val / 12000.0, 0.0, 1.0)
+    if t <= 0.2:
+        u = t / 0.2
+        r = int(35 + (70 - 35) * u)
+        g = int(55 + (150 - 55) * u)
+        b = int(150 + (220 - 150) * u)
+    elif t <= 0.45:
+        u = (t - 0.2) / 0.25
+        r = int(70 + (120 - 70) * u)
+        g = int(150 + (200 - 150) * u)
+        b = int(220 + (120 - 220) * u)
+    elif t <= 0.7:
+        u = (t - 0.45) / 0.25
+        r = int(120 + (235 - 120) * u)
+        g = int(200 + (210 - 200) * u)
+        b = int(120 + (90 - 120) * u)
+    elif t <= 0.88:
+        u = (t - 0.7) / 0.18
+        r = int(235 + (220 - 235) * u)
+        g = int(210 + (90 - 210) * u)
+        b = int(90 + (60 - 90) * u)
+    else:
+        u = (t - 0.88) / 0.12
+        r = int(220 + (150 - 220) * u)
+        g = int(90 + (20 - 90) * u)
+        b = int(60 + (20 - 60) * u)
+    return (r, g, b, 185)
+
+
 OVERLAY_CONFIGS = {
     "total_precip": {"var": "total_precip", "cmap": colormap_total_precip, "computed": True},
     "rain": {"var": "rain_amount", "cmap": colormap_rain, "computed": True},
@@ -354,6 +388,12 @@ OVERLAY_CONFIGS = {
     "wave_700": {"var": "wave_700", "cmap": colormap_wave, "computed": True},
     "wave_600": {"var": "wave_600", "cmap": colormap_wave, "computed": True},
     "wave_500": {"var": "wave_500", "cmap": colormap_wave, "computed": True},
+    "geopotential_950": {"var": "geopotential_950", "cmap": colormap_geopotential_height, "computed": True},
+    "geopotential_850": {"var": "geopotential_850", "cmap": colormap_geopotential_height, "computed": True},
+    "geopotential_700": {"var": "geopotential_700", "cmap": colormap_geopotential_height, "computed": True},
+    "geopotential_600": {"var": "geopotential_600", "cmap": colormap_geopotential_height, "computed": True},
+    "geopotential_500": {"var": "geopotential_500", "cmap": colormap_geopotential_height, "computed": True},
+    "geopotential_300": {"var": "geopotential_300", "cmap": colormap_geopotential_height, "computed": True},
     "lcl": {"var": "lcl", "cmap": colormap_lcl, "computed": True},
     "h_snow": {"var": "h_snow", "cmap": colormap_clouds},
     "reachable": {"var": "reachable", "cmap": colormap_reachable, "computed": True},
@@ -482,6 +522,31 @@ def colorize_layer_vectorized(layer: str, sampled: np.ndarray, valid: np.ndarray
         if np.any(m):
             t = np.clip(v / scale_max, 0.0, 1.0)
             set_rgba(m, 50 + 205 * t, 200 - 80 * t, 50 * (1 - t), 100 + 130 * t)
+        return rgba
+
+    if layer.startswith("geopotential_"):
+        m = valid & np.isfinite(v)
+        if np.any(m):
+            t = np.clip(v / 12000.0, 0.0, 1.0)
+            r = np.select([t <= 0.2, t <= 0.45, t <= 0.7, t <= 0.88], [
+                35 + (70 - 35) * (t / 0.2),
+                70 + (120 - 70) * ((t - 0.2) / 0.25),
+                120 + (235 - 120) * ((t - 0.45) / 0.25),
+                235 + (220 - 235) * ((t - 0.7) / 0.18),
+            ], default=220 + (150 - 220) * ((t - 0.88) / 0.12))
+            g = np.select([t <= 0.2, t <= 0.45, t <= 0.7, t <= 0.88], [
+                55 + (150 - 55) * (t / 0.2),
+                150 + (200 - 150) * ((t - 0.2) / 0.25),
+                200 + (210 - 200) * ((t - 0.45) / 0.25),
+                210 + (90 - 210) * ((t - 0.7) / 0.18),
+            ], default=90 + (20 - 90) * ((t - 0.88) / 0.12))
+            b = np.select([t <= 0.2, t <= 0.45, t <= 0.7, t <= 0.88], [
+                150 + (220 - 150) * (t / 0.2),
+                220 + (120 - 220) * ((t - 0.2) / 0.25),
+                120 + (90 - 120) * ((t - 0.45) / 0.25),
+                90 + (60 - 90) * ((t - 0.7) / 0.18),
+            ], default=60 + (20 - 60) * ((t - 0.88) / 0.12))
+            set_rgba(m, r, g, b, 185)
         return rgba
 
     if layer in ("wave_850", "wave_700", "wave_600", "wave_500"):

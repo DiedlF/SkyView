@@ -556,6 +556,12 @@ const LEGEND_CONFIGS = {
   wave_700: { title: 'Wave 700 hPa (~3000m)', gradient: 'linear-gradient(to right, rgb(30,60,210), rgb(120,170,255), rgb(245,245,245), rgb(255,170,120), rgb(210,30,30))', labels: ['-3 m/s', '0 m/s', '+3 m/s'] },
   wave_600: { title: 'Wave 600 hPa (~4200m)', gradient: 'linear-gradient(to right, rgb(30,60,210), rgb(120,170,255), rgb(245,245,245), rgb(255,170,120), rgb(210,30,30))', labels: ['-3 m/s', '0 m/s', '+3 m/s'] },
   wave_500: { title: 'Wave 500 hPa (~5500m)', gradient: 'linear-gradient(to right, rgb(30,60,210), rgb(120,170,255), rgb(245,245,245), rgb(255,170,120), rgb(210,30,30))', labels: ['-3 m/s', '0 m/s', '+3 m/s'] },
+  geopotential_950: { title: 'Geopotential 950 hPa', gradient: 'linear-gradient(to right, rgb(35,55,150), rgb(70,150,220), rgb(120,200,120), rgb(235,210,90), rgb(220,90,60), rgb(150,20,20))', labels: ['250 m', '800 m'] },
+  geopotential_850: { title: 'Geopotential 850 hPa', gradient: 'linear-gradient(to right, rgb(35,55,150), rgb(70,150,220), rgb(120,200,120), rgb(235,210,90), rgb(220,90,60), rgb(150,20,20))', labels: ['1200 m', '1800 m'] },
+  geopotential_700: { title: 'Geopotential 700 hPa', gradient: 'linear-gradient(to right, rgb(35,55,150), rgb(70,150,220), rgb(120,200,120), rgb(235,210,90), rgb(220,90,60), rgb(150,20,20))', labels: ['2600 m', '3400 m'] },
+  geopotential_600: { title: 'Geopotential 600 hPa', gradient: 'linear-gradient(to right, rgb(35,55,150), rgb(70,150,220), rgb(120,200,120), rgb(235,210,90), rgb(220,90,60), rgb(150,20,20))', labels: ['3800 m', '4600 m'] },
+  geopotential_500: { title: 'Geopotential 500 hPa', gradient: 'linear-gradient(to right, rgb(35,55,150), rgb(70,150,220), rgb(120,200,120), rgb(235,210,90), rgb(220,90,60), rgb(150,20,20))', labels: ['5200 m', '5900 m'] },
+  geopotential_300: { title: 'Geopotential 300 hPa', gradient: 'linear-gradient(to right, rgb(35,55,150), rgb(70,150,220), rgb(120,200,120), rgb(235,210,90), rgb(220,90,60), rgb(150,20,20))', labels: ['8700 m', '9700 m'] },
   lcl: { title: 'Cloud Base (LCL) MSL', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '5000m MSL'] },
   h_snow: { title: 'Snow depth', gradient: 'linear-gradient(to right, rgba(255,255,255,0), rgb(220,235,255), rgb(160,200,255), rgb(100,150,240))', labels: ['0', '100+ cm'] },
   ashfl_s: { title: 'Surface heat flux', gradient: 'linear-gradient(to right, rgb(70,170,240), rgb(162,115,130), rgb(255,60,20))', labels: ['20 W/m²', '400+ W/m²'] },
@@ -842,6 +848,12 @@ const OVERLAY_META = {
   wave_700: { label: 'Wave 700', unit: 'm/s', decimals: 1 },
   wave_600: { label: 'Wave 600', unit: 'm/s', decimals: 1 },
   wave_500: { label: 'Wave 500', unit: 'm/s', decimals: 1 },
+  geopotential_950: { label: 'Geopotential 950', unit: 'm', decimals: 0 },
+  geopotential_850: { label: 'Geopotential 850', unit: 'm', decimals: 0 },
+  geopotential_700: { label: 'Geopotential 700', unit: 'm', decimals: 0 },
+  geopotential_600: { label: 'Geopotential 600', unit: 'm', decimals: 0 },
+  geopotential_500: { label: 'Geopotential 500', unit: 'm', decimals: 0 },
+  geopotential_300: { label: 'Geopotential 300', unit: 'm', decimals: 0 },
   lcl: { label: 'Cloud base (LCL)', unit: 'm MSL', integer: true },
   h_snow: { label: 'Snow depth', unit: 'm', decimals: 2 },
   ashfl_s: { label: 'Surface heat flux', unit: 'W/m²', decimals: 0 },
@@ -1157,6 +1169,10 @@ function getEffectiveOverlayLayer() {
   if (currentOverlay === 'wave') {
     const level = document.getElementById('wave-level')?.value || '600';
     return `wave_${level}`;
+  }
+  if (currentOverlay === 'geopotential') {
+    const level = document.getElementById('geopotential-level')?.value || '850';
+    return `geopotential_${level}`;
   }
   return currentOverlay;
 }
@@ -1625,6 +1641,17 @@ const waveLevel = document.getElementById('wave-level');
 if (waveLevel) {
   waveLevel.addEventListener('change', () => {
     if (currentOverlay === 'wave') {
+      updateLegend();
+      updateInfoPanel();
+      loadOverlay();
+    }
+  });
+}
+
+const geopotentialLevel = document.getElementById('geopotential-level');
+if (geopotentialLevel) {
+  geopotentialLevel.addEventListener('change', () => {
+    if (currentOverlay === 'geopotential') {
       updateLegend();
       updateInfoPanel();
       loadOverlay();

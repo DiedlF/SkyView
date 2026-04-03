@@ -59,7 +59,7 @@
       <input type="checkbox" id="layer-wind"> <span data-i18n="layer.wind">Wind</span>
       <select id="wind-level" style="font-size:11px;background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 4px;">
         <option value="10m" selected>10m</option>
-        <option value="gust10m" data-i18n="layer.wind.gust10m">10m Gusts</option>
+        <option value="gust10m" data-i18n="layer.wind.gust10m">10m max</option>
         <option value="950">950 hPa (~500m)</option>
         <option value="850">850 hPa (~1500m)</option>
         <option value="700">700 hPa (~3000m)</option>
@@ -88,6 +88,17 @@
         <option value="clouds_high" data-i18n="layer.clouds.high">High</option>
         <option value="clouds_total" selected data-i18n="layer.clouds.total">Total</option>
         <option value="clouds_total_mod">Total_mod</option>
+      </select>
+    </label>
+    <label style="display:flex;align-items:center;gap:6px;">
+      <input type="radio" name="overlay" value="geopotential"> Geopotential
+      <select id="geopotential-level" style="font-size:11px;background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 4px;">
+        <option value="950">950 hPa (~500m)</option>
+        <option value="850" selected>850 hPa (~1500m)</option>
+        <option value="700">700 hPa (~3000m)</option>
+        <option value="600">600 hPa (~4200m)</option>
+        <option value="500">500 hPa (~5500m)</option>
+        <option value="300">300 hPa (~9000m)</option>
       </select>
     </label>
     <div class="layer-divider"></div>

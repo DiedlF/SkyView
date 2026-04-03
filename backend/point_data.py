@@ -17,6 +17,7 @@ from soaring import (
 from constants import CELL_SIZES_BY_ZOOM, ICON_EU_STEP_3H_START
 
 logger = logging.getLogger(__name__)
+G0 = 9.80665
 
 # All NPZ keys consumed by a full point query.
 # Pass this to load_data(keys=POINT_KEYS) to avoid loading unused variables.
@@ -37,6 +38,7 @@ POINT_KEYS = [
     "t_2m", "td_2m", "h_snow",
     "t_950hpa", "t_850hpa", "t_700hpa", "t_600hpa", "t_500hpa", "t_300hpa",
     "omega_850hpa", "omega_700hpa", "omega_600hpa", "omega_500hpa",
+    "fi_950hpa", "fi_850hpa", "fi_700hpa", "fi_600hpa", "fi_500hpa", "fi_300hpa",
     # Wind
     "u_10m", "v_10m", "vmax_10m",
     "u_850hpa", "v_850hpa",
@@ -169,6 +171,13 @@ def build_overlay_values_from_raw(
             ))
             if math.isfinite(wave_v):
                 ov[f"wave_{level}"] = round(float(wave_v), 1)
+
+    for level in (950, 850, 700, 600, 500, 300):
+        fi_v = values.get(f"fi_{level}hpa")
+        if fi_v is not None:
+            gh_v = float(fi_v) / G0
+            if math.isfinite(gh_v):
+                ov[f"geopotential_{level}"] = round(float(gh_v), 0)
 
     # Weather
     if values.get("ww") is not None:
@@ -347,6 +356,13 @@ def build_overlay_values(
             ))
             if math.isfinite(wave_v):
                 ov[f"wave_{level}"] = round(float(wave_v), 1)
+
+    for level in (950, 850, 700, 600, 500, 300):
+        fi_v = _safe_get(d, f"fi_{level}hpa", i0, j0)
+        if fi_v is not None:
+            gh_v = float(fi_v) / G0
+            if math.isfinite(gh_v):
+                ov[f"geopotential_{level}"] = round(float(gh_v), 0)
 
     # Extract shared temperature/humidity scalars once for reuse below
     t2m  = _safe_get(d, "t_2m",  i0, j0)

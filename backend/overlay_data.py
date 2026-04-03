@@ -18,6 +18,8 @@ from soaring import (
 )
 from constants import PRECIP_RATE_FIELD_BY_LAYER_VAR
 
+G0 = 9.80665
+
 
 def build_overlay_keys(cfg: dict) -> list[str]:
     """Determine data keys required for a given overlay config."""
@@ -39,6 +41,9 @@ def build_overlay_keys(cfg: dict) -> list[str]:
         elif v in ("wave_850", "wave_700", "wave_600", "wave_500"):
             level = v.split("_")[1]
             overlay_keys += [f"omega_{level}hpa", f"t_{level}hpa"]
+        elif v in ("geopotential_950", "geopotential_850", "geopotential_700", "geopotential_600", "geopotential_500", "geopotential_300"):
+            level = v.split("_")[1]
+            overlay_keys += [f"fi_{level}hpa"]
         elif v in ("lcl", "reachable"):
             overlay_keys += ["ashfl_s", "mh", "t_2m", "td_2m", "hsurf"]
         elif v == "dew_spread_2m":
@@ -136,7 +141,7 @@ def compute_computed_field_cropped(var: str, d: dict, li: np.ndarray, lo: np.nda
             raise HTTPException(404, "Dew spread data not available for this timestep")
         return d["t_2m"][np.ix_(li, lo)] - d["td_2m"][np.ix_(li, lo)]
 
-    if var in ("mh", "wstar", "climb_rate", "climb_rate_gold", "wave_850", "wave_700", "wave_600", "wave_500", "lcl", "reachable"):
+    if var in ("mh", "wstar", "climb_rate", "climb_rate_gold", "wave_850", "wave_700", "wave_600", "wave_500", "geopotential_950", "geopotential_850", "geopotential_700", "geopotential_600", "geopotential_500", "geopotential_300", "lcl", "reachable"):
         if var == "mh":
             if "mh" not in d or "hsurf" not in d:
                 raise HTTPException(404, "MH overlay data not available for this timestep (missing mh/hsurf)")
@@ -209,6 +214,13 @@ def compute_computed_field_cropped(var: str, d: dict, li: np.ndarray, lo: np.nda
                 d[temp_key][np.ix_(li, lo)],
                 float(level),
             )
+
+        if var in ("geopotential_950", "geopotential_850", "geopotential_700", "geopotential_600", "geopotential_500", "geopotential_300"):
+            level = var.split("_")[1]
+            fi_key = f"fi_{level}hpa"
+            if fi_key not in d:
+                raise HTTPException(404, f"Geopotential data not available for this timestep (missing {fi_key})")
+            return np.asarray(d[fi_key][np.ix_(li, lo)], dtype=np.float64) / G0
 
         if "ashfl_s" not in d or "mh" not in d or "t_2m" not in d:
             raise HTTPException(404, "Soaring data not available for this timestep (re-ingestion needed)")
@@ -286,6 +298,12 @@ def compute_computed_field_full(var: str, d: dict, model_used: str, step: int) -
         if omega_key not in d or temp_key not in d:
             raise HTTPException(404, f"Wave data not available for this timestep (missing {omega_key}/{temp_key})")
         return calc_pressure_vertical_velocity_to_w_ms(d[omega_key], d[temp_key], float(level))
+    if var in ("geopotential_950", "geopotential_850", "geopotential_700", "geopotential_600", "geopotential_500", "geopotential_300"):
+        level = var.split("_")[1]
+        fi_key = f"fi_{level}hpa"
+        if fi_key not in d:
+            raise HTTPException(404, f"Geopotential data not available for this timestep (missing {fi_key})")
+        return np.asarray(d[fi_key], dtype=np.float64) / G0
     if var == "dew_spread_2m":
         if "t_2m" not in d or "td_2m" not in d:
             raise HTTPException(404, "Dew spread data not available for this timestep")
