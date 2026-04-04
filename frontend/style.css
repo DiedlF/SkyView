@@ -447,14 +447,20 @@ body {
 #wind-level,
 #temp-type,
 #precip-type,
-#clouds-type {
+#clouds-type,
+#wave-level,
+#geopotential-level,
+.layer-select {
   margin-left: auto;
   box-sizing: border-box;
 }
 
 /* Desktop/tablet widths */
 #wind-level,
-#temp-type {
+#temp-type,
+#wave-level,
+#geopotential-level,
+.layer-select {
   width: 108px;
 }
 
@@ -466,7 +472,10 @@ body {
 /* Slightly narrower on mobile */
 @media (max-width: 768px) {
   #wind-level,
-  #temp-type {
+  #temp-type,
+  #wave-level,
+  #geopotential-level,
+  .layer-select {
     width: 96px;
   }
 

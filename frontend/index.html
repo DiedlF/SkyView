@@ -92,7 +92,7 @@
     </label>
     <label style="display:flex;align-items:center;gap:6px;">
       <input type="radio" name="overlay" value="geopotential"> Geopotential
-      <select id="geopotential-level" style="font-size:11px;background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 4px;">
+      <select id="geopotential-level" class="layer-select">
         <option value="950">950 hPa (~500m)</option>
         <option value="850">850 hPa (~1500m)</option>
         <option value="700">700 hPa (~3000m)</option>
@@ -106,7 +106,7 @@
     <label><input type="radio" name="overlay" value="climb_rate_gold"> <span data-i18n="layer.thermalsgold">Thermals (Gold)</span></label>
     <label style="display:flex;align-items:center;gap:6px;">
       <input type="radio" name="overlay" value="wave"> <span data-i18n="layer.wave">Wave</span>
-      <select id="wave-level" style="font-size:11px;background:#333;color:#fff;border:1px solid #555;border-radius:3px;padding:1px 4px;">
+      <select id="wave-level" class="layer-select">
         <option value="850">850 hPa (~1500m)</option>
         <option value="700">700 hPa (~3000m)</option>
         <option value="600" selected>600 hPa (~4200m)</option>
@@ -118,16 +118,11 @@
     <label><input type="radio" name="overlay" value="cloud_base"> <span data-i18n="layer.cloudbase">Cloud base (convective)</span></label>
     <label><input type="radio" name="overlay" value="dry_conv_top"> <span data-i18n="layer.dryconv">Dry Convection Top</span></label>
     <label><input type="radio" name="overlay" value="mh"> <span data-i18n="layer.mh">Boundary layer depth</span></label>
-    <label><input type="radio" name="overlay" value="relhum_2m"> <span data-i18n="layer.relhum">Relative humidity 2m</span></label>
-    <label><input type="radio" name="overlay" value="dew_spread_2m"> <span data-i18n="layer.dewspread">Dew point spread 2m</span></label>
-    <label><input type="radio" name="overlay" value="sigwx"> <span data-i18n="layer.sigwx">Significant weather</span></label>
     <label><input type="radio" name="overlay" value="ceiling"> <span data-i18n="layer.ceiling">Ceiling</span></label>
     <label><input type="radio" name="overlay" value="conv_thickness"> <span data-i18n="layer.convthickness">Cloud thickness (convective)</span></label>
     <label><input type="radio" name="overlay" value="lpi"> <span data-i18n="layer.lpi">LPI</span></label>
     <label><input type="radio" name="overlay" value="cin_ml"> <span data-i18n="layer.cinml">CIN (mixed layer)</span></label>
-    <label><input type="radio" name="overlay" value="hzerocl"> <span data-i18n="layer.hzerocl">Freezing level</span></label>
     <label><input type="radio" name="overlay" value="thermals"> CAPE_ml</label>
-    <label><input type="radio" name="overlay" value="ashfl_s"> <span data-i18n="layer.ashfl">Surface heat flux</span></label>
     <label><input type="radio" name="overlay" value="h_snow"> <span data-i18n="layer.h_snow">Snow depth</span></label>
     <div class="layer-divider"></div>
     <div class="layer-subtitle" data-i18n="layer.marker">Marker</div>
