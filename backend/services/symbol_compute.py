@@ -94,8 +94,6 @@ def _compute_native_symbols_from_points(
                     mh=float(src_mh[ii, jj]) if np.isfinite(src_mh[ii, jj]) else None,
                     ww=ww_v,
                 )
-            if sym == "clear":
-                continue
             label = None
             if cb_hm is not None:
                 cb_hm = min(cb_hm, 99)
