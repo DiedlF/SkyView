@@ -317,37 +317,54 @@ def colormap_wave(v):
     return (r, g, b, 185)
 
 
-def colormap_geopotential_height(v):
+GEOPOTENTIAL_LEVEL_CENTERS_M = {
+    "950": 500.0,
+    "850": 1500.0,
+    "700": 3000.0,
+    "600": 4200.0,
+    "500": 5600.0,
+    "300": 9200.0,
+}
+
+
+def _geopotential_range_for_layer(layer: str) -> tuple[float, float, float]:
+    level = str(layer).split("_")[-1]
+    center = GEOPOTENTIAL_LEVEL_CENTERS_M.get(level, 3000.0)
+    half_span = center * 0.15  # ~30% total spread
+    vmin = center - half_span
+    vmax = center + half_span
+    return vmin, center, vmax
+
+
+def colormap_geopotential_height(v, layer: str = "geopotential_700"):
     if v is None:
         return None
     val = float(v)
-    # Narrower scale so synoptic gradients remain visible instead of washing out
-    t = np.clip((val - 300.0) / 9700.0, 0.0, 1.0)
-    if t <= 0.2:
-        u = t / 0.2
-        r = int(35 + (70 - 35) * u)
-        g = int(55 + (150 - 55) * u)
-        b = int(150 + (220 - 150) * u)
-    elif t <= 0.45:
-        u = (t - 0.2) / 0.25
-        r = int(70 + (120 - 70) * u)
-        g = int(150 + (200 - 150) * u)
-        b = int(220 + (120 - 220) * u)
-    elif t <= 0.7:
-        u = (t - 0.45) / 0.25
-        r = int(120 + (235 - 120) * u)
-        g = int(200 + (210 - 200) * u)
-        b = int(120 + (90 - 120) * u)
-    elif t <= 0.88:
-        u = (t - 0.7) / 0.18
-        r = int(235 + (220 - 235) * u)
-        g = int(210 + (90 - 210) * u)
-        b = int(90 + (60 - 90) * u)
+    vmin, center, vmax = _geopotential_range_for_layer(layer)
+    t = np.clip((val - vmin) / max(vmax - vmin, 1e-6), 0.0, 1.0)
+    # Jet with a thin black line at the center color
+    if abs(val - center) <= max((vmax - vmin) * 0.01, 8.0):
+        return (0, 0, 0, 210)
+    if t < 0.35:
+        u = t / 0.35
+        r = 0
+        g = int(255 * u)
+        b = 255
+    elif t < 0.5:
+        u = (t - 0.35) / 0.15
+        r = int(255 * u)
+        g = 255
+        b = int(255 * (1.0 - u))
+    elif t < 0.65:
+        u = (t - 0.5) / 0.15
+        r = 255
+        g = int(255 * (1.0 - u))
+        b = 0
     else:
-        u = (t - 0.88) / 0.12
-        r = int(220 + (150 - 220) * u)
-        g = int(90 + (20 - 90) * u)
-        b = int(60 + (20 - 60) * u)
+        u = (t - 0.65) / 0.35
+        r = int(255 * (1.0 - 0.5 * u))
+        g = 0
+        b = 0
     return (r, g, b, 185)
 
 
@@ -527,26 +544,27 @@ def colorize_layer_vectorized(layer: str, sampled: np.ndarray, valid: np.ndarray
     if layer.startswith("geopotential_"):
         m = valid & np.isfinite(v)
         if np.any(m):
-            t = np.clip((v - 300.0) / 9700.0, 0.0, 1.0)
-            r = np.select([t <= 0.2, t <= 0.45, t <= 0.7, t <= 0.88], [
-                35 + (70 - 35) * (t / 0.2),
-                70 + (120 - 70) * ((t - 0.2) / 0.25),
-                120 + (235 - 120) * ((t - 0.45) / 0.25),
-                235 + (220 - 235) * ((t - 0.7) / 0.18),
-            ], default=220 + (150 - 220) * ((t - 0.88) / 0.12))
-            g = np.select([t <= 0.2, t <= 0.45, t <= 0.7, t <= 0.88], [
-                55 + (150 - 55) * (t / 0.2),
-                150 + (200 - 150) * ((t - 0.2) / 0.25),
-                200 + (210 - 200) * ((t - 0.45) / 0.25),
-                210 + (90 - 210) * ((t - 0.7) / 0.18),
-            ], default=90 + (20 - 90) * ((t - 0.88) / 0.12))
-            b = np.select([t <= 0.2, t <= 0.45, t <= 0.7, t <= 0.88], [
-                150 + (220 - 150) * (t / 0.2),
-                220 + (120 - 220) * ((t - 0.2) / 0.25),
-                120 + (90 - 120) * ((t - 0.45) / 0.25),
-                90 + (60 - 90) * ((t - 0.7) / 0.18),
-            ], default=60 + (20 - 60) * ((t - 0.88) / 0.12))
-            set_rgba(m, r, g, b, 185)
+            vmin, center, vmax = _geopotential_range_for_layer(layer)
+            t = np.clip((v - vmin) / max(vmax - vmin, 1e-6), 0.0, 1.0)
+            center_band = np.abs(v - center) <= np.maximum((vmax - vmin) * 0.01, 8.0)
+            blue = m & (t < 0.35) & (~center_band)
+            cyan = m & (t >= 0.35) & (t < 0.5) & (~center_band)
+            yellow = m & (t >= 0.5) & (t < 0.65) & (~center_band)
+            red = m & (t >= 0.65) & (~center_band)
+            if np.any(blue):
+                u = t / 0.35
+                set_rgba(blue, 0, 255 * u, 255, 185)
+            if np.any(cyan):
+                u = (t - 0.35) / 0.15
+                set_rgba(cyan, 255 * u, 255, 255 * (1.0 - u), 185)
+            if np.any(yellow):
+                u = (t - 0.5) / 0.15
+                set_rgba(yellow, 255, 255 * (1.0 - u), 0, 185)
+            if np.any(red):
+                u = (t - 0.65) / 0.35
+                set_rgba(red, 255 * (1.0 - 0.5 * u), 0, 0, 185)
+            if np.any(m & center_band):
+                set_rgba(m & center_band, 0, 0, 0, 210)
         return rgba
 
     if layer in ("wave_850", "wave_700", "wave_600", "wave_500"):
