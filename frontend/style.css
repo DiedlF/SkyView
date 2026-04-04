@@ -449,8 +449,7 @@ body {
 #precip-type,
 #clouds-type,
 #wave-level,
-#geopotential-level,
-.layer-select {
+#geopotential-level {
   margin-left: auto;
   box-sizing: border-box;
 }
@@ -459,8 +458,7 @@ body {
 #wind-level,
 #temp-type,
 #wave-level,
-#geopotential-level,
-.layer-select {
+#geopotential-level {
   width: 108px;
 }
 
@@ -474,8 +472,7 @@ body {
   #wind-level,
   #temp-type,
   #wave-level,
-  #geopotential-level,
-  .layer-select {
+  #geopotential-level {
     width: 96px;
   }
 
