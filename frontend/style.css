@@ -45,7 +45,7 @@ body {
 
 @media (max-width: 768px) {
   .leaflet-bottom.leaflet-left {
-    bottom: 180px !important;
+    bottom: 100px !important;
   }
 
   body.keyboard-open .leaflet-bottom.leaflet-left {
