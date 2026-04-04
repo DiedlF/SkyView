@@ -321,8 +321,8 @@ def colormap_geopotential_height(v):
     if v is None:
         return None
     val = float(v)
-    # broad altitude-oriented scale in meters; clipped for stable colors
-    t = np.clip(val / 12000.0, 0.0, 1.0)
+    # Narrower scale so synoptic gradients remain visible instead of washing out
+    t = np.clip((val - 300.0) / 9700.0, 0.0, 1.0)
     if t <= 0.2:
         u = t / 0.2
         r = int(35 + (70 - 35) * u)
@@ -453,9 +453,9 @@ def colorize_layer_vectorized(layer: str, sampled: np.ndarray, valid: np.ndarray
         return rgba
 
     if layer == "ashfl_s":
-        m = valid & (v >= 20)
+        m = valid & np.isfinite(v)
         if np.any(m):
-            t = np.clip((v - 20.0) / 380.0, 0.0, 1.0)
+            t = np.clip((v + 50.0) / 450.0, 0.0, 1.0)
             set_rgba(m, 70 + 185 * t, 170 - 110 * t, 240 - 220 * t, 95 + 120 * t)
         return rgba
 
@@ -527,7 +527,7 @@ def colorize_layer_vectorized(layer: str, sampled: np.ndarray, valid: np.ndarray
     if layer.startswith("geopotential_"):
         m = valid & np.isfinite(v)
         if np.any(m):
-            t = np.clip(v / 12000.0, 0.0, 1.0)
+            t = np.clip((v - 300.0) / 9700.0, 0.0, 1.0)
             r = np.select([t <= 0.2, t <= 0.45, t <= 0.7, t <= 0.88], [
                 35 + (70 - 35) * (t / 0.2),
                 70 + (120 - 70) * ((t - 0.2) / 0.25),

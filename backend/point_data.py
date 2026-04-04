@@ -24,13 +24,13 @@ G0 = 9.80665
 POINT_KEYS_MINIMAL = [
     # Core weather / cloud
     "ww", "ceiling", "clcl", "clcm", "clch", "clct",
-    "cape_ml", "cin_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hsurf",
+    "cape_ml", "cin_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hzerocl", "hsurf",
 ]
 
 POINT_KEYS = [
     # Core weather / cloud
     "ww", "ceiling", "clcl", "clcm", "clch", "clct", "clct_mod",
-    "cape_ml", "cin_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hsurf",
+    "cape_ml", "cin_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hzerocl", "hsurf",
     # Precipitation (pre-computed rate fields, already mm/h equivalent)
     "tp_rate", "rain_rate", "snow_rate", "hail_rate",
     # Boundary layer / atmosphere
@@ -146,11 +146,13 @@ def build_overlay_values_from_raw(
         ov["clouds_total_mod"] = round(v, 1)
 
     # Scalars
-    for k in ("mh", "ashfl_s", "relhum_2m"):
+    for k in ("mh", "ashfl_s", "relhum_2m", "cin_ml"):
         if values.get(k) is not None:
             ov[k] = round(float(values[k]), 1)
     if values.get("h_snow") is not None:
         ov["h_snow"] = round(float(values["h_snow"]), 3)
+    if values.get("hzerocl") is not None and values["hzerocl"] > 0:
+        ov["hzerocl"] = round(float(values["hzerocl"]), 0)
     if values.get("t_2m") is not None and values.get("td_2m") is not None:
         ov["dew_spread_2m"] = round(float(values["t_2m"]) - float(values["td_2m"]), 1)
 
@@ -281,13 +283,16 @@ def build_overlay_values(
     hsurf_point = _safe_get(d, "hsurf", i0, j0)
     if mh_point is not None and hsurf_point is not None:
         ov["mh"] = round(mh_point + hsurf_point, 1)
-    for key in ("ashfl_s", "relhum_2m"):
+    for key in ("ashfl_s", "relhum_2m", "cin_ml"):
         v = _safe_get(d, key, i0, j0)
         if v is not None:
             ov[key] = round(v, 1)
     hs = _safe_get(d, "h_snow", i0, j0)
     if hs is not None:
         ov["h_snow"] = round(hs, 3)
+    hzero = _safe_get(d, "hzerocl", i0, j0)
+    if hzero is not None and hzero > 0:
+        ov["hzerocl"] = round(hzero, 0)
     # Climb rate from CAPE / BL structure (prefer live derivation over stale precomputed values)
     cin_ml = _safe_get(d, "cin_ml", i0, j0)
     t2m_tmp = _safe_get(d, "t_2m", i0, j0)

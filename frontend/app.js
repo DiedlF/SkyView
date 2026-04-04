@@ -556,15 +556,15 @@ const LEGEND_CONFIGS = {
   wave_700: { title: 'Wave 700 hPa (~3000m)', gradient: 'linear-gradient(to right, rgb(30,60,210), rgb(120,170,255), rgb(245,245,245), rgb(255,170,120), rgb(210,30,30))', labels: ['-3 m/s', '0 m/s', '+3 m/s'] },
   wave_600: { title: 'Wave 600 hPa (~4200m)', gradient: 'linear-gradient(to right, rgb(30,60,210), rgb(120,170,255), rgb(245,245,245), rgb(255,170,120), rgb(210,30,30))', labels: ['-3 m/s', '0 m/s', '+3 m/s'] },
   wave_500: { title: 'Wave 500 hPa (~5500m)', gradient: 'linear-gradient(to right, rgb(30,60,210), rgb(120,170,255), rgb(245,245,245), rgb(255,170,120), rgb(210,30,30))', labels: ['-3 m/s', '0 m/s', '+3 m/s'] },
-  geopotential_950: { title: 'Geopotential 950 hPa', gradient: 'linear-gradient(to right, rgb(35,55,150), rgb(70,150,220), rgb(120,200,120), rgb(235,210,90), rgb(220,90,60), rgb(150,20,20))', labels: ['250 m', '800 m'] },
-  geopotential_850: { title: 'Geopotential 850 hPa', gradient: 'linear-gradient(to right, rgb(35,55,150), rgb(70,150,220), rgb(120,200,120), rgb(235,210,90), rgb(220,90,60), rgb(150,20,20))', labels: ['1200 m', '1800 m'] },
-  geopotential_700: { title: 'Geopotential 700 hPa', gradient: 'linear-gradient(to right, rgb(35,55,150), rgb(70,150,220), rgb(120,200,120), rgb(235,210,90), rgb(220,90,60), rgb(150,20,20))', labels: ['2600 m', '3400 m'] },
-  geopotential_600: { title: 'Geopotential 600 hPa', gradient: 'linear-gradient(to right, rgb(35,55,150), rgb(70,150,220), rgb(120,200,120), rgb(235,210,90), rgb(220,90,60), rgb(150,20,20))', labels: ['3800 m', '4600 m'] },
-  geopotential_500: { title: 'Geopotential 500 hPa', gradient: 'linear-gradient(to right, rgb(35,55,150), rgb(70,150,220), rgb(120,200,120), rgb(235,210,90), rgb(220,90,60), rgb(150,20,20))', labels: ['5200 m', '5900 m'] },
-  geopotential_300: { title: 'Geopotential 300 hPa', gradient: 'linear-gradient(to right, rgb(35,55,150), rgb(70,150,220), rgb(120,200,120), rgb(235,210,90), rgb(220,90,60), rgb(150,20,20))', labels: ['8700 m', '9700 m'] },
+  geopotential_950: { title: 'Geopotential 950 hPa', gradient: 'linear-gradient(to right, rgb(35,55,150), rgb(70,150,220), rgb(120,200,120), rgb(235,210,90), rgb(220,90,60), rgb(150,20,20))', labels: ['300 m', '1200 m'] },
+  geopotential_850: { title: 'Geopotential 850 hPa', gradient: 'linear-gradient(to right, rgb(35,55,150), rgb(70,150,220), rgb(120,200,120), rgb(235,210,90), rgb(220,90,60), rgb(150,20,20))', labels: ['900 m', '2100 m'] },
+  geopotential_700: { title: 'Geopotential 700 hPa', gradient: 'linear-gradient(to right, rgb(35,55,150), rgb(70,150,220), rgb(120,200,120), rgb(235,210,90), rgb(220,90,60), rgb(150,20,20))', labels: ['2400 m', '3600 m'] },
+  geopotential_600: { title: 'Geopotential 600 hPa', gradient: 'linear-gradient(to right, rgb(35,55,150), rgb(70,150,220), rgb(120,200,120), rgb(235,210,90), rgb(220,90,60), rgb(150,20,20))', labels: ['3600 m', '4800 m'] },
+  geopotential_500: { title: 'Geopotential 500 hPa', gradient: 'linear-gradient(to right, rgb(35,55,150), rgb(70,150,220), rgb(120,200,120), rgb(235,210,90), rgb(220,90,60), rgb(150,20,20))', labels: ['5000 m', '6200 m'] },
+  geopotential_300: { title: 'Geopotential 300 hPa', gradient: 'linear-gradient(to right, rgb(35,55,150), rgb(70,150,220), rgb(120,200,120), rgb(235,210,90), rgb(220,90,60), rgb(150,20,20))', labels: ['8400 m', '10200 m'] },
   lcl: { title: 'Cloud Base (LCL) MSL', gradient: 'linear-gradient(to right, rgb(220,60,60), rgb(240,150,60), rgb(180,220,60), rgb(80,240,80))', labels: ['0m', '5000m MSL'] },
   h_snow: { title: 'Snow depth', gradient: 'linear-gradient(to right, rgba(255,255,255,0), rgb(220,235,255), rgb(160,200,255), rgb(100,150,240))', labels: ['0', '100+ cm'] },
-  ashfl_s: { title: 'Surface heat flux', gradient: 'linear-gradient(to right, rgb(70,170,240), rgb(162,115,130), rgb(255,60,20))', labels: ['20 W/m²', '400+ W/m²'] },
+  ashfl_s: { title: 'Surface heat flux', gradient: 'linear-gradient(to right, rgb(70,170,240), rgb(162,115,130), rgb(255,60,20))', labels: ['-50 W/m²', '400+ W/m²'] },
 };
 
 // Initialize map
