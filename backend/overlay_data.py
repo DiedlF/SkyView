@@ -37,7 +37,7 @@ def build_overlay_keys(cfg: dict) -> list[str]:
         elif v == "climb_rate":
             overlay_keys += ["t_2m", "td_2m", "hsurf", "mh", "ww", "t_850hpa", "t_700hpa", "t_500hpa", "t_300hpa"]
         elif v == "climb_rate_gold":
-            overlay_keys += ["htop_dc", "hsurf", "hbas_sc", "htop_sc", "cape_ml"]
+            overlay_keys += ["htop_dc", "hsurf", "hbas_sc", "htop_sc", "cape_ml", "cape_ml_hourly_max"]
         elif v in ("wave_850", "wave_700", "wave_600", "wave_500"):
             level = v.split("_")[1]
             overlay_keys += [f"omega_{level}hpa", f"t_{level}hpa"]
@@ -200,7 +200,7 @@ def compute_computed_field_cropped(var: str, d: dict, li: np.ndarray, lo: np.nda
             hbas_sc = d["hbas_sc"][np.ix_(li, lo)] if "hbas_sc" in d else None
             htop_sc = d["htop_sc"][np.ix_(li, lo)] if "htop_sc" in d else None
             htop_dc = d["htop_dc"][np.ix_(li, lo)]
-            cape_ml = d["cape_ml"][np.ix_(li, lo)] if "cape_ml" in d else None
+            cape_ml = d["cape_ml_hourly_max"][np.ix_(li, lo)] if "cape_ml_hourly_max" in d else (d["cape_ml"][np.ix_(li, lo)] if "cape_ml" in d else None)
             return calc_climb_rate_gold(hsurf, hbas_sc, htop_sc, htop_dc, cape_ml)
 
         if var in ("wave_850", "wave_700", "wave_600", "wave_500"):
@@ -290,7 +290,8 @@ def compute_computed_field_full(var: str, d: dict, model_used: str, step: int) -
     if var == "climb_rate_gold":
         if "htop_dc" not in d or "hsurf" not in d:
             raise HTTPException(404, "Gold climb-rate data not available for this timestep (missing htop_dc/hsurf)")
-        return calc_climb_rate_gold(d["hsurf"], d.get("hbas_sc"), d.get("htop_sc"), d.get("htop_dc"), d.get("cape_ml"))
+        cape_for_gold = d.get("cape_ml_hourly_max", d.get("cape_ml"))
+        return calc_climb_rate_gold(d["hsurf"], d.get("hbas_sc"), d.get("htop_sc"), d.get("htop_dc"), cape_for_gold)
     if var in ("wave_850", "wave_700", "wave_600", "wave_500"):
         level = var.split("_")[1]
         omega_key = f"omega_{level}hpa"

@@ -24,13 +24,13 @@ G0 = 9.80665
 POINT_KEYS_MINIMAL = [
     # Core weather / cloud
     "ww", "ceiling", "clcl", "clcm", "clch", "clct",
-    "cape_ml", "cin_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hzerocl", "hsurf",
+    "cape_ml", "cape_ml_hourly_max", "cin_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hzerocl", "hsurf",
 ]
 
 POINT_KEYS = [
     # Core weather / cloud
     "ww", "ceiling", "clcl", "clcm", "clch", "clct", "clct_mod",
-    "cape_ml", "cin_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hzerocl", "hsurf",
+    "cape_ml", "cape_ml_hourly_max", "cin_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hzerocl", "hsurf",
     # Precipitation (pre-computed rate fields, already mm/h equivalent)
     "tp_rate", "rain_rate", "snow_rate", "hail_rate",
     # Boundary layer / atmosphere
@@ -276,6 +276,7 @@ def build_overlay_values(
 
     # ── Thermodynamics ────────────────────────────────────────────────────────
     cape = _safe_get(d, "cape_ml", i0, j0)
+    cape_hourly_max = _safe_get(d, "cape_ml_hourly_max", i0, j0)
     if cape is not None:
         ov["thermals"] = round(cape, 1)
 
@@ -345,7 +346,7 @@ def build_overlay_values(
             np.asarray(np.nan if hbas_tmp is None else hbas_tmp, dtype=np.float64),
             np.asarray(np.nan if htop_tmp is None else htop_tmp, dtype=np.float64),
             np.asarray(htop_dc_tmp, dtype=np.float64),
-            np.asarray(np.nan if cape is None else cape, dtype=np.float64),
+            np.asarray(np.nan if cape_hourly_max is None else cape_hourly_max, dtype=np.float64),
         ))
         if math.isfinite(crg):
             ov["climb_rate_gold"] = round(float(crg), 1)
