@@ -52,7 +52,7 @@ def classify_point_with_base(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_s
             min_agl_m=AGL_CONV_MIN_METERS,
         )[0])
 
-        if (not conv_cloud_ok or clcl < 5) and np.isfinite(htop_dc_agl) and htop_dc_agl >= AGL_CONV_MIN_METERS:
+        if (not conv_cloud_ok) and np.isfinite(htop_dc_agl) and htop_dc_agl >= AGL_CONV_MIN_METERS:
             return "blue_thermal", _meters_to_hm_scalar(htop_dc)
         if conv_cloud_ok:
             cb_hm = _meters_to_hm_scalar(hbas_sc)
@@ -145,7 +145,7 @@ def classify_clouds_and_bases(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, h
     ceil_hm = _meters_to_hm_array(ceiling)
     htop_dc_hm = _meters_to_hm_array(htop_dc)
 
-    blue_mask = conv_mask & ((~conv_cloud_ok) | (clcl < 5)) & blue_ok
+    blue_mask = conv_mask & (~conv_cloud_ok) & blue_ok
     cloud_type[blue_mask] = "blue_thermal"
     cb_hm[blue_mask] = htop_dc_hm[blue_mask]
 
