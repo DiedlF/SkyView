@@ -167,8 +167,8 @@ def check_convective_agl_suppression_logic():
         fail(f"AGL suppression regression: got={got}, want={want}")
 
 
-def check_blue_thermal_precedence_over_cb():
-    """Regression guard: blue_thermal must win over cb when both conditions are true."""
+def check_cb_precedence_when_convective_cloud_is_valid():
+    """Regression guard: cb should win when convective cloud is valid, even if blue thermal conditions also hold."""
     backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend"))
     if backend_dir not in sys.path:
         sys.path.insert(0, backend_dir)
@@ -176,21 +176,21 @@ def check_blue_thermal_precedence_over_cb():
     from classify import classify_cloud_type
 
     ww = np.zeros((1, 1), dtype=float)
-    clcl = np.array([[0.0]], dtype=float)        # triggers blue_thermal branch
+    clcl = np.array([[0.0]], dtype=float)
     clcm = np.zeros((1, 1), dtype=float)
     clch = np.zeros((1, 1), dtype=float)
     cape = np.array([[1500.0]], dtype=float)
     htop_dc = np.array([[1500.0]], dtype=float)  # blue_ok true with hsurf=1000
     hbas_sc = np.array([[1200.0]], dtype=float)
     htop_sc = np.array([[6200.0]], dtype=float)
-    lpi = np.array([[12.0]], dtype=float)        # would trigger cb too
+    lpi = np.array([[12.0]], dtype=float)        # convective cloud branch remains valid
     ceiling = np.zeros((1, 1), dtype=float)
     hsurf = np.array([[1000.0]], dtype=float)
 
     out = classify_cloud_type(ww, clcl, clcm, clch, cape, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=hsurf)
     got = str(out[0, 0])
-    if got != "blue_thermal":
-        fail(f"Precedence regression: expected blue_thermal over cb, got={got}")
+    if got != "cb":
+        fail(f"Precedence regression: expected cb over blue_thermal, got={got}")
 
 
 def check_symbol_zoom_continuity(base: str, t: str):
@@ -350,7 +350,7 @@ def main():
 
     # Logic-only checks run regardless of data availability
     check_convective_agl_suppression_logic()
-    check_blue_thermal_precedence_over_cb()
+    check_cb_precedence_when_convective_cloud_is_valid()
     check_resolve_eu_time_strict_input_handling()
 
     steps = get_merged_steps(base)

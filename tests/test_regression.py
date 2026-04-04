@@ -32,9 +32,9 @@ def test_convective_agl_suppression_logic():
     qa_regression.check_convective_agl_suppression_logic()
 
 
-def test_blue_thermal_precedence_over_cb():
-    """blue_thermal takes priority over cb when hbas_sc <= 0 — pure logic."""
-    qa_regression.check_blue_thermal_precedence_over_cb()
+def test_cb_precedence_when_convective_cloud_is_valid():
+    """cb takes priority when convective cloud remains valid — pure logic."""
+    qa_regression.check_cb_precedence_when_convective_cloud_is_valid()
 
 
 def test_stratiform_symbols_follow_ww_and_ceiling():
