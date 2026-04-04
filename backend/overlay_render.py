@@ -392,6 +392,7 @@ OVERLAY_CONFIGS = {
     "sigwx": {"var": "ww", "cmap": colormap_sigwx},
     "ceiling": {"var": "ceiling", "cmap": colormap_ceiling},
     "cloud_base": {"var": "hbas_sc", "cmap": colormap_hbas_sc},
+    "cloud_base_hourly_max": {"var": "hbas_sc_hourly_max", "cmap": colormap_hbas_sc},
     "conv_thickness": {"var": "conv_thickness", "cmap": colormap_conv_thickness, "computed": True},
     "lpi": {"var": "lpi", "cmap": colormap_lpi},
     "cin_ml": {"var": "cin_ml", "cmap": colormap_lpi},
@@ -497,7 +498,7 @@ def colorize_layer_vectorized(layer: str, sampled: np.ndarray, valid: np.ndarray
             set_rgba(m, 220 * (1 - t), 60 + 180 * t, 30 + 50 * t, 200 - 60 * t)
         return rgba
 
-    if layer == "cloud_base":
+    if layer in ("cloud_base", "cloud_base_hourly_max"):
         m = valid & (v > 0)
         if np.any(m):
             t = np.clip(v / 5000.0, 0.0, 1.0)
