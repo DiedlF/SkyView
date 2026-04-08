@@ -26,6 +26,7 @@ import yaml
 from eccodes import codes_grib_new_from_file, codes_get, codes_get_array, codes_release
 from datetime import datetime, timedelta, timezone
 import time
+import hashlib
 from logging_config import setup_logging
 from constants import ICON_EU_STEP_3H_START, LOW_ZOOM_PRECOMPUTED_BINS_ENABLED
 from classify import classify_clouds_and_bases
@@ -63,6 +64,55 @@ CONFIG_PATH = os.path.join(SCRIPT_DIR, "ingest_config.yaml")
 INGEST_WORKERS = int(os.environ.get("SKYVIEW_INGEST_WORKERS", "6"))
 
 
+def _grid_dir_for_model(model: str) -> str:
+    return os.path.join(DATA_DIR, model, "grid")
+
+
+def _grid_static_path(model: str) -> str:
+    return os.path.join(_grid_dir_for_model(model), "static.npz")
+
+
+def _grid_meta_path(model: str) -> str:
+    return os.path.join(_grid_dir_for_model(model), "meta.json")
+
+
+def _write_static_grid_bundle(model: str, arrays: dict, run: str):
+    if "lat" not in arrays or "lon" not in arrays or "hsurf" not in arrays:
+        return False
+    lat_1d = np.asarray(arrays["lat"], dtype=np.float32)
+    lon_1d = np.asarray(arrays["lon"], dtype=np.float32)
+    hsurf = np.asarray(arrays["hsurf"], dtype=np.float32)
+    clat = np.broadcast_to(lat_1d[:, None], hsurf.shape).astype(np.float32, copy=False)
+    clon = np.broadcast_to(lon_1d[None, :], hsurf.shape).astype(np.float32, copy=False)
+
+    grid_dir = _grid_dir_for_model(model)
+    os.makedirs(grid_dir, exist_ok=True)
+    static_path = _grid_static_path(model)
+    meta_path = _grid_meta_path(model)
+    tmp_static = static_path + ".tmp"
+    np.savez_compressed(tmp_static, lat=lat_1d, lon=lon_1d, clat=clat, clon=clon, hsurf=hsurf)
+    os.replace(tmp_static, static_path)
+
+    digest = hashlib.sha256()
+    digest.update(lat_1d.tobytes())
+    digest.update(lon_1d.tobytes())
+    digest.update(np.nan_to_num(hsurf, nan=-9999.0).tobytes())
+    meta = {
+        "model": model,
+        "run": run,
+        "shape": [int(hsurf.shape[0]), int(hsurf.shape[1])],
+        "resolution": MODEL_CONFIG[model].get("resolution", None),
+        "nativeCoordinates": "derived_from_regular_lat_lon",
+        "fields": ["lat", "lon", "clat", "clon", "hsurf"],
+        "gridHash": digest.hexdigest(),
+        "updatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    with open(meta_path + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2, ensure_ascii=False)
+    os.replace(meta_path + ".tmp", meta_path)
+    return True
+
+
 def _symbol_code_map() -> dict[str, int]:
     return {
         "clear": 0,
@@ -95,13 +145,14 @@ def _precompute_symbol_native_fields(arrays: dict, step: int | None = None, mode
     clcm = arrays["clcm"]
     clch = arrays["clch"]
     cape = arrays.get("cape_ml_hourly_max", arrays["cape_ml"])
+    cin = arrays.get("cin_ml", np.full_like(cape, np.nan, dtype=np.float32))
     htop_dc = arrays["htop_dc"]
     hbas_sc = arrays.get("hbas_sc_hourly_max", arrays["hbas_sc"])
     htop_sc = arrays.get("htop_sc_hourly_max", arrays["htop_sc"])
     lpi_max = arrays.get("lpi_max", arrays.get("lpi_hourly_max", np.zeros_like(ww)))
     hsurf = arrays["hsurf"]
 
-    cloud_type, cb_hm = classify_clouds_and_bases(ww, clcl, clcm, clch, cape, htop_dc, hbas_sc, htop_sc, lpi_max, ceiling, hsurf, arrays.get("mh"))
+    cloud_type, cb_hm = classify_clouds_and_bases(ww, clcl, clcm, clch, cape, cin, htop_dc, hbas_sc, htop_sc, lpi_max, ceiling, hsurf, arrays.get("mh"))
 
     sym_code = np.zeros(ww.shape, dtype=np.int16)
     m = _symbol_code_map()
@@ -1038,11 +1089,15 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
         else:
             logger.debug(f"Step {step:03d}: lpi_max not scheduled on EU source cadence — filled with zeros")
 
-    # ── Static variables (hsurf etc.) — cached per run ───────────────────────
+    wrote_static_bundle = False
+
+    # ── Static variables (hsurf etc.) — cached per model grid ────────────────
     for svar in static_vars:
         if model == "icon-eu" and svar in d2_only:
             continue
-        svar_cache = os.path.join(out_dir, f"_static_{svar}.npy")
+        grid_dir = _grid_dir_for_model(model)
+        os.makedirs(grid_dir, exist_ok=True)
+        svar_cache = os.path.join(grid_dir, f"{svar}.npy")
         if os.path.exists(svar_cache):
             arrays[svar] = np.load(svar_cache)
         else:
@@ -1065,6 +1120,15 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
                             os.unlink(static_tmp)
                     except OSError:
                         pass
+
+    if ("lat" in locals() and lat_1d is not None) and ("lon" in locals() and lon_1d is not None):
+        arrays["clat"] = np.broadcast_to(lat_1d[:, None], arrays["hsurf"].shape).astype(np.float32, copy=False) if "hsurf" in arrays else np.broadcast_to(lat_1d[:, None], (len(lat_1d), len(lon_1d))).astype(np.float32, copy=False)
+        arrays["clon"] = np.broadcast_to(lon_1d[None, :], arrays["hsurf"].shape).astype(np.float32, copy=False) if "hsurf" in arrays else np.broadcast_to(lon_1d[None, :], (len(lat_1d), len(lon_1d))).astype(np.float32, copy=False)
+        if "hsurf" in arrays:
+            try:
+                wrote_static_bundle = _write_static_grid_bundle(model, {"lat": lat_1d, "lon": lon_1d, "hsurf": arrays["hsurf"]}, run)
+            except Exception as e:
+                logger.warning(f"Step {step:03d}: static grid bundle write failed: {e}")
 
     # ── Inline precip rate computation ────────────────────────────────────────
     # De-accumulate precipitation and compute mm/h rates in the same pass,
@@ -1139,7 +1203,8 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
 
     os.makedirs(out_dir, exist_ok=True)
     try:
-        np.savez_compressed(out_tmp_path, lat=lat_1d, lon=lon_1d, **arrays)
+        dynamic_arrays = {k: v for k, v in arrays.items() if k not in {"clat", "clon", "hsurf"}}
+        np.savez_compressed(out_tmp_path, lat=lat_1d, lon=lon_1d, **dynamic_arrays)
         os.replace(out_tmp_path, out_path)
     except Exception:
         try:
@@ -1148,6 +1213,8 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
         except OSError:
             pass
         raise
+    if wrote_static_bundle:
+        logger.debug(f"Step {step:03d}: refreshed static grid bundle for {model}")
     logger.debug(f"Step {step:03d}: saved ({len(arrays)} vars, shape {arrays.get('ww', next(iter(arrays.values()))).shape})")
     return True, curr_acc
 

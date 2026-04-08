@@ -49,6 +49,12 @@ from services.symbol_ops import (
 from services.symbol_compute import compute_symbols_payload, load_coverage_damping_cfg
 
 
+def _slice_native_coords(payload: dict, li, lo):
+    clat = _slice_array(payload["clat"], li, lo) if "clat" in payload else None
+    clon = _slice_array(payload["clon"], li, lo) if "clon" in payload else None
+    return clat, clon
+
+
 def build_weather_router(
     *,
     resolve_time_with_cache_context,
@@ -293,6 +299,7 @@ def build_weather_router(
 
         d_eu = None
         c_lat_eu = c_lon_eu = u_eu = v_eu = gust_eu = None
+        c_clat_eu = c_clon_eu = None
 
         if u_key not in d or v_key not in d or (gust_mode and "vmax_10m" not in d):
             return {
@@ -300,19 +307,25 @@ def build_weather_router(
                 "validTime": d["validTime"], "level": level, "count": 0,
             }
 
-        pad = cell_size
+        requested_model_normalized = str(model or "icon_d2").replace("-", "_")
+        native_zoom_threshold = SYMBOL_MODE_NATIVE_ZOOM_EU if requested_model_normalized == "icon_eu" else SYMBOL_MODE_NATIVE_ZOOM_D2
+        wind_mode = "native" if zoom >= native_zoom_threshold else "fixed_grid"
+
+        pad = cell_size if wind_mode != "native" else (cell_size * 0.5)
         li, lo = _bbox_indices(lat, lon, lat_min - pad, lon_min - pad, lat_max + pad, lon_max + pad)
         if li is not None and len(li) == 0:
             c_lat = np.array([], dtype=float)
             c_lon = np.array([], dtype=float)
             u = v = np.zeros((0, 0), dtype=float)
             gust = None
+            c_clat = c_clon = None
         else:
             c_lat = lat[li] if li is not None else lat
             c_lon = lon[lo] if lo is not None else lon
             u = _slice_array(d[u_key], li, lo)
             v = _slice_array(d[v_key], li, lo)
             gust = _slice_array(d["vmax_10m"], li, lo) if gust_mode and "vmax_10m" in d else None
+            c_clat, c_clon = _slice_native_coords(d, li, lo)
 
         wind_eu_data_missing = False
         if model_used == "icon_d2":
@@ -337,6 +350,80 @@ def build_weather_router(
                             u_eu = _slice_array(d_eu[u_key], li_eu, lo_eu)
                             v_eu = _slice_array(d_eu[v_key], li_eu, lo_eu)
                             gust_eu = _slice_array(d_eu["vmax_10m"], li_eu, lo_eu) if gust_mode and "vmax_10m" in d_eu else None
+                            c_clat_eu, c_clon_eu = _slice_native_coords(d_eu, li_eu, lo_eu)
+
+        if wind_mode == "native":
+            barbs: List[dict] = []
+            seen_coords = set()
+            used_eu_any = False
+            native_sources = [(c_clat, c_clon, u, v, gust, model_used)]
+            if d_eu is not None and c_clat_eu is not None and c_clon_eu is not None and u_eu is not None and v_eu is not None:
+                native_sources.append((c_clat_eu, c_clon_eu, u_eu, v_eu, gust_eu, "icon_eu"))
+
+            for src_clat, src_clon, src_u, src_v, src_gust, src_model in native_sources:
+                if src_clat is None or src_clon is None:
+                    continue
+                rows, cols = src_u.shape
+                for ii in range(rows):
+                    for jj in range(cols):
+                        lat_v = float(src_clat[ii, jj])
+                        lon_v = float(src_clon[ii, jj])
+                        if not (math.isfinite(lat_v) and math.isfinite(lon_v)):
+                            continue
+                        if lat_v < lat_min or lat_v > lat_max or lon_v < lon_min or lon_v > lon_max:
+                            continue
+                        key = (round(lat_v, 6), round(lon_v, 6))
+                        if key in seen_coords:
+                            continue
+                        u_v = float(src_u[ii, jj]) if np.isfinite(src_u[ii, jj]) else float("nan")
+                        v_v = float(src_v[ii, jj]) if np.isfinite(src_v[ii, jj]) else float("nan")
+                        if np.isnan(u_v) or np.isnan(v_v):
+                            continue
+                        if gust_mode and src_gust is not None and np.isfinite(src_gust[ii, jj]):
+                            speed_ms = float(src_gust[ii, jj])
+                        else:
+                            speed_ms = math.sqrt(u_v ** 2 + v_v ** 2)
+                        speed_kt = speed_ms * 1.94384
+                        if speed_kt < 1:
+                            continue
+                        dir_deg = (math.degrees(math.atan2(-u_v, -v_v)) + 360) % 360
+                        seen_coords.add(key)
+                        if src_model == "icon_eu":
+                            used_eu_any = True
+                        barbs.append({
+                            "lat": round(lat_v, 4),
+                            "lon": round(lon_v, 4),
+                            "speed_kt": round(speed_kt, 1),
+                            "dir_deg": round(dir_deg, 0),
+                            "speed_ms": round(speed_ms, 1),
+                            "sourceModel": src_model,
+                        })
+
+            if used_eu_any:
+                fallback_stats["windBlended"] += 1
+
+            resolved_model = "blended" if used_eu_any else model_used
+            fallback_dec = "native_point_fallback_blended" if used_eu_any else "native_point_primary_model_only"
+            _set_fallback_current(
+                "wind", fallback_dec, source_model=resolved_model, detail={"requestedTime": time},
+            )
+            return {
+                "barbs": barbs,
+                "run": run,
+                "model": resolved_model,
+                "validTime": d["validTime"],
+                "level": level,
+                "count": len(barbs),
+                "diagnostics": {
+                    "dataFreshnessMinutes": _freshness_minutes_from_run(run),
+                    "fallbackDecision": fallback_dec,
+                    "requestedModel": model,
+                    "requestedTime": time,
+                    "sourceModel": resolved_model,
+                    "euDataMissing": wind_eu_data_missing,
+                    "windMode": wind_mode,
+                },
+            }
 
         ctx = build_grid_context(
             lat=lat, lon=lon, c_lat=c_lat, c_lon=c_lon,
@@ -449,6 +536,7 @@ def build_weather_router(
                 "requestedTime": time,
                 "sourceModel": resolved_model,
                 "euDataMissing": wind_eu_data_missing,
+                "windMode": wind_mode,
             },
         }
 

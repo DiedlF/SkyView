@@ -12,6 +12,46 @@ _data_inflight: Dict[str, threading.Event] = {}
 _data_inflight_lock = threading.Lock()
 
 SUBSTEP_SUPPORTED_VARS = {"cape_ml", "cin_ml", "hbas_sc", "htop_sc", "lpi"}
+STATIC_GRID_KEYS = {"clat", "clon", "hsurf"}
+
+
+def _load_static_grid_arrays(data_dir: str, model: str, logger) -> Dict[str, Any]:
+    model_dir = model.replace("_", "-")
+    static_path = os.path.join(data_dir, model_dir, "grid", "static.npz")
+    if not os.path.exists(static_path):
+        return {}
+    try:
+        npz = np.load(static_path)
+        out: Dict[str, Any] = {k: npz[k] for k in npz.files}
+        if "clat" in out and "clon" in out:
+            try:
+                out["_nativeLatMin"] = float(np.nanmin(out["clat"]))
+                out["_nativeLatMax"] = float(np.nanmax(out["clat"]))
+                out["_nativeLonMin"] = float(np.nanmin(out["clon"]))
+                out["_nativeLonMax"] = float(np.nanmax(out["clon"]))
+            except Exception:
+                pass
+        return out
+    except Exception as exc:
+        logger.warning(f"Static grid load failed for {model}: {exc}")
+        return {}
+
+
+def _maybe_attach_static_grid(arrays: Dict[str, Any], data_dir: str, model: str, logger) -> Dict[str, Any]:
+    missing = [k for k in STATIC_GRID_KEYS if k not in arrays]
+    if not missing:
+        return arrays
+    static_arrays = _load_static_grid_arrays(data_dir, model, logger)
+    if not static_arrays:
+        return arrays
+    out = dict(arrays)
+    for key in missing:
+        if key in static_arrays:
+            out[key] = static_arrays[key]
+    for meta_key in ("_nativeLatMin", "_nativeLatMax", "_nativeLonMin", "_nativeLonMax"):
+        if meta_key in static_arrays and meta_key not in out:
+            out[meta_key] = static_arrays[meta_key]
+    return out
 
 
 def _apply_substep_aliases(arrays: Dict[str, Any], model: str, step: int, substep_minutes: int, keys: Optional[List[str]]):
@@ -109,6 +149,8 @@ def load_step_data(
             else:
                 arrays = {k: npz[k] for k in npz.files}
 
+            arrays = _maybe_attach_static_grid(arrays, data_dir, model, logger)
+
             run_dt = datetime.strptime(run, "%Y%m%d%H")
             valid_dt = run_dt + timedelta(hours=step)
             arrays["validTime"] = valid_dt.isoformat() + "Z"
@@ -178,6 +220,8 @@ def load_step_data(
                         arrays[k] = v
         else:
             arrays = {k: npz[k] for k in npz.files}
+
+        arrays = _maybe_attach_static_grid(arrays, data_dir, model, logger)
 
         run_dt = datetime.strptime(run, "%Y%m%d%H")
         valid_dt = run_dt + timedelta(hours=step)

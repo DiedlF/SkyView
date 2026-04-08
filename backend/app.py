@@ -565,9 +565,9 @@ def _acquire_single_instance_or_exit(pid_file: str):
 
 # ─── Grid / Bbox helpers ───
 
-def classify_point(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=0.0, mh=None):
+def classify_point(clcl, clcm, clch, cape_ml, cin_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=0.0, mh=None):
     """Backward-compatible wrapper around canonical scalar classifier."""
-    return classify_point_core(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf, mh)
+    return classify_point_core(clcl, clcm, clch, cape_ml, cin_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf, mh)
 
 
 def load_data(run: str, step: int, model: str, keys: Optional[List[str]] = None, substep_minutes: int = 0) -> Dict[str, Any]:
@@ -1554,6 +1554,7 @@ async def api_status():
         "meteogramMax": METEOGRAM_CACHE_MAX_ITEMS,
         "estTileBytes": tile_desktop_bytes + tile_mobile_bytes,
     }
+    payload["staticGrid"] = _static_grid_info()
 
     return payload
 
@@ -2105,6 +2106,7 @@ async def api_admin_storage():
         "totalBytes": 0,
         "ingest": {},
         "tmp": {},
+        "staticGrid": _static_grid_info(),
         "markers": get_marker_stats(MARKERS_FILE),
         "usage": get_usage_stats(USAGE_STATS_FILE, days=30),
     }
@@ -2298,6 +2300,46 @@ def _fmt_iso(dt: Optional[datetime]) -> Optional[str]:
     if dt is None:
         return None
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _static_grid_info() -> Dict[str, Any]:
+    out: Dict[str, Any] = {"models": {}, "available": False}
+    for model_dir, model_key in (("icon-d2", "icon_d2"), ("icon-eu", "icon_eu")):
+        grid_dir = os.path.join(DATA_DIR, model_dir, "grid")
+        static_path = os.path.join(grid_dir, "static.npz")
+        meta_path = os.path.join(grid_dir, "meta.json")
+        entry: Dict[str, Any] = {
+            "path": grid_dir,
+            "staticPath": static_path,
+            "metaPath": meta_path,
+            "exists": os.path.exists(static_path),
+            "metaExists": os.path.exists(meta_path),
+            "bytes": int(os.path.getsize(static_path)) if os.path.exists(static_path) else 0,
+            "updatedAt": None,
+            "shape": None,
+            "fields": None,
+            "gridHash": None,
+        }
+        if os.path.exists(static_path):
+            try:
+                entry["updatedAt"] = datetime.fromtimestamp(os.path.getmtime(static_path), tz=timezone.utc).isoformat().replace("+00:00", "Z")
+            except Exception:
+                pass
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+                entry["shape"] = meta.get("shape")
+                entry["fields"] = meta.get("fields")
+                entry["gridHash"] = meta.get("gridHash")
+                entry["nativeCoordinates"] = meta.get("nativeCoordinates")
+                entry["sourceRun"] = meta.get("run")
+                entry["metaUpdatedAt"] = meta.get("updatedAt")
+            except Exception:
+                entry["metaReadError"] = True
+        out["models"][model_key] = entry
+        out["available"] = out["available"] or entry["exists"]
+    return out
 
 
 def _human_error_fingerprint(line: str) -> str:
