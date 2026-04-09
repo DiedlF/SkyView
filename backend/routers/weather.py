@@ -55,6 +55,11 @@ def _slice_native_coords(payload: dict, li, lo):
     return clat, clon
 
 
+def _native_zoom_threshold_for_model(model_name: Optional[str]) -> int:
+    normalized = str(model_name or "icon_d2").replace("-", "_")
+    return SYMBOL_MODE_NATIVE_ZOOM_EU if normalized == "icon_eu" else SYMBOL_MODE_NATIVE_ZOOM_D2
+
+
 def build_weather_router(
     *,
     resolve_time_with_cache_context,
@@ -104,7 +109,7 @@ def build_weather_router(
             "sym_code", "cb_hm",
         ]
         requested_model_normalized = str(model or "icon_d2").replace("-", "_")
-        native_zoom_threshold = SYMBOL_MODE_NATIVE_ZOOM_EU if requested_model_normalized == "icon_eu" else SYMBOL_MODE_NATIVE_ZOOM_D2
+        native_zoom_threshold = _native_zoom_threshold_for_model(requested_model_normalized)
         symbol_mode = (
             "precomputed" if (zoom <= SYMBOL_MODE_PRECOMPUTED_MAX_ZOOM and LOW_ZOOM_PRECOMPUTED_BINS_ENABLED) else
             ("native" if zoom >= native_zoom_threshold else "fixed_grid")
@@ -286,7 +291,12 @@ def build_weather_router(
         u_key = "u_10m" if (level == "10m" or gust_mode) else f"u_{level}hpa"
         v_key = "v_10m" if (level == "10m" or gust_mode) else f"v_{level}hpa"
 
-        run, step, model_used = resolve_time_with_cache_context(time, model)
+        requested_model_normalized = str(model or "icon_d2").replace("-", "_")
+        native_zoom_threshold = _native_zoom_threshold_for_model(requested_model_normalized)
+        wind_mode = "native" if zoom >= native_zoom_threshold else "fixed_grid"
+
+        requested_model_for_mode = requested_model_normalized if wind_mode == "native" else model
+        run, step, model_used = resolve_time_with_cache_context(time, requested_model_for_mode)
         wind_keys = [u_key, v_key] + (["vmax_10m"] if gust_mode else [])
         d = load_data(run, step, model_used, keys=wind_keys)
 
@@ -306,10 +316,6 @@ def build_weather_router(
                 "barbs": [], "run": run, "model": model_used,
                 "validTime": d["validTime"], "level": level, "count": 0,
             }
-
-        requested_model_normalized = str(model or "icon_d2").replace("-", "_")
-        native_zoom_threshold = SYMBOL_MODE_NATIVE_ZOOM_EU if requested_model_normalized == "icon_eu" else SYMBOL_MODE_NATIVE_ZOOM_D2
-        wind_mode = "native" if zoom >= native_zoom_threshold else "fixed_grid"
 
         pad = cell_size if wind_mode != "native" else (cell_size * 0.5)
         li, lo = _bbox_indices(lat, lon, lat_min - pad, lon_min - pad, lat_max + pad, lon_max + pad)
@@ -356,36 +362,43 @@ def build_weather_router(
             barbs: List[dict] = []
             seen_coords = set()
             used_eu_any = False
-            native_sources = [(c_clat, c_clon, u, v, gust, model_used)]
-            if d_eu is not None and c_clat_eu is not None and c_clon_eu is not None and u_eu is not None and v_eu is not None:
-                native_sources.append((c_clat_eu, c_clon_eu, u_eu, v_eu, gust_eu, "icon_eu"))
+            skipped_nan = 0
+            skipped_bbox = 0
+            skipped_dedup = 0
+            native_sources = [(c_lat, c_lon, c_clat, c_clon, u, v, gust, model_used)]
+            if d_eu is not None and u_eu is not None and v_eu is not None:
+                native_sources.append((c_lat_eu, c_lon_eu, c_clat_eu, c_clon_eu, u_eu, v_eu, gust_eu, "icon_eu"))
 
-            for src_clat, src_clon, src_u, src_v, src_gust, src_model in native_sources:
-                if src_clat is None or src_clon is None:
-                    continue
+            for src_lat_1d, src_lon_1d, src_clat, src_clon, src_u, src_v, src_gust, src_model in native_sources:
                 rows, cols = src_u.shape
                 for ii in range(rows):
                     for jj in range(cols):
-                        lat_v = float(src_clat[ii, jj])
-                        lon_v = float(src_clon[ii, jj])
+                        if src_clat is not None and src_clon is not None:
+                            lat_v = float(src_clat[ii, jj])
+                            lon_v = float(src_clon[ii, jj])
+                        else:
+                            lat_v = float(src_lat_1d[ii])
+                            lon_v = float(src_lon_1d[jj])
                         if not (math.isfinite(lat_v) and math.isfinite(lon_v)):
+                            skipped_nan += 1
                             continue
                         if lat_v < lat_min or lat_v > lat_max or lon_v < lon_min or lon_v > lon_max:
+                            skipped_bbox += 1
                             continue
                         key = (round(lat_v, 6), round(lon_v, 6))
                         if key in seen_coords:
+                            skipped_dedup += 1
                             continue
                         u_v = float(src_u[ii, jj]) if np.isfinite(src_u[ii, jj]) else float("nan")
                         v_v = float(src_v[ii, jj]) if np.isfinite(src_v[ii, jj]) else float("nan")
                         if np.isnan(u_v) or np.isnan(v_v):
+                            skipped_nan += 1
                             continue
                         if gust_mode and src_gust is not None and np.isfinite(src_gust[ii, jj]):
                             speed_ms = float(src_gust[ii, jj])
                         else:
                             speed_ms = math.sqrt(u_v ** 2 + v_v ** 2)
                         speed_kt = speed_ms * 1.94384
-                        if speed_kt < 1:
-                            continue
                         dir_deg = (math.degrees(math.atan2(-u_v, -v_v)) + 360) % 360
                         seen_coords.add(key)
                         if src_model == "icon_eu":
@@ -422,6 +435,9 @@ def build_weather_router(
                     "sourceModel": resolved_model,
                     "euDataMissing": wind_eu_data_missing,
                     "windMode": wind_mode,
+                    "nativeSkipNaN": skipped_nan,
+                    "nativeSkipBBox": skipped_bbox,
+                    "nativeSkipDedup": skipped_dedup,
                 },
             }
 
