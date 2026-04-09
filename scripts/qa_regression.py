@@ -159,8 +159,9 @@ def check_convective_agl_suppression_logic():
     lpi = np.array([[9, 9, 0, 0, 0, 0, 0, 0]], dtype=float)
     ceiling = np.zeros((1, 8), dtype=float)
     hsurf = np.array([[1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000]], dtype=float)
+    cin = np.full_like(cape, np.nan, dtype=float)
 
-    out = classify_cloud_type(ww, clcl, clcm, clch, cape, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=hsurf)
+    out = classify_cloud_type(ww, clcl, clcm, clch, cape, cin, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=hsurf)
     got = [str(x) for x in out[0, :]]
     want = ["cb", "cb", "cu_con", "cu_con", "cu_hum", "cu_hum", "blue_thermal", "blue_thermal"]
     if got != want:
@@ -186,8 +187,9 @@ def check_cb_precedence_when_convective_cloud_is_valid():
     lpi = np.array([[12.0]], dtype=float)        # convective cloud branch remains valid
     ceiling = np.zeros((1, 1), dtype=float)
     hsurf = np.array([[1000.0]], dtype=float)
+    cin = np.full_like(cape, np.nan, dtype=float)
 
-    out = classify_cloud_type(ww, clcl, clcm, clch, cape, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=hsurf)
+    out = classify_cloud_type(ww, clcl, clcm, clch, cape, cin, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=hsurf)
     got = str(out[0, 0])
     if got != "cb":
         fail(f"Precedence regression: expected cb over blue_thermal, got={got}")
@@ -254,6 +256,7 @@ def check_stratiform_symbols_follow_ww_and_ceiling():
         clcm=0.0,
         clch=0.0,
         cape_ml=0.0,
+        cin_ml=np.nan,
         htop_dc=np.nan,
         hbas_sc=np.nan,
         htop_sc=np.nan,
@@ -271,6 +274,7 @@ def check_stratiform_symbols_follow_ww_and_ceiling():
         clcm=100.0,
         clch=100.0,
         cape_ml=0.0,
+        cin_ml=np.nan,
         htop_dc=np.nan,
         hbas_sc=np.nan,
         htop_sc=np.nan,
