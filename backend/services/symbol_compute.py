@@ -149,7 +149,8 @@ def compute_symbols_payload(
     # across tiny pans, causing z10/z11 winner fluctuations.
     pad = cell_size if symbol_mode != "native" else (cell_size * 0.5)
 
-    requested_model_for_mode = "icon_d2" if symbol_mode == "native" else model
+    requested_model_normalized = str(model or "icon_d2").replace("-", "_")
+    requested_model_for_mode = requested_model_normalized if symbol_mode == "native" else model
     run, step, model_used = resolve_time_with_cache_context(time, requested_model_for_mode)
 
     d = load_data(run, step, model_used, keys=SYMBOL_KEYS)
