@@ -247,7 +247,15 @@ def compute_symbols_payload(
                     c_clcm_eu = _slice_array(d_eu["clcm"], li_eu, lo_eu) if "clcm" in d_eu else np.zeros_like(ww_eu)
                     c_clch_eu = _slice_array(d_eu["clch"], li_eu, lo_eu) if "clch" in d_eu else np.zeros_like(ww_eu)
                     c_cape_hourly_max_eu = _slice_array(d_eu.get("cape_ml_hourly_max", d_eu.get("cape_ml", np.zeros_like(ww_eu))), li_eu, lo_eu)
-                    c_cin_eu = _slice_array(d_eu.get("cin_ml", np.full_like(ww_eu, np.nan, dtype=np.float32)), li_eu, lo_eu)
+                    cin_eu_raw = d_eu.get("cin_ml")
+                    if cin_eu_raw is None:
+                        c_cin_eu = np.full_like(ww_eu, np.nan, dtype=np.float32)
+                    elif cin_eu_raw.shape == d_eu["ww"].shape:
+                        c_cin_eu = _slice_array(cin_eu_raw, li_eu, lo_eu)
+                    else:
+                        c_cin_eu = np.asarray(cin_eu_raw, dtype=np.float32)
+                    if c_cin_eu.shape != ww_eu.shape:
+                        c_cin_eu = np.full_like(ww_eu, np.nan, dtype=np.float32)
                     c_htop_dc_eu = _slice_array(d_eu["htop_dc"], li_eu, lo_eu) if "htop_dc" in d_eu else np.zeros_like(ww_eu)
                     c_hbas_sc_hourly_max_eu = _slice_array(d_eu.get("hbas_sc_hourly_max", d_eu.get("hbas_sc", np.zeros_like(ww_eu))), li_eu, lo_eu)
                     c_htop_sc_hourly_max_eu = _slice_array(d_eu.get("htop_sc_hourly_max", d_eu.get("htop_sc", np.zeros_like(ww_eu))), li_eu, lo_eu)
