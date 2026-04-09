@@ -26,6 +26,7 @@ ICON_EU_STEP_3H_START: int = 81
 
 # Convection/cloud classification thresholds
 CAPE_CONV_THRESHOLD: float = 2.0
+CIN_CONV_THRESHOLD: float = -100.0
 CAPE_CB_STRONG_THRESHOLD: float = 1000.0
 LPI_CB_THRESHOLD: float = 7.0
 CLOUD_DEPTH_CU_CON_THRESHOLD: float = 2000.0
