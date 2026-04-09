@@ -233,6 +233,7 @@ def build_point_router(
                 clcm=scalar_values.get("clcm") or 0.0,
                 clch=scalar_values.get("clch") or 0.0,
                 cape_ml=scalar_values.get("cape_ml") or 0.0,
+                cin_ml=scalar_values.get("cin_ml") if scalar_values.get("cin_ml") is not None else float("nan"),
                 htop_dc=scalar_values.get("htop_dc") or 0.0,
                 hbas_sc=scalar_values.get("hbas_sc") or 0.0,
                 htop_sc=scalar_values.get("htop_sc") or 0.0,

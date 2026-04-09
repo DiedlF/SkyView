@@ -4,6 +4,7 @@ from logging_config import setup_logging
 from convective_filters import convective_cloud_mask
 from constants import (
     CAPE_CONV_THRESHOLD,
+    CIN_CONV_THRESHOLD,
     CAPE_CB_STRONG_THRESHOLD,
     LPI_CB_THRESHOLD,
     CLOUD_DEPTH_CU_CON_THRESHOLD,
@@ -34,7 +35,7 @@ def _meters_to_hm_array(values: np.ndarray) -> np.ndarray:
     return base_hm
 
 
-def classify_point_with_base(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=0.0, mh=None, ww=0.0):
+def classify_point_with_base(clcl, clcm, clch, cape_ml, cin_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=0.0, mh=None, ww=0.0):
     """Canonical scalar symbol/base decision.
 
     Returns (cloud_type, cb_hm). Inputs use AMSL for htop_dc/hbas_sc;
@@ -43,7 +44,8 @@ def classify_point_with_base(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_s
     if not (np.isfinite(ww) and ww <= 3):
         return "clear", None
 
-    is_conv = np.isfinite(cape_ml) and (cape_ml > CAPE_CONV_THRESHOLD)
+    cin_ok = (not np.isfinite(cin_ml)) or (cin_ml > CIN_CONV_THRESHOLD)
+    is_conv = np.isfinite(cape_ml) and (cape_ml > CAPE_CONV_THRESHOLD) and cin_ok
     if is_conv:
         cloud_depth = max(0.0, htop_sc - hbas_sc) if np.isfinite(htop_sc) and np.isfinite(hbas_sc) else 0.0
         htop_dc_agl = (htop_dc - hsurf) if (np.isfinite(htop_dc) and np.isfinite(hsurf)) else np.nan
@@ -78,8 +80,8 @@ def classify_point_with_base(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_s
     return "ci", cb_hm
 
 
-def classify_point(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=0.0, mh=None, ww=0.0):
-    return classify_point_with_base(clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf, mh, ww=ww)[0]
+def classify_point(clcl, clcm, clch, cape_ml, cin_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=0.0, mh=None, ww=0.0):
+    return classify_point_with_base(clcl, clcm, clch, cape_ml, cin_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf, mh, ww=ww)[0]
 
 
 def crop_to_bbox(arrays_dict, lat, lon, bbox):
@@ -108,7 +110,7 @@ def crop_to_bbox(arrays_dict, lat, lon, bbox):
     return cropped, lat[li], lon[lo]
 
 
-def classify_clouds_and_bases(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=None, mh=None):
+def classify_clouds_and_bases(ww, clcl, clcm, clch, cape_ml, cin_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=None, mh=None):
     """Classify grid-point cloud type and cb_hm together.
 
     Returns (cloud_type, cb_hm) where cb_hm is the label height in hectometers
@@ -120,7 +122,8 @@ def classify_clouds_and_bases(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, h
     cloud_type = np.full((height, width), "clear", dtype=object)
     cb_hm = np.full((height, width), -1, dtype=np.int16)
     mask = (ww <= 3) & np.isfinite(ww)
-    is_convective = np.isfinite(cape_ml) & (cape_ml > CAPE_CONV_THRESHOLD)
+    cin_ok = (~np.isfinite(cin_ml)) | (cin_ml > CIN_CONV_THRESHOLD)
+    is_convective = np.isfinite(cape_ml) & (cape_ml > CAPE_CONV_THRESHOLD) & cin_ok
 
     cloud_depth = np.maximum(0, np.where(
         np.isfinite(htop_sc) & np.isfinite(hbas_sc),
@@ -183,8 +186,8 @@ def classify_clouds_and_bases(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, h
     return cloud_type, cb_hm
 
 
-def classify_cloud_type(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=None, mh=None):
-    return classify_clouds_and_bases(ww, clcl, clcm, clch, cape_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf, mh)[0]
+def classify_cloud_type(ww, clcl, clcm, clch, cape_ml, cin_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=None, mh=None):
+    return classify_clouds_and_bases(ww, clcl, clcm, clch, cape_ml, cin_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf, mh)[0]
 
 
 def get_cloud_base(ceiling, hbas_sc):
