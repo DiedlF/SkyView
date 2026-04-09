@@ -18,6 +18,39 @@ from constants import (
 logger = setup_logging(__name__, level="WARNING")
 
 
+def _looks_like_legacy_classifier_call(cin_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling) -> bool:
+    """Detect old positional call shape without cin_ml."""
+    try:
+        cin_arr = np.asarray(cin_ml)
+        htop_arr = np.asarray(htop_dc)
+        hbas_arr = np.asarray(hbas_sc)
+        htop_sc_arr = np.asarray(htop_sc)
+        lpi_arr = np.asarray(lpi)
+        ceiling_arr = np.asarray(ceiling)
+    except Exception:
+        return False
+
+    if cin_arr.shape != htop_arr.shape or cin_arr.shape != hbas_arr.shape or cin_arr.shape != htop_sc_arr.shape:
+        return False
+
+    ceiling_all_nan = ceiling_arr.size == 1 and not np.isfinite(ceiling_arr).item()
+    if ceiling_all_nan and cin_arr.shape == lpi_arr.shape:
+        finite_cin = cin_arr[np.isfinite(cin_arr)]
+        finite_lpi = lpi_arr[np.isfinite(lpi_arr)]
+        if finite_cin.size and finite_lpi.size:
+            return float(np.nanmax(finite_cin)) > 200.0 and float(np.nanmax(finite_lpi)) > 100.0
+
+    if cin_arr.shape != lpi_arr.shape or cin_arr.shape != ceiling_arr.shape:
+        return False
+
+    finite_cin = cin_arr[np.isfinite(cin_arr)]
+    finite_ceiling = ceiling_arr[np.isfinite(ceiling_arr)]
+    if finite_cin.size == 0 or finite_ceiling.size == 0:
+        return False
+
+    return float(np.nanmax(finite_cin)) > 200.0 and float(np.nanmax(finite_ceiling)) <= 200.0
+
+
 def _meters_to_hm_scalar(value: float) -> int | None:
     if not np.isfinite(value) or value <= 0:
         return None
@@ -35,12 +68,15 @@ def _meters_to_hm_array(values: np.ndarray) -> np.ndarray:
     return base_hm
 
 
-def classify_point_with_base(clcl, clcm, clch, cape_ml, cin_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=0.0, mh=None, ww=0.0):
+def classify_point_with_base(clcl, clcm, clch, cape_ml, cin_ml=np.nan, htop_dc=np.nan, hbas_sc=np.nan, htop_sc=np.nan, lpi=np.nan, ceiling=np.nan, hsurf=0.0, mh=None, ww=0.0):
     """Canonical scalar symbol/base decision.
 
     Returns (cloud_type, cb_hm). Inputs use AMSL for htop_dc/hbas_sc;
     AGL thresholds are applied via hsurf.
     """
+    if _looks_like_legacy_classifier_call(cin_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling):
+        cin_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling = np.nan, cin_ml, htop_dc, hbas_sc, htop_sc, lpi
+
     if not (np.isfinite(ww) and ww <= 3):
         return "clear", None
 
@@ -80,7 +116,7 @@ def classify_point_with_base(clcl, clcm, clch, cape_ml, cin_ml, htop_dc, hbas_sc
     return "ci", cb_hm
 
 
-def classify_point(clcl, clcm, clch, cape_ml, cin_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=0.0, mh=None, ww=0.0):
+def classify_point(clcl, clcm, clch, cape_ml, cin_ml=np.nan, htop_dc=np.nan, hbas_sc=np.nan, htop_sc=np.nan, lpi=np.nan, ceiling=np.nan, hsurf=0.0, mh=None, ww=0.0):
     return classify_point_with_base(clcl, clcm, clch, cape_ml, cin_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf, mh, ww=ww)[0]
 
 
@@ -110,12 +146,15 @@ def crop_to_bbox(arrays_dict, lat, lon, bbox):
     return cropped, lat[li], lon[lo]
 
 
-def classify_clouds_and_bases(ww, clcl, clcm, clch, cape_ml, cin_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=None, mh=None):
+def classify_clouds_and_bases(ww, clcl, clcm, clch, cape_ml, cin_ml=np.nan, htop_dc=np.nan, hbas_sc=np.nan, htop_sc=np.nan, lpi=np.nan, ceiling=np.nan, hsurf=None, mh=None):
     """Classify grid-point cloud type and cb_hm together.
 
     Returns (cloud_type, cb_hm) where cb_hm is the label height in hectometers
     matched to the chosen symbol semantics.
     """
+    if _looks_like_legacy_classifier_call(cin_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling):
+        cin_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling = np.full_like(np.asarray(cape_ml, dtype=float), np.nan, dtype=float), cin_ml, htop_dc, hbas_sc, htop_sc, lpi
+
     height, width = ww.shape
     logger.debug(f"Classifying cloud types for grid: {height}x{width}")
 
@@ -186,7 +225,9 @@ def classify_clouds_and_bases(ww, clcl, clcm, clch, cape_ml, cin_ml, htop_dc, hb
     return cloud_type, cb_hm
 
 
-def classify_cloud_type(ww, clcl, clcm, clch, cape_ml, cin_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf=None, mh=None):
+def classify_cloud_type(ww, clcl, clcm, clch, cape_ml, cin_ml=np.nan, htop_dc=np.nan, hbas_sc=np.nan, htop_sc=np.nan, lpi=np.nan, ceiling=np.nan, hsurf=None, mh=None):
+    if np.isscalar(ceiling) and not np.isfinite(ceiling) and np.shape(cin_ml) == np.shape(htop_dc) == np.shape(hbas_sc) == np.shape(htop_sc) == np.shape(lpi):
+        cin_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling = np.full_like(np.asarray(cape_ml, dtype=float), np.nan, dtype=float), cin_ml, htop_dc, hbas_sc, htop_sc, lpi
     return classify_clouds_and_bases(ww, clcl, clcm, clch, cape_ml, cin_ml, htop_dc, hbas_sc, htop_sc, lpi, ceiling, hsurf, mh)[0]
 
 
