@@ -12,7 +12,7 @@ _data_inflight: Dict[str, threading.Event] = {}
 _data_inflight_lock = threading.Lock()
 
 SUBSTEP_SUPPORTED_VARS = {"cape_ml", "cin_ml", "hbas_sc", "htop_sc", "lpi"}
-STATIC_GRID_KEYS = {"clat", "clon", "hsurf"}
+STATIC_GRID_KEYS = {"hsurf"}
 
 
 def _load_static_grid_arrays(data_dir: str, model: str, logger) -> Dict[str, Any]:
@@ -23,14 +23,6 @@ def _load_static_grid_arrays(data_dir: str, model: str, logger) -> Dict[str, Any
     try:
         npz = np.load(static_path)
         out: Dict[str, Any] = {k: npz[k] for k in npz.files}
-        if "clat" in out and "clon" in out:
-            try:
-                out["_nativeLatMin"] = float(np.nanmin(out["clat"]))
-                out["_nativeLatMax"] = float(np.nanmax(out["clat"]))
-                out["_nativeLonMin"] = float(np.nanmin(out["clon"]))
-                out["_nativeLonMax"] = float(np.nanmax(out["clon"]))
-            except Exception:
-                pass
         return out
     except Exception as exc:
         logger.warning(f"Static grid load failed for {model}: {exc}")
@@ -48,9 +40,6 @@ def _maybe_attach_static_grid(arrays: Dict[str, Any], data_dir: str, model: str,
     for key in missing:
         if key in static_arrays:
             out[key] = static_arrays[key]
-    for meta_key in ("_nativeLatMin", "_nativeLatMax", "_nativeLonMin", "_nativeLonMax"):
-        if meta_key in static_arrays and meta_key not in out:
-            out[meta_key] = static_arrays[meta_key]
     return out
 
 

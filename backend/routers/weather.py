@@ -49,12 +49,6 @@ from services.symbol_ops import (
 from services.symbol_compute import compute_symbols_payload, load_coverage_damping_cfg
 
 
-def _slice_native_coords(payload: dict, li, lo):
-    clat = _slice_array(payload["clat"], li, lo) if "clat" in payload else None
-    clon = _slice_array(payload["clon"], li, lo) if "clon" in payload else None
-    return clat, clon
-
-
 def _native_zoom_threshold_for_model(model_name: Optional[str]) -> int:
     normalized = str(model_name or "icon_d2").replace("-", "_")
     return SYMBOL_MODE_NATIVE_ZOOM_EU if normalized == "icon_eu" else SYMBOL_MODE_NATIVE_ZOOM_D2
@@ -324,14 +318,12 @@ def build_weather_router(
             c_lon = np.array([], dtype=float)
             u = v = np.zeros((0, 0), dtype=float)
             gust = None
-            c_clat = c_clon = None
         else:
             c_lat = lat[li] if li is not None else lat
             c_lon = lon[lo] if lo is not None else lon
             u = _slice_array(d[u_key], li, lo)
             v = _slice_array(d[v_key], li, lo)
             gust = _slice_array(d["vmax_10m"], li, lo) if gust_mode and "vmax_10m" in d else None
-            c_clat, c_clon = _slice_native_coords(d, li, lo)
 
         wind_eu_data_missing = False
         if model_used == "icon_d2":
@@ -356,7 +348,6 @@ def build_weather_router(
                             u_eu = _slice_array(d_eu[u_key], li_eu, lo_eu)
                             v_eu = _slice_array(d_eu[v_key], li_eu, lo_eu)
                             gust_eu = _slice_array(d_eu["vmax_10m"], li_eu, lo_eu) if gust_mode and "vmax_10m" in d_eu else None
-                            c_clat_eu, c_clon_eu = _slice_native_coords(d_eu, li_eu, lo_eu)
 
         if wind_mode == "native":
             barbs: List[dict] = []
@@ -365,20 +356,16 @@ def build_weather_router(
             skipped_nan = 0
             skipped_bbox = 0
             skipped_dedup = 0
-            native_sources = [(c_lat, c_lon, c_clat, c_clon, u, v, gust, model_used)]
+            native_sources = [(c_lat, c_lon, u, v, gust, model_used)]
             if d_eu is not None and u_eu is not None and v_eu is not None:
-                native_sources.append((c_lat_eu, c_lon_eu, c_clat_eu, c_clon_eu, u_eu, v_eu, gust_eu, "icon_eu"))
+                native_sources.append((c_lat_eu, c_lon_eu, u_eu, v_eu, gust_eu, "icon_eu"))
 
-            for src_lat_1d, src_lon_1d, src_clat, src_clon, src_u, src_v, src_gust, src_model in native_sources:
+            for src_lat_1d, src_lon_1d, src_u, src_v, src_gust, src_model in native_sources:
                 rows, cols = src_u.shape
                 for ii in range(rows):
                     for jj in range(cols):
-                        if src_clat is not None and src_clon is not None:
-                            lat_v = float(src_clat[ii, jj])
-                            lon_v = float(src_clon[ii, jj])
-                        else:
-                            lat_v = float(src_lat_1d[ii])
-                            lon_v = float(src_lon_1d[jj])
+                        lat_v = float(src_lat_1d[ii])
+                        lon_v = float(src_lon_1d[jj])
                         if not (math.isfinite(lat_v) and math.isfinite(lon_v)):
                             skipped_nan += 1
                             continue

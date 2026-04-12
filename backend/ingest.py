@@ -72,44 +72,31 @@ def _grid_static_path(model: str) -> str:
     return os.path.join(_grid_dir_for_model(model), "static.npz")
 
 
-def _grid_meta_path(model: str) -> str:
-    return os.path.join(_grid_dir_for_model(model), "meta.json")
-
-
 def _write_static_grid_bundle(model: str, arrays: dict, run: str):
     if "lat" not in arrays or "lon" not in arrays or "hsurf" not in arrays:
         return False
     lat_1d = np.asarray(arrays["lat"], dtype=np.float32)
     lon_1d = np.asarray(arrays["lon"], dtype=np.float32)
     hsurf = np.asarray(arrays["hsurf"], dtype=np.float32)
-    clat = np.broadcast_to(lat_1d[:, None], hsurf.shape).astype(np.float32, copy=False)
-    clon = np.broadcast_to(lon_1d[None, :], hsurf.shape).astype(np.float32, copy=False)
 
     grid_dir = _grid_dir_for_model(model)
     os.makedirs(grid_dir, exist_ok=True)
     static_path = _grid_static_path(model)
-    meta_path = _grid_meta_path(model)
     tmp_static = static_path + ".tmp"
-    np.savez_compressed(tmp_static, lat=lat_1d, lon=lon_1d, clat=clat, clon=clon, hsurf=hsurf)
-    os.replace(tmp_static, static_path)
-
     digest = hashlib.sha256()
     digest.update(lat_1d.tobytes())
     digest.update(lon_1d.tobytes())
     digest.update(np.nan_to_num(hsurf, nan=-9999.0).tobytes())
-    meta = {
-        "model": model,
-        "run": run,
-        "shape": [int(hsurf.shape[0]), int(hsurf.shape[1])],
-        "resolution": MODEL_CONFIG[model].get("resolution", None),
-        "nativeCoordinates": "derived_from_regular_lat_lon",
-        "fields": ["lat", "lon", "clat", "clon", "hsurf"],
-        "gridHash": digest.hexdigest(),
-        "updatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-    }
-    with open(meta_path + ".tmp", "w", encoding="utf-8") as f:
-        json.dump(meta, f, indent=2, ensure_ascii=False)
-    os.replace(meta_path + ".tmp", meta_path)
+    np.savez_compressed(
+        tmp_static,
+        lat=lat_1d,
+        lon=lon_1d,
+        hsurf=hsurf,
+        grid_hash=np.asarray(digest.hexdigest()),
+        source_run=np.asarray(run),
+        coordinate_grid=np.asarray("regular_lat_lon"),
+    )
+    os.replace(tmp_static, static_path)
     return True
 
 
@@ -1122,11 +1109,13 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
                         pass
 
     if ("lat" in locals() and lat_1d is not None) and ("lon" in locals() and lon_1d is not None):
-        arrays["clat"] = np.broadcast_to(lat_1d[:, None], arrays["hsurf"].shape).astype(np.float32, copy=False) if "hsurf" in arrays else np.broadcast_to(lat_1d[:, None], (len(lat_1d), len(lon_1d))).astype(np.float32, copy=False)
-        arrays["clon"] = np.broadcast_to(lon_1d[None, :], arrays["hsurf"].shape).astype(np.float32, copy=False) if "hsurf" in arrays else np.broadcast_to(lon_1d[None, :], (len(lat_1d), len(lon_1d))).astype(np.float32, copy=False)
         if "hsurf" in arrays:
             try:
                 wrote_static_bundle = _write_static_grid_bundle(model, {"lat": lat_1d, "lon": lon_1d, "hsurf": arrays["hsurf"]}, run)
+                if wrote_static_bundle:
+                    legacy_hsurf_cache = os.path.join(_grid_dir_for_model(model), "hsurf.npy")
+                    if os.path.exists(legacy_hsurf_cache):
+                        os.unlink(legacy_hsurf_cache)
             except Exception as e:
                 logger.warning(f"Step {step:03d}: static grid bundle write failed: {e}")
 
@@ -1203,7 +1192,7 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
 
     os.makedirs(out_dir, exist_ok=True)
     try:
-        dynamic_arrays = {k: v for k, v in arrays.items() if k not in {"clat", "clon", "hsurf"}}
+        dynamic_arrays = {k: v for k, v in arrays.items() if k not in {"hsurf"}}
         np.savez_compressed(out_tmp_path, lat=lat_1d, lon=lon_1d, **dynamic_arrays)
         os.replace(out_tmp_path, out_path)
     except Exception:

@@ -2307,13 +2307,10 @@ def _static_grid_info() -> Dict[str, Any]:
     for model_dir, model_key in (("icon-d2", "icon_d2"), ("icon-eu", "icon_eu")):
         grid_dir = os.path.join(DATA_DIR, model_dir, "grid")
         static_path = os.path.join(grid_dir, "static.npz")
-        meta_path = os.path.join(grid_dir, "meta.json")
         entry: Dict[str, Any] = {
             "path": grid_dir,
             "staticPath": static_path,
-            "metaPath": meta_path,
             "exists": os.path.exists(static_path),
-            "metaExists": os.path.exists(meta_path),
             "bytes": int(os.path.getsize(static_path)) if os.path.exists(static_path) else 0,
             "updatedAt": None,
             "shape": None,
@@ -2325,18 +2322,20 @@ def _static_grid_info() -> Dict[str, Any]:
                 entry["updatedAt"] = datetime.fromtimestamp(os.path.getmtime(static_path), tz=timezone.utc).isoformat().replace("+00:00", "Z")
             except Exception:
                 pass
-        if os.path.exists(meta_path):
+        if os.path.exists(static_path):
             try:
-                with open(meta_path, "r", encoding="utf-8") as f:
-                    meta = json.load(f)
-                entry["shape"] = meta.get("shape")
-                entry["fields"] = meta.get("fields")
-                entry["gridHash"] = meta.get("gridHash")
-                entry["nativeCoordinates"] = meta.get("nativeCoordinates")
-                entry["sourceRun"] = meta.get("run")
-                entry["metaUpdatedAt"] = meta.get("updatedAt")
+                with np.load(static_path) as static_npz:
+                    fields = list(static_npz.files)
+                    entry["shape"] = list(static_npz["hsurf"].shape) if "hsurf" in static_npz else None
+                    entry["fields"] = fields
+                    if "grid_hash" in static_npz:
+                        entry["gridHash"] = str(static_npz["grid_hash"].tolist())
+                    if "source_run" in static_npz:
+                        entry["sourceRun"] = str(static_npz["source_run"].tolist())
+                    if "coordinate_grid" in static_npz:
+                        entry["coordinateGrid"] = str(static_npz["coordinate_grid"].tolist())
             except Exception:
-                entry["metaReadError"] = True
+                entry["staticReadError"] = True
         out["models"][model_key] = entry
         out["available"] = out["available"] or entry["exists"]
     return out
