@@ -84,6 +84,7 @@ profiles:
       # Symbols + overlays (no skew-t/meteogram-only context)
       - ww
       - cape_ml
+      - cin_ml
       - htop_dc
       - hbas_sc
       - htop_sc

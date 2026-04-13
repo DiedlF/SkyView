@@ -91,6 +91,39 @@ def check_d2_eu_handover(base: str, steps):
             fail(f"handover symbol fetch returned zero symbols at idx {i}")
 
 
+def check_eu_only_symbols_present(base: str, steps):
+    """Regression guard: EU-only forecast times must still return symbols."""
+    eu_steps = [s for s in steps if s.get("model") == "icon_eu"]
+    if not eu_steps:
+        return
+
+    # Prefer a clearly EU-only horizon beyond the normal D2 range when available.
+    chosen = next((s for s in eu_steps if int(str(s.get("step", 0))) > 48), eu_steps[0])
+    t = chosen["validTime"]
+    bbox = "47.2,10.8,48.2,12.3"
+    r = requests.get(
+        base + "/api/symbols",
+        params={"bbox": bbox, "zoom": 10, "time": t, "model": "icon_eu"},
+        timeout=30,
+    )
+    if r.status_code != 200:
+        fail(f"EU-only symbols fetch failed: {r.status_code}")
+
+    payload = r.json()
+    count = int(payload.get("count", 0) or 0)
+    if count <= 0:
+        fail(
+            "EU-only symbols returned zero symbols "
+            f"for validTime={t}, diagnostics={payload.get('diagnostics')}"
+        )
+
+    diag = payload.get("diagnostics") or {}
+    # Allow blended labels, but pure D2 here would be suspicious on an explicit EU request.
+    src = str(diag.get("sourceModel") or payload.get("model") or "")
+    if src and ("icon_eu" not in src.lower()) and ("eu" not in src.lower()):
+        fail(f"EU-only symbols returned unexpected source model: {src}")
+
+
 def check_wind_point_parity(base: str, t: str):
     # Compare a rendered wind-barb cell against /api/point wind values for same level/zoom/time
     level = "850"

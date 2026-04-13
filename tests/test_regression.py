@@ -86,6 +86,13 @@ def test_wind_point_parity(skyview_base):
 
 
 @pytest.mark.integration
+def test_eu_only_symbols_present(skyview_base):
+    """EU-only forecast times should still return symbols."""
+    steps = qa_regression.get_merged_steps(skyview_base)
+    qa_regression.check_eu_only_symbols_present(skyview_base, steps)
+
+
+@pytest.mark.integration
 def test_symbol_zoom_continuity(skyview_base):
     """Same location returns same dominant symbol class across zoom levels."""
     steps = qa_regression.get_merged_steps(skyview_base)
