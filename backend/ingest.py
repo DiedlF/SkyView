@@ -476,9 +476,10 @@ def download(url, dest):
 
 MULTI_MESSAGE_HOURLY_SELECT_VARS = {"cape_ml", "cin_ml", "hbas_sc", "htop_sc", "lpi"}
 HOURLY_MAX_FROM_SUBSTEPS_VARS = {"cape_ml", "hbas_sc", "htop_sc", "lpi"}
-# Quarter-hour substeps are most useful for short-range nowcast/overlay work.
-# Keep later D2 steps on the cheaper hourly path to limit ingest overhead.
-D2_SUBSTEP_MAX_STEP = int(os.environ.get("SKYVIEW_D2_SUBSTEP_MAX_STEP", "24"))
+# Attempt quarter-hour substep extraction for all ICON-D2 forecast steps.
+# DWD may publish only minute-0 for some later steps, which degrades cleanly to
+# an hourly-only result while still allowing earlier/later runs with substeps.
+D2_SUBSTEP_MAX_STEP = int(os.environ.get("SKYVIEW_D2_SUBSTEP_MAX_STEP", "48"))
 
 
 def _guess_var_name_from_path(filepath: str) -> str | None:
