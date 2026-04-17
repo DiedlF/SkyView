@@ -726,6 +726,7 @@ def build_weather_router(
 
         out: List[dict] = []
         grid_point: Optional[dict] = None
+        ii = jj = None
 
         for s in steps:
             run_i, step_i, model_i = s.get("run"), int(s.get("step")), s.get("model")
@@ -739,9 +740,9 @@ def build_weather_router(
             if lat_arr is None or lon_arr is None or len(lat_arr) == 0 or len(lon_arr) == 0:
                 continue
 
-            ii = int(np.argmin(np.abs(lat_arr - lat)))
-            jj = int(np.argmin(np.abs(lon_arr - lon)))
-            if grid_point is None:
+            if ii is None or jj is None:
+                ii = int(np.argmin(np.abs(lat_arr - lat)))
+                jj = int(np.argmin(np.abs(lon_arr - lon)))
                 grid_point = {
                     "requestedLat": round(float(lat), 5), "requestedLon": round(float(lon), 5),
                     "gridLat": round(float(lat_arr[ii]), 5), "gridLon": round(float(lon_arr[jj]), 5),
