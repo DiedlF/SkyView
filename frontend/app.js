@@ -2463,34 +2463,34 @@ function formatChartValue(v, decimals = 0, suffix = '') {
 function formatNowcastDateTime(value) {
   const d = value instanceof Date ? value : new Date(value);
   if (!(d instanceof Date) || Number.isNaN(d.getTime())) return '—';
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const yy = String(d.getFullYear()).slice(-2);
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mi = String(d.getMinutes()).padStart(2, '0');
-  return `${dd}.${mm}.${yy} ${hh}:${mi}`;
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const yy = String(d.getUTCFullYear()).slice(-2);
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mi = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${dd}.${mm}.${yy} ${hh}:${mi} UTC`;
 }
 
 function formatNowcastHour(value) {
   const d = value instanceof Date ? value : new Date(value);
   if (!(d instanceof Date) || Number.isNaN(d.getTime())) return '—';
-  return `${String(d.getHours()).padStart(2, '0')}`;
+  return `${String(d.getUTCHours()).padStart(2, '0')}`;
 }
 
 function formatNowcastDate(value) {
   const d = value instanceof Date ? value : new Date(value);
   if (!(d instanceof Date) || Number.isNaN(d.getTime())) return '—';
-  const dd = String(d.getDate()).padStart(2, '0');
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const yy = String(d.getFullYear()).slice(-2);
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const yy = String(d.getUTCFullYear()).slice(-2);
   return `${dd}.${mm}.${yy}`;
 }
 
 function buildNowcastSplits(minSec, maxSec) {
   const out = [];
   const start = new Date(minSec * 1000);
-  start.setMinutes(0, 0, 0);
-  if ((start.getTime() / 1000) > minSec) start.setHours(start.getHours() - 1);
+  start.setUTCMinutes(0, 0, 0);
+  if ((start.getTime() / 1000) > minSec) start.setUTCHours(start.getUTCHours() - 1);
   for (let ts = start.getTime() / 1000; ts <= maxSec + 3600; ts += 3600) out.push(ts);
   return out;
 }
@@ -2518,8 +2518,8 @@ function renderNowcastCharts(series) {
         splits: (u, axisIdx, scaleMin, scaleMax) => buildNowcastSplits(scaleMin, scaleMax),
         values: (_u, vals) => vals.map((v) => {
           const d = new Date(v * 1000);
-          if (d.getHours() === 0) return formatNowcastDate(d);
-          if (d.getHours() % 2 === 0) return formatNowcastHour(d);
+          if (d.getUTCHours() === 0) return formatNowcastDate(d);
+          if (d.getUTCHours() % 2 === 0) return formatNowcastHour(d);
           return '';
         }),
         size: 52,
