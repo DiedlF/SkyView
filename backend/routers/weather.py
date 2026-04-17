@@ -812,11 +812,41 @@ def build_weather_router(
 
     @router.get("/api/nowcast_point")
     async def api_nowcast_point(
+        request: Request,
         lat: float = Query(..., ge=-90, le=90),
         lon: float = Query(..., ge=-180, le=180),
         model: Optional[str] = Query("icon_d2"),
         hours: int = Query(24, ge=1, le=24),
+        stream: bool = Query(False),
+        _internal: bool = False,
     ):
+        if stream and not _internal:
+            async def _gen():
+                cancel_event = threading.Event()
+                yield json.dumps({"type": "progress", "message": "starting nowcast"}) + "\n"
+                task = asyncio.create_task(
+                    run_in_threadpool(lambda: asyncio.run(
+                        api_nowcast_point(request=request, lat=lat, lon=lon,
+                                          model=model, hours=hours,
+                                          stream=False, _internal=True)
+                    ))
+                )
+                while not task.done():
+                    if await request.is_disconnected():
+                        cancel_event.set()
+                        task.cancel()
+                        return
+                    yield json.dumps({"type": "heartbeat", "message": "working"}) + "\n"
+                    await asyncio.sleep(1.0)
+                try:
+                    payload = await task
+                    yield json.dumps({"type": "done", "data": payload}) + "\n"
+                except Exception as exc:
+                    if cancel_event.is_set():
+                        return
+                    yield json.dumps({"type": "error", "detail": str(exc)}) + "\n"
+            return StreamingResponse(_gen(), media_type="application/x-ndjson")
+
         m = (model or "icon_d2").replace("-", "_")
         if m != "icon_d2":
             raise HTTPException(400, "api_nowcast_point currently supports model=icon_d2 only")

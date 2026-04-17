@@ -2618,9 +2618,13 @@ async function openNowcastAt(lat, lon, model = 'icon_d2') {
     const key = `${Number(lat).toFixed(4)}|${Number(lon).toFixed(4)}|${model || ''}|24h`;
     let data = nowcastCache.get(key);
     if (!data) {
-      const res = await fetch(`/api/nowcast_point?lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&model=icon_d2&hours=24`, { signal: abortCtrl.signal });
-      if (!res.ok) await throwHttpError(res, 'API');
-      data = await res.json();
+      const url = `/api/nowcast_point?stream=1&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&model=icon_d2&hours=24`;
+      data = await fetchNdjson(url, (evt) => {
+        if (!nowcastBody) return;
+        if (evt?.type === 'progress' || evt?.type === 'heartbeat') {
+          nowcastBody.innerHTML = '<div style="opacity:.8">Loading nowcast…</div>';
+        }
+      }, { signal: abortCtrl.signal });
       if (nowcastCache.has(key)) nowcastCache.delete(key);
       nowcastCache.set(key, data);
       if (nowcastCache.size > NOWCAST_CACHE_MAX) nowcastCache.delete(nowcastCache.keys().next().value);
