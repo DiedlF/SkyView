@@ -858,6 +858,33 @@ def build_weather_router(
         if not steps:
             raise HTTPException(404, "No timeline for model=icon_d2")
 
+        try:
+            start_dt = datetime.fromisoformat(str(steps[0].get("validTime")).replace("Z", "+00:00"))
+        except Exception:
+            start_dt = None
+        horizon_limit = (start_dt + timedelta(hours=int(hours))) if start_dt is not None else None
+        if horizon_limit is not None:
+            filtered_steps = []
+            for s in steps:
+                try:
+                    vt = datetime.fromisoformat(str(s.get("validTime")).replace("Z", "+00:00"))
+                except Exception:
+                    continue
+                if vt <= horizon_limit:
+                    filtered_steps.append(s)
+                else:
+                    break
+            steps = filtered_steps
+            if not steps:
+                raise HTTPException(404, "No nowcast data available")
+
+        run_key = str(steps[0].get("run") or "")
+        cache_key = f"{m}|{run_key}|{round(float(lat), 4)}|{round(float(lon), 4)}|h{int(hours)}"
+        cached = meteogram_cache.get(cache_key)
+        if cached is not None:
+            meteogram_cache.move_to_end(cache_key)
+            return cached
+
         wanted_keys = [
             "lat", "lon", "cape_ml", "cin_ml", "hbas_sc", "htop_sc", "lpi",
             "cape_ml_substeps", "cape_ml_substep_minutes",
@@ -869,8 +896,7 @@ def build_weather_router(
 
         out = []
         grid_point = None
-        start_vt = None
-        horizon_limit = None
+        ii = jj = None
 
         for s in steps:
             run_i, step_i, model_i = s.get("run"), int(s.get("step")), s.get("model")
@@ -884,9 +910,9 @@ def build_weather_router(
             if lat_arr is None or lon_arr is None or len(lat_arr) == 0 or len(lon_arr) == 0:
                 continue
 
-            ii = int(np.argmin(np.abs(lat_arr - lat)))
-            jj = int(np.argmin(np.abs(lon_arr - lon)))
-            if grid_point is None:
+            if ii is None or jj is None:
+                ii = int(np.argmin(np.abs(lat_arr - lat)))
+                jj = int(np.argmin(np.abs(lon_arr - lon)))
                 grid_point = {
                     "requestedLat": round(float(lat), 5), "requestedLon": round(float(lon), 5),
                     "gridLat": round(float(lat_arr[ii]), 5), "gridLon": round(float(lon_arr[jj]), 5),
@@ -898,11 +924,8 @@ def build_weather_router(
                 base_dt = datetime.fromisoformat(str(base_vt).replace("Z", "+00:00"))
             except Exception:
                 continue
-            if start_vt is None:
-                start_vt = base_dt
-                horizon_limit = start_vt + timedelta(hours=int(hours))
             if horizon_limit is not None and base_dt > horizon_limit:
-                continue
+                break
 
             def _scalar(key: str):
                 arr = d.get(key)
@@ -919,13 +942,14 @@ def build_weather_router(
                 mins = d.get(f"{key}_substep_minutes")
                 if arr is None or mins is None:
                     return {0: _scalar(key)}
+                minute_list = [int(x) for x in np.asarray(mins).tolist()]
                 out_map = {}
-                for idx, minute in enumerate(np.asarray(mins).tolist()):
+                for idx, minute in enumerate(minute_list):
                     try:
                         val = float(arr[idx, ii, jj])
-                        out_map[int(minute)] = val if np.isfinite(val) else None
+                        out_map[minute] = val if np.isfinite(val) else None
                     except Exception:
-                        out_map[int(minute)] = None
+                        out_map[minute] = None
                 return out_map
 
             cape_map = _collect_series("cape_ml")
@@ -960,6 +984,11 @@ def build_weather_router(
         if not out:
             raise HTTPException(404, "No nowcast data available")
         out.sort(key=lambda r: r.get("validTime") or "")
-        return {"point": grid_point, "count": len(out), "hours": int(hours), "series": out}
+        payload = {"point": grid_point, "count": len(out), "hours": int(hours), "series": out}
+        meteogram_cache[cache_key] = payload
+        meteogram_cache.move_to_end(cache_key)
+        while len(meteogram_cache) > METEOGRAM_CACHE_MAX_ITEMS:
+            meteogram_cache.popitem(last=False)
+        return payload
 
     return router
