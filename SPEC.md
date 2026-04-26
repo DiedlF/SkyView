@@ -19,6 +19,8 @@ skyview/
 │   ├── app.py              # FastAPI application (REST API + static file serving)
 │   ├── ingest.py           # GRIB2 download + processing (ICON-D2 & ICON-EU)
 │   ├── classify.py         # Cloud type classification
+│   ├── admin_auth.py       # HTTP Basic auth for private admin/ops endpoints
+│   ├── airport_lookup.py   # Curated ICAO-code lookup for marker search
 │   ├── cron-ingest.sh      # Automated ingestion script (runs every 10min)
 │   └── requirements.txt    # Python dependencies
 ├── frontend/
@@ -169,6 +171,12 @@ For each cell, aggregate all grid points within it:
 
 FastAPI backend serves both REST API and static frontend files.
 
+### Access Model
+- Public endpoints: `/`, static frontend assets, `/api/health`, `/api/models`, `/api/timesteps`, `/api/status`, weather/map APIs, marker profile APIs, location search, and feedback submission.
+- Private endpoints: `/admin`, `/api/admin/*`, `/api/cache_stats`, `/api/perf_stats`, `/api/usage_stats`, feedback listing, and feedback status updates.
+- Private endpoints use HTTP Basic auth. Configure `SKYVIEW_ADMIN_USER` and `SKYVIEW_ADMIN_PASSWORD`; missing credentials fail closed for private routes.
+- Marker editing uses separate HMAC tokens signed by `SKYVIEW_MARKER_AUTH_SECRET`.
+
 ### GET /api/models
 Returns available forecast models and their capabilities.
 
@@ -244,6 +252,37 @@ Returns available forecast timesteps across all models.
     ...
     {"step": 120, "validTime": "2026-02-14T06:00:00Z", "model": "icon-eu"}
   ]
+}
+```
+
+### GET /api/location_search
+Searches marker locations by name or airport code.
+
+**Query params:**
+- `q` (string): Search term. Exact four-letter ICAO codes are recognized case-insensitively.
+- `limit` (int, optional): Number of results, default 8, max 20.
+
+**Behavior:**
+- Local OpenAIP-style seed data is searched first.
+- Exact ICAO queries such as `EDDM`, `EDQE`, `LOWI`, and `LSZH` are matched against seed data and the curated `backend/airport_lookup.py` index.
+- Nominatim is used as an upstream fallback with process-local rate limiting and response caching.
+
+**Response:**
+```json
+{
+  "results": [
+    {
+      "name": "Burg Feuerstein Airfield",
+      "displayName": "Burg Feuerstein Airfield EDQE, DE",
+      "lat": 49.7942,
+      "lon": 11.1336,
+      "icao": "EDQE",
+      "class": "aeroway",
+      "type": "airfield",
+      "source": "airport_index"
+    }
+  ],
+  "count": 1
 }
 ```
 
@@ -337,7 +376,7 @@ Generates PNG overlay for specified layer type.
 ### Static Files
 - `/` → `frontend/index.html`
 - `/app.js`, `/style.css`, `/symbols.js` → Frontend assets
-- CORS enabled for all origins (development/production)
+- CORS defaults to localhost origins. Set `SKYVIEW_CORS_ORIGINS` to the public hostname(s) before production deploys.
 ```
 
 ## Frontend (index.html + app.js)
@@ -399,7 +438,7 @@ Top-right corner shows:
 
 ### Interactive Features
 - **Click on symbol**: Popup with detailed forecast (ww, cloud type, CAPE, cloud cover, etc.)
-- **Geitau marker**: Red circle marker at reference location
+- **Marker picker**: Search by local site name, place name, or ICAO airport code; exact four-letter ICAO matches can place markers at curated airport/airfield coordinates.
 - **Touch support**: Mobile-friendly (pinch-zoom, tap, swipe)
 - **Debounced updates**: Prevents API spam during rapid pan/zoom
 
@@ -434,6 +473,12 @@ HOST = "0.0.0.0"
 PORT = 8501
 DATA_DIR = "/root/.openclaw/workspace/skyview/data"
 ```
+
+### Secrets / Environment
+- `SKYVIEW_ADMIN_USER` and `SKYVIEW_ADMIN_PASSWORD`: HTTP Basic credentials for admin/private ops endpoints.
+- `SKYVIEW_MARKER_AUTH_SECRET`: HMAC secret for marker editing tokens.
+- `SKYVIEW_CORS_ORIGINS`: comma-separated production frontend origins.
+- `DATA_CACHE_MAX_ITEMS`, `SKYVIEW_TILE_CACHE_MAX_DESKTOP`, `SKYVIEW_TILE_CACHE_MAX_MOBILE`, and related cache variables tune memory/performance.
 
 ### Ingestion Settings
 - **Fast poll interval**: 10 minutes (HTTP HEAD check only)
@@ -474,11 +519,13 @@ python3 backend/app.py
 # → http://localhost:8501
 
 # Production mode (with uvicorn)
-uvicorn backend.app:app --host 0.0.0.0 --port 8501 --workers 2
+uvicorn backend.app:app --host 0.0.0.0 --port 8501
 
 # Background process
 nohup uvicorn backend.app:app --host 0.0.0.0 --port 8501 > server.log 2>&1 &
 ```
+
+Process-local metrics/caches are currently per-worker. Multi-worker deployments may work for basic serving, but cache hit rates, admin counters, fallback stats, and rate limits are not globally coordinated unless an external shared store is added.
 
 ### Automated Updates (Cron)
 Add to crontab (`crontab -e`):

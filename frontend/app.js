@@ -12,6 +12,8 @@ let overlayAbortCtrl = null;
 let symbolsAbortCtrl = null;
 let windAbortCtrl = null;
 let overlayPrewarmCtrl = null;
+let symbolsRetryTimer = null;
+let windRetryTimer = null;
 let overlayObjectUrl = null;
 let currentOverlay = 'none';
 let overlaySubstepMinutes = 0;
@@ -458,6 +460,35 @@ function markApiFailure(context, err) {
   }
 }
 
+function scheduleLayerRetry(kind, fn, delayMs = 1600) {
+  if (kind === 'symbols') {
+    if (symbolsRetryTimer) return;
+    symbolsRetryTimer = setTimeout(() => {
+      symbolsRetryTimer = null;
+      fn();
+    }, delayMs);
+    return;
+  }
+  if (kind === 'wind') {
+    if (windRetryTimer) return;
+    windRetryTimer = setTimeout(() => {
+      windRetryTimer = null;
+      fn();
+    }, delayMs);
+  }
+}
+
+function clearLayerRetry(kind) {
+  if (kind === 'symbols' && symbolsRetryTimer) {
+    clearTimeout(symbolsRetryTimer);
+    symbolsRetryTimer = null;
+  }
+  if (kind === 'wind' && windRetryTimer) {
+    clearTimeout(windRetryTimer);
+    windRetryTimer = null;
+  }
+}
+
 function getClientId() {
   const key = 'skyview_client_id';
   let v = localStorage.getItem(key);
@@ -582,6 +613,15 @@ map = L.map('map', {
   zoomControl: false
 });
 L.control.zoom({ position: 'bottomleft' }).addTo(map);
+
+map.createPane('skyviewRasterPane');
+map.getPane('skyviewRasterPane').style.zIndex = '350';
+map.getPane('skyviewRasterPane').style.pointerEvents = 'none';
+map.createPane('skyviewWindPane');
+map.getPane('skyviewWindPane').style.zIndex = '610';
+map.getPane('skyviewWindPane').style.pointerEvents = 'none';
+map.createPane('skyviewSymbolPane');
+map.getPane('skyviewSymbolPane').style.zIndex = '620';
 
 // Ocean base provides water coloring (ocean, lakes, rivers) with matching coastlines
 // maxNativeZoom=10: inland tiles unavailable at z11+, so upscale z10 tiles
@@ -748,6 +788,7 @@ function buildTimelineSignature(source) {
 
 // Load symbols
 async function loadSymbols() {
+  clearLayerRetry('symbols');
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(async () => {
     const b = map.getBounds();
@@ -767,24 +808,29 @@ async function loadSymbols() {
       if (reqId !== symbolsRequestSeq) return;
       const data = await res.json();
       if (reqId !== symbolsRequestSeq) return;
+      clearLayerRetry('symbols');
       markApiSuccess();
       updateFallbackBanner(data);
-      symbolLayer.clearLayers();
+      const nextMarkers = [];
       data.symbols.forEach(sym => {
         if (!sym.clickable) return;
 
         const icon = createSymbolIcon(sym.type, sym.cloudBase);
         const marker = L.marker([sym.lat, sym.lon], {
           icon,
+          pane: 'skyviewSymbolPane',
           bubblingMouseEvents: true  // Allow touch events to bubble for pinch-zoom
-        }).addTo(symbolLayer);
+        });
         marker.on('click', () => {
           const curStep = timesteps[currentTimeIndex];
           const curTime = curStep?.validTime || time;
           const curModel = curStep?.model || null;
           loadPoint(sym.clickLat ?? sym.lat, sym.clickLon ?? sym.lon, curTime, curModel, windLevel, map.getZoom());
         });
+        nextMarkers.push(marker);
       });
+      symbolLayer.clearLayers();
+      nextMarkers.forEach(marker => marker.addTo(symbolLayer));
       
       // Update info panel
       // Override with precise cellSize if available
@@ -810,8 +856,8 @@ async function loadSymbols() {
       console.error('Error loading symbols:', e);
       markApiFailure('symbols', e);
       updateFallbackBanner(null);
-      // Optionally show error in UI
-      symbolLayer.clearLayers();
+      const convectionOn = document.getElementById('layer-convection')?.checked;
+      if (convectionOn) scheduleLayerRetry('symbols', loadSymbols);
     }
   }, 300);
 }
@@ -1016,6 +1062,8 @@ let currentMarker = null;
 let markerSuggestions = [];
 let selectedSuggestionIdx = -1;
 let markerSearchDebounce = null;
+let markerSearchAbortCtrl = null;
+let markerSearchSeq = 0;
 
 async function loadMarkerProfile() {
   try {
@@ -1109,17 +1157,28 @@ function renderMarkerSuggestions() {
 }
 
 async function searchMarkerLocations(query) {
+  const input = document.getElementById('marker-search');
+  const normalizedQuery = String(query || '').trim();
+  const reqId = ++markerSearchSeq;
+  if (markerSearchAbortCtrl) markerSearchAbortCtrl.abort();
+  markerSearchAbortCtrl = new AbortController();
+  const signal = markerSearchAbortCtrl.signal;
   try {
-    const res = await fetch(`/api/location_search?q=${encodeURIComponent(query)}&limit=8`);
+    const res = await fetch(`/api/location_search?q=${encodeURIComponent(normalizedQuery)}&limit=8`, { signal });
     if (!res.ok) await throwHttpError(res, 'API');
     const data = await res.json();
+    if (reqId !== markerSearchSeq) return;
+    if (input && input.value.trim() !== normalizedQuery) return;
     markerSuggestions = data.results || [];
     selectedSuggestionIdx = markerSuggestions.length ? 0 : -1;
     renderMarkerSuggestions();
     markApiSuccess();
   } catch (e) {
+    if (e.name === 'AbortError') return;
     console.error('Location search failed:', e);
     markApiFailure('location search', e);
+  } finally {
+    if (reqId === markerSearchSeq) markerSearchAbortCtrl = null;
   }
 }
 
@@ -1360,6 +1419,7 @@ async function loadOverlay() {
 
       overlayLayer = L.tileLayer(tileUrl, {
         tileSize: 256,
+        pane: 'skyviewRasterPane',
         opacity: overlayOpacityForLayer(effectiveOverlay),
         updateWhenZooming: false,
         updateWhenIdle: true,
@@ -1446,9 +1506,9 @@ async function loadOverlay() {
 
 // Load wind barbs
 async function loadWind() {
+  clearLayerRetry('wind');
   clearTimeout(windDebounce);
   windDebounce = setTimeout(async () => {
-    windLayer.clearLayers();
     if (!windEnabled) return;
 
     const b = map.getBounds();
@@ -1468,16 +1528,23 @@ async function loadWind() {
       if (reqId !== windRequestSeq) return;
       const data = await res.json();
       if (reqId !== windRequestSeq) return;
+      if (!windEnabled) return;
+      clearLayerRetry('wind');
       markApiSuccess();
 
+      const nextMarkers = [];
       data.barbs.forEach(b => {
         const icon = createWindBarbIcon(b.speed_kt, b.dir_deg);
         const marker = L.marker([b.lat, b.lon], {
           icon,
+          pane: 'skyviewWindPane',
           bubblingMouseEvents: true,
           interactive: false  // Don't interfere with symbol clicks
-        }).addTo(windLayer);
+        });
+        nextMarkers.push(marker);
       });
+      windLayer.clearLayers();
+      nextMarkers.forEach(marker => marker.addTo(windLayer));
 
       if (symbolLayer && typeof symbolLayer.eachLayer === 'function') {
         symbolLayer.eachLayer(layer => {
@@ -1488,6 +1555,7 @@ async function loadWind() {
       if (e.name === 'AbortError') return;
       console.error('Wind barb error:', e);
       markApiFailure('wind', e);
+      if (windEnabled) scheduleLayerRetry('wind', loadWind);
     }
   }, 350);
 }
@@ -1530,6 +1598,7 @@ document.getElementById('layer-convection').addEventListener('change', (e) => {
     symbolLayer.addTo(map);
     loadSymbols();
   } else {
+    clearLayerRetry('symbols');
     map.removeLayer(symbolLayer);
   }
 });
@@ -1540,6 +1609,9 @@ document.getElementById('layer-wind').addEventListener('change', (e) => {
     windLayer.addTo(map);
     loadWind();
   } else {
+    clearLayerRetry('wind');
+    if (windAbortCtrl) windAbortCtrl.abort();
+    windLayer.clearLayers();
     map.removeLayer(windLayer);
     // Remove stale tooltip content that may include wind info
     map.closePopup();
@@ -1552,6 +1624,9 @@ function openMarkerPicker() {
   panel.style.display = 'block';
   document.body.classList.add('marker-picker-open');
   input.value = '';
+  markerSearchSeq += 1;
+  if (markerSearchAbortCtrl) markerSearchAbortCtrl.abort();
+  clearTimeout(markerSearchDebounce);
   markerSuggestions = [];
   selectedSuggestionIdx = -1;
   renderMarkerSuggestions();
@@ -1559,6 +1634,9 @@ function openMarkerPicker() {
 }
 
 function closeMarkerPicker() {
+  markerSearchSeq += 1;
+  if (markerSearchAbortCtrl) markerSearchAbortCtrl.abort();
+  clearTimeout(markerSearchDebounce);
   document.getElementById('marker-picker').style.display = 'none';
   document.body.classList.remove('marker-picker-open');
 }
@@ -1610,6 +1688,8 @@ document.getElementById('marker-use-location').addEventListener('click', () => {
 
 document.getElementById('marker-search').addEventListener('input', (e) => {
   const q = e.target.value.trim();
+  markerSearchSeq += 1;
+  if (markerSearchAbortCtrl) markerSearchAbortCtrl.abort();
   clearTimeout(markerSearchDebounce);
   if (q.length < 2) {
     markerSuggestions = [];
@@ -1617,7 +1697,11 @@ document.getElementById('marker-search').addEventListener('input', (e) => {
     renderMarkerSuggestions();
     return;
   }
-  markerSearchDebounce = setTimeout(() => searchMarkerLocations(q), 220);
+  if (/^[A-Za-z]{4}$/.test(q)) {
+    searchMarkerLocations(q);
+  } else {
+    markerSearchDebounce = setTimeout(() => searchMarkerLocations(q), 220);
+  }
 });
 
 document.getElementById('wind-level').addEventListener('change', (e) => {

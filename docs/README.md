@@ -41,15 +41,36 @@ This directory contains research notes, implementation guides, and reference mat
 
 Prototype/fix-history docs are archived under `archive/` — useful for archaeology, not required for current development.
 
-Operational note: `/api/status` now exposes:
-- `fallback` counters for EU fallback resolution and blended endpoint usage (process-local), and
-- `ingestHealth.models.icon_d2/icon_eu` with latest run plus expected/available/missing steps.
+Operational notes:
+- private admin/ops surfaces use HTTP Basic auth configured with
+  `SKYVIEW_ADMIN_USER` and `SKYVIEW_ADMIN_PASSWORD`; see `OPS_SECRETS.md`.
+- `/api/status` remains public for monitoring and exposes `fallback` counters
+  plus `ingestHealth.models.icon_d2/icon_eu` run/step coverage.
 
 Symbols perf note:
 - low-zoom precomputed symbol bins are now **opt-in** via `SKYVIEW_LOW_ZOOM_PRECOMPUTED_BINS=1`
 - default is **off** because the VPS benchmark showed little to no latency gain, plus ~10 minutes ingest overhead and ~4.7 GB disk usage in the current JSON-bin format
 
 API diagnostics note: JSON endpoints (`/api/point`, `/api/symbols`, `/api/wind`) include a `diagnostics` object with `dataFreshnessMinutes` and `fallbackDecision`; overlay endpoints expose equivalent diagnostics via headers.
+
+Marker/location note: the marker picker uses `/api/location_search`. Exact four-letter ICAO queries such as `EDDM`, `EDQE`, `LOWI`, and `LSZH` are recognized, matched against seed data and `backend/airport_lookup.py`, and returned with structured `icao` fields.
+
+---
+
+## Remaining Findings / Improvement Backlog
+
+These are the main items left from the 2026-04 implementation review after admin auth, data-loader cache correctness, marker suggestion hardening, and ICAO marker lookup were implemented:
+
+1. **In-process caches need locking or encapsulation** — `cache_state.py` still mutates shared `OrderedDict` caches and counters from request paths without consistent locks.
+2. **Feedback storage should be hardened** — `feedback_ops.py` still rewrites the whole JSON file; use temp-file + `os.replace()`, JSONL, or SQLite.
+3. **CI integration coverage can silently skip** — add synthetic `.npz` fixtures and `TestClient` API tests so core endpoints are exercised without live DWD/Explorer services.
+4. **`backend/app.py` remains too large** — move ops/admin/overlay/location handler bodies into router/service modules.
+5. **Frontend/admin HTML needs a broader XSS pass** — marker suggestions are DOM-rendered now, but dense `innerHTML` usage remains in admin/debug views.
+6. **Admin auth can be polished** — add startup warning when unset, rate-limit failed admin auth, and improve admin UI messaging.
+7. **Airport/ICAO data is curated but incomplete** — normalize `openaip_seed.json` with explicit `icao` fields or generate an airport index from a maintained source.
+8. **Local developer setup is under-documented** — document `python3`, Ruff installation, test/lint/run commands, and expected environment variables.
+9. **Root onboarding docs are fragmented** — add a short root `README.md` that points to `SPEC.md`, `TODO.md`, and this docs index.
+10. **Roadmap items remain in `TODO.md`** — EU fallback helper consolidation, CORS production notes, precipitation/model harmonization, overlay cache delivery validation, and UX work.
 
 ---
 
@@ -62,4 +83,4 @@ API diagnostics note: JSON endpoints (`/api/point`, `/api/symbols`, `/api/wind`)
 
 ---
 
-**Last updated:** 2026-02-16
+**Last updated:** 2026-04-26
