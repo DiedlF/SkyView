@@ -1072,17 +1072,35 @@ async function loadMarkerProfile() {
 function renderMarkerSuggestions() {
   const box = document.getElementById('marker-suggestions');
   if (!box) return;
+  box.replaceChildren();
   if (!markerSuggestions.length) {
-    box.innerHTML = '<div class="marker-suggestion empty">No matches</div>';
+    const empty = document.createElement('div');
+    empty.className = 'marker-suggestion empty';
+    empty.textContent = 'No matches';
+    box.appendChild(empty);
     return;
   }
-  box.innerHTML = markerSuggestions.map((s, idx) => {
-    const active = idx === selectedSuggestionIdx ? ' active' : '';
-    const subtitle = s.displayName ? `<div class="sub">${s.displayName}</div>` : '';
-    return `<div class="marker-suggestion${active}" data-idx="${idx}"><div>${s.name}</div>${subtitle}</div>`;
-  }).join('');
 
-  box.querySelectorAll('.marker-suggestion').forEach(el => {
+  markerSuggestions.forEach((s, idx) => {
+    const row = document.createElement('div');
+    row.className = `marker-suggestion${idx === selectedSuggestionIdx ? ' active' : ''}`;
+    row.dataset.idx = String(idx);
+
+    const title = document.createElement('div');
+    title.textContent = s.icao ? `${s.icao} · ${s.name || 'Airport'}` : (s.name || 'Location');
+    row.appendChild(title);
+
+    if (s.displayName) {
+      const subtitle = document.createElement('div');
+      subtitle.className = 'sub';
+      subtitle.textContent = s.displayName;
+      row.appendChild(subtitle);
+    }
+
+    box.appendChild(row);
+  });
+
+  box.querySelectorAll('.marker-suggestion').forEach((el) => {
     el.addEventListener('click', () => {
       selectedSuggestionIdx = Number(el.dataset.idx);
       renderMarkerSuggestions();

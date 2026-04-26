@@ -10,9 +10,43 @@ import threading
 
 _data_inflight: Dict[str, threading.Event] = {}
 _data_inflight_lock = threading.Lock()
+_data_cache_meta: Dict[str, Dict[str, Any]] = {}
 
 SUBSTEP_SUPPORTED_VARS = {"cape_ml", "cin_ml", "hbas_sc", "htop_sc", "lpi"}
 STATIC_GRID_KEYS = {"hsurf"}
+
+
+def _cache_has_requested_keys(
+    *,
+    cache_key: str,
+    cached: Dict[str, Any],
+    keys: Optional[List[str]],
+    model: str,
+    substep_minutes: int,
+) -> bool:
+    meta = _data_cache_meta.get(cache_key) or {}
+    if keys is None:
+        has_keys = bool(meta.get("full"))
+    else:
+        has_keys = all(k in cached for k in keys)
+
+    if has_keys and substep_minutes > 0 and model == "icon_d2" and keys is not None:
+        for k in keys:
+            if k in SUBSTEP_SUPPORTED_VARS and (f"{k}_substeps" not in cached or f"{k}_substep_minutes" not in cached):
+                return False
+    return has_keys
+
+
+def _remember_cache_meta(cache_key: str, arrays: Dict[str, Any], *, full: bool) -> None:
+    loaded = set(_data_cache_meta.get(cache_key, {}).get("keys") or set())
+    loaded.update(arrays.keys())
+    _data_cache_meta[cache_key] = {"full": bool(full), "keys": loaded}
+
+
+def _evict_cache_item(cache: Dict[str, Any], logger) -> None:
+    evicted_key, _ = cache.popitem(last=False)
+    _data_cache_meta.pop(evicted_key, None)
+    logger.info(f"LRU eviction: {evicted_key}")
 
 
 def _load_static_grid_arrays(data_dir: str, model: str, logger) -> Dict[str, Any]:
@@ -91,13 +125,13 @@ def load_step_data(
 
     if cache_key in cache:
         cached = cache[cache_key]
-        has_keys = (keys is None or all(k in cached for k in keys))
-        if has_keys and substep_minutes > 0 and model == "icon_d2" and keys is not None:
-            for k in keys:
-                if k in SUBSTEP_SUPPORTED_VARS and (f"{k}_substeps" not in cached or f"{k}_substep_minutes" not in cached):
-                    has_keys = False
-                    break
-        if has_keys:
+        if _cache_has_requested_keys(
+            cache_key=cache_key,
+            cached=cached,
+            keys=keys,
+            model=model,
+            substep_minutes=substep_minutes,
+        ):
             cache.move_to_end(cache_key)
             logger.debug(f"Cache hit: {cache_key}")
             return _apply_substep_aliases(cached, model, step, substep_minutes, keys)
@@ -155,9 +189,9 @@ def load_step_data(
                     pass
 
             if len(cache) >= cache_max_items:
-                evicted_key, _ = cache.popitem(last=False)
-                logger.info(f"LRU eviction: {evicted_key}")
+                _evict_cache_item(cache, logger)
             cache[cache_key] = arrays
+            _remember_cache_meta(cache_key, arrays, full=(keys is None))
             cache.move_to_end(cache_key)
             return _apply_substep_aliases(arrays, model, step, substep_minutes, keys)
         finally:
@@ -172,13 +206,13 @@ def load_step_data(
         # Post-wait recheck (owner may have filled)
         if cache_key in cache:
             cached = cache[cache_key]
-            has_keys = (keys is None or all(k in cached for k in keys))
-            if has_keys and substep_minutes > 0 and model == "icon_d2" and keys is not None:
-                for k in keys:
-                    if k in SUBSTEP_SUPPORTED_VARS and (f"{k}_substeps" not in cached or f"{k}_substep_minutes" not in cached):
-                        has_keys = False
-                        break
-            if has_keys:
+            if _cache_has_requested_keys(
+                cache_key=cache_key,
+                cached=cached,
+                keys=keys,
+                model=model,
+                substep_minutes=substep_minutes,
+            ):
                 cache.move_to_end(cache_key)
                 logger.debug(f"Singleflight hit: {cache_key}")
                 return _apply_substep_aliases(cached, model, step, substep_minutes, keys)
@@ -227,8 +261,8 @@ def load_step_data(
                 pass
 
         if len(cache) >= cache_max_items:
-            evicted_key, _ = cache.popitem(last=False)
-            logger.info(f"LRU eviction: {evicted_key}")
+            _evict_cache_item(cache, logger)
         cache[cache_key] = arrays
+        _remember_cache_meta(cache_key, arrays, full=(keys is None))
         cache.move_to_end(cache_key)
         return _apply_substep_aliases(arrays, model, step, substep_minutes, keys)

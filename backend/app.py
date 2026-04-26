@@ -83,6 +83,7 @@ from feedback_ops import make_feedback_entry, append_feedback, read_feedback_lis
 from model_caps import get_models_payload
 from response_headers import build_overlay_headers, build_tile_headers
 from usage_stats import record_visit, get_usage_stats, get_marker_stats
+from airport_lookup import curated_matches, item_icao, normalize_icao_query
 import marker_auth as _marker_auth
 from services.model_select import resolve_eu_time_strict as svc_resolve_eu_time_strict, load_eu_data_strict as svc_load_eu_data_strict
 from services.data_loader import load_step_data
@@ -991,6 +992,7 @@ async def api_location_search(request: Request, q: str = Query(..., min_length=2
     """
     qn = q.strip()
     ql = qn.lower()
+    icao_query = normalize_icao_query(qn)
 
     # Robust server-side rate limit by client key (in addition to upstream-friendly Nominatim pacing below).
     _location_search_check_rate_limit(_location_search_client_key(request))
@@ -1000,9 +1002,11 @@ async def api_location_search(request: Request, q: str = Query(..., min_length=2
     if cached is not None:
         return cached
 
-    def _score_item(name: str, display_name: str, cls: str, typ: str, seed_boost: int = 0) -> int:
+    def _score_item(name: str, display_name: str, cls: str, typ: str, seed_boost: int = 0, icao: Optional[str] = None) -> int:
         s = seed_boost
-        text = f"{name} {display_name} {cls} {typ}".lower()
+        text = f"{name} {display_name} {cls} {typ} {icao or ''}".lower()
+        if icao_query and icao == icao_query:
+            s += 120
         if ql in text:
             s += 20
         if name.lower().startswith(ql):
@@ -1021,22 +1025,50 @@ async def api_location_search(request: Request, q: str = Query(..., min_length=2
         try:
             name = str(it.get("name", "")).strip()
             display_name = str(it.get("displayName", "")).strip()
+            icao = item_icao(it)
             if not name:
                 continue
-            if ql not in (name + " " + display_name).lower() and len(ql) >= 3:
+            search_text = f"{name} {display_name} {icao or ''}".lower()
+            if icao_query:
+                if icao != icao_query:
+                    continue
+            elif ql not in search_text and len(ql) >= 3:
                 continue
             out.append({
                 "name": name[:120],
                 "displayName": display_name,
                 "lat": float(it.get("lat")),
                 "lon": float(it.get("lon")),
+                "icao": icao,
                 "class": "aeroway",
                 "type": it.get("type") or "airfield",
-                "score": _score_item(name, display_name, "aeroway", str(it.get("type") or "airfield"), seed_boost=25),
+                "score": _score_item(name, display_name, "aeroway", str(it.get("type") or "airfield"), seed_boost=25, icao=icao),
                 "source": "seed",
             })
         except Exception:
             continue
+
+    # 1b) Curated ICAO fallback for common airports/airfields around the app domain.
+    if icao_query:
+        for it in curated_matches(icao_query):
+            out.append({
+                "name": str(it.get("name", ""))[:120],
+                "displayName": str(it.get("displayName", "")),
+                "lat": float(it.get("lat")),
+                "lon": float(it.get("lon")),
+                "icao": str(it.get("icao")),
+                "class": "aeroway",
+                "type": it.get("type") or "airport",
+                "score": _score_item(
+                    str(it.get("name", "")),
+                    str(it.get("displayName", "")),
+                    "aeroway",
+                    str(it.get("type") or "airport"),
+                    seed_boost=80,
+                    icao=str(it.get("icao")),
+                ),
+                "source": "airport_index",
+            })
 
     # 2) Nominatim enrichment (paced: max ~1 req/s process-local)
     now = time.monotonic()
@@ -1051,7 +1083,7 @@ async def api_location_search(request: Request, q: str = Query(..., min_length=2
             return requests.get(
                 "https://nominatim.openstreetmap.org/search",
                 params={
-                    "q": qn,
+                    "q": f"{icao_query} airport" if icao_query else qn,
                     "format": "jsonv2",
                     "addressdetails": 1,
                     "limit": max(limit * 3, 15),
@@ -1073,14 +1105,16 @@ async def api_location_search(request: Request, q: str = Query(..., min_length=2
             display_name = it.get("display_name", "")
             cls = str(it.get("class", ""))
             typ = str(it.get("type", ""))
+            icao = item_icao({"name": name, "displayName": display_name})
             out.append({
                 "name": name,
                 "displayName": display_name,
                 "lat": float(it.get("lat")),
                 "lon": float(it.get("lon")),
+                "icao": icao,
                 "class": cls,
                 "type": typ,
-                "score": _score_item(name, display_name, cls, typ),
+                "score": _score_item(name, display_name, cls, typ, icao=icao),
                 "source": "nominatim",
             })
         except Exception:
@@ -1090,7 +1124,10 @@ async def api_location_search(request: Request, q: str = Query(..., min_length=2
     seen = set()
     dedup = []
     for r in sorted(out, key=lambda x: x["score"], reverse=True):
-        key = (round(float(r["lat"]), 4), round(float(r["lon"]), 4), r["name"].lower())
+        if icao_query and r.get("icao"):
+            key = ("icao", str(r.get("icao")).upper())
+        else:
+            key = (round(float(r["lat"]), 4), round(float(r["lon"]), 4), r["name"].lower())
         if key in seen:
             continue
         seen.add(key)

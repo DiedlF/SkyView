@@ -2,11 +2,13 @@
 
 ## Overview
 
-Skyview uses two operator-configurable secrets:
+Skyview uses operator-configurable secrets:
 
 | Variable | Purpose | Required for |
 |---|---|---|
 | `SKYVIEW_MARKER_AUTH_SECRET` | HMAC-SHA256 signing of marker auth tokens | Marker editing by clients |
+| `SKYVIEW_ADMIN_USER` | HTTP Basic username | Admin dashboard and private ops endpoints |
+| `SKYVIEW_ADMIN_PASSWORD` | HTTP Basic password | Admin dashboard and private ops endpoints |
 | `SKYVIEW_CORS_ORIGINS` | Allowlist of trusted frontend origins | Production deploys |
 
 Secrets are loaded from `backend/.marker_auth_secret.env` (or `.env`) at server startup
@@ -65,6 +67,27 @@ a new secret produces different signatures). Clients will need to re-authenticat
 
 Token TTL is `12 hours` by default (`TOKEN_TTL_SECONDS` in `marker_auth.py`). If you
 rotate the secret, all tokens issued under the old secret become invalid immediately.
+
+---
+
+## SKYVIEW_ADMIN_USER / SKYVIEW_ADMIN_PASSWORD
+
+### Requirements
+
+- Both variables must be set for `/admin` and private ops endpoints to work.
+- Use a long random password; missing credentials fail closed with HTTP 503.
+- Protected endpoints include `/admin`, `/api/admin/*`, `/api/cache_stats`,
+  `/api/perf_stats`, `/api/usage_stats`, and feedback list/update routes.
+
+### Example
+
+```bash
+SKYVIEW_ADMIN_USER="admin"
+SKYVIEW_ADMIN_PASSWORD="<long-random-password>"
+```
+
+After changing either value, restart the server and open `/admin`; the browser should
+prompt for HTTP Basic credentials.
 
 ---
 
