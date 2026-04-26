@@ -500,6 +500,14 @@ body {
   background: rgba(70,130,220,0.95);
 }
 
+.marker-buttons button.active {
+  background: rgba(40,170,105,0.9);
+}
+
+.marker-buttons button.locating {
+  background: rgba(210,150,40,0.9);
+}
+
 .marker-buttons button.danger {
   background: rgba(180,60,60,0.82);
 }
@@ -590,6 +598,15 @@ body {
 .symbol-icon {
   background: transparent;
   border: none;
+}
+
+.gps-position-icon {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #1f8cff;
+  box-shadow: 0 0 0 2px rgba(31,140,255,0.35), 0 2px 8px rgba(0,0,0,0.45);
 }
 
 /* Wind barbs */

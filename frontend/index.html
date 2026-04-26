@@ -8,7 +8,7 @@
   <link rel="apple-touch-icon" href="logo.svg">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous">
   <link rel="stylesheet" href="https://unpkg.com/uplot@1.6.31/dist/uPlot.min.css">
-  <link rel="stylesheet" href="style.css?v=35">
+  <link rel="stylesheet" href="style.css?v=36">
 </head>
 <body>
   <div id="map"></div>
@@ -118,6 +118,7 @@
     <div class="layer-subtitle" data-i18n="layer.marker">Marker</div>
     <div class="marker-buttons">
       <button id="marker-picker-open" type="button">Marker: Geitau</button>
+      <button id="gps-track-toggle" type="button" data-i18n="marker.trackGps">Track GPS</button>
     </div>
     <div id="marker-picker" class="marker-picker" style="display:none;">
       <input id="marker-search" type="text" placeholder="Search glider field, airfield, airport..." />
@@ -216,6 +217,6 @@
   <script src="https://unpkg.com/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
   <script src="symbols.js?v=16"></script>
   <script src="windbarbs.js?v=1"></script>
-  <script src="app.js?v=66"></script>
+  <script src="app.js?v=67"></script>
 </body>
 </html>

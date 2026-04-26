@@ -1,6 +1,6 @@
 // app.js - Main application logic
 
-let map, symbolLayer, windLayer, markerLayer, d2BorderLayer = null, overlayLayer = null, debounceTimer, overlayDebounce, windDebounce, timesteps = [], currentTimeIndex = 0, currentRun = '';
+let map, symbolLayer, windLayer, markerLayer, gpsPositionLayer, d2BorderLayer = null, overlayLayer = null, debounceTimer, overlayDebounce, windDebounce, timesteps = [], currentTimeIndex = 0, currentRun = '';
 let currentTimelineSignature = null;
 let overlayRequestSeq = 0;
 let symbolsRequestSeq = 0;
@@ -204,6 +204,7 @@ const I18N = {
     'layer.wave': 'Wave',
     'layer.lcl': 'Cloud Base (spread * 125)',
     'layer.marker': 'Marker',
+    'marker.trackGps': 'Track GPS',
     helpTitle: 'How to read Skyview',
     helpHtml: `
       <h4>Data sources</h4>
@@ -318,6 +319,7 @@ const I18N = {
     'layer.wave': 'Welle',
     'layer.lcl': 'Wolkenbasis (Spread * 125)',
     'layer.marker': 'Markierung',
+    'marker.trackGps': 'GPS folgen',
     helpTitle: 'Skyview Erklärung',
     helpHtml: `
       <h4>Datenquellen</h4>
@@ -411,6 +413,7 @@ function applyLocale(lang) {
   if (helpBody) helpBody.innerHTML = t('helpHtml');
   const langSel = document.getElementById('lang-select');
   if (langSel && langSel.value !== currentLang) langSel.value = currentLang;
+  updateGpsTrackingButton();
 }
 
 let apiFailureStreak = 0;
@@ -622,6 +625,8 @@ map.getPane('skyviewWindPane').style.zIndex = '610';
 map.getPane('skyviewWindPane').style.pointerEvents = 'none';
 map.createPane('skyviewSymbolPane');
 map.getPane('skyviewSymbolPane').style.zIndex = '620';
+map.createPane('skyviewGpsPane');
+map.getPane('skyviewGpsPane').style.zIndex = '650';
 
 // Ocean base provides water coloring (ocean, lakes, rivers) with matching coastlines
 // maxNativeZoom=10: inland tiles unavailable at z11+, so upscale z10 tiles
@@ -648,6 +653,7 @@ L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/Worl
 symbolLayer = L.layerGroup().addTo(map);
 windLayer = L.layerGroup();
 markerLayer = L.layerGroup().addTo(map);
+gpsPositionLayer = L.layerGroup().addTo(map);
 d2BorderLayer = L.layerGroup().addTo(map);
 
 // Format date as "DayOfWeek, dd.mm., HH UTC"
@@ -1064,6 +1070,146 @@ let selectedSuggestionIdx = -1;
 let markerSearchDebounce = null;
 let markerSearchAbortCtrl = null;
 let markerSearchSeq = 0;
+let gpsWatchId = null;
+let gpsMarker = null;
+let gpsAccuracyCircle = null;
+let gpsHasFix = false;
+
+function gpsTrackingActive() {
+  return gpsWatchId !== null;
+}
+
+function updateGpsTrackingButton(state = '') {
+  const btn = document.getElementById('gps-track-toggle');
+  if (!btn) return;
+  const lang = I18N[currentLang] || I18N.en;
+  btn.classList.toggle('active', gpsTrackingActive() && gpsHasFix);
+  btn.classList.toggle('locating', gpsTrackingActive() && !gpsHasFix);
+  btn.disabled = state === 'unsupported';
+
+  if (state === 'unsupported') {
+    btn.textContent = 'GPS unavailable';
+    btn.title = 'Geolocation is not supported in this browser.';
+  } else if (gpsTrackingActive() && !gpsHasFix) {
+    btn.textContent = 'Locating...';
+    btn.title = 'Waiting for device position.';
+  } else if (gpsTrackingActive()) {
+    btn.textContent = 'GPS tracking';
+    btn.title = 'Stop tracking current GPS position.';
+  } else {
+    btn.textContent = lang['marker.trackGps'] || 'Track GPS';
+    btn.title = 'Show and track current GPS position.';
+  }
+}
+
+function formatGpsTooltip(pos) {
+  const c = pos.coords;
+  const parts = ['Current GPS position'];
+  if (Number.isFinite(c.accuracy)) parts.push(`accuracy ~${Math.round(c.accuracy)} m`);
+  if (Number.isFinite(c.speed) && c.speed >= 0.3) parts.push(`${Math.round(c.speed * 3.6)} km/h`);
+  return parts.join(' · ');
+}
+
+function updateGpsPosition(pos) {
+  const lat = pos.coords.latitude;
+  const lon = pos.coords.longitude;
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+  const latlng = L.latLng(lat, lon);
+  gpsHasFix = true;
+
+  if (!gpsMarker) {
+    gpsMarker = L.marker(latlng, {
+      pane: 'skyviewGpsPane',
+      interactive: true,
+      icon: L.divIcon({
+        className: 'gps-position-icon',
+        iconSize: [18, 18],
+        iconAnchor: [9, 9],
+      }),
+    }).addTo(gpsPositionLayer);
+    gpsMarker.bindTooltip('', { direction: 'top', opacity: 0.92 });
+  } else {
+    gpsMarker.setLatLng(latlng);
+  }
+  gpsMarker.setTooltipContent(formatGpsTooltip(pos));
+
+  const accuracy = Number(pos.coords.accuracy);
+  if (Number.isFinite(accuracy) && accuracy > 0) {
+    if (!gpsAccuracyCircle) {
+      gpsAccuracyCircle = L.circle(latlng, {
+        pane: 'skyviewGpsPane',
+        radius: accuracy,
+        color: '#1f8cff',
+        weight: 1,
+        opacity: 0.55,
+        fillColor: '#1f8cff',
+        fillOpacity: 0.12,
+        interactive: false,
+      }).addTo(gpsPositionLayer);
+    } else {
+      gpsAccuracyCircle.setLatLng(latlng);
+      gpsAccuracyCircle.setRadius(accuracy);
+    }
+  }
+
+  const targetZoom = Math.max(map.getZoom(), 10);
+  if (!map.getBounds().contains(latlng)) {
+    map.setView(latlng, targetZoom, { animate: true });
+  } else if (!updateGpsPosition._centeredOnce) {
+    map.setView(latlng, targetZoom, { animate: true });
+  }
+  updateGpsPosition._centeredOnce = true;
+  updateGpsTrackingButton();
+}
+
+function stopGpsTracking() {
+  if (gpsWatchId !== null && navigator.geolocation) {
+    navigator.geolocation.clearWatch(gpsWatchId);
+  }
+  gpsWatchId = null;
+  gpsHasFix = false;
+  updateGpsPosition._centeredOnce = false;
+  gpsPositionLayer.clearLayers();
+  gpsMarker = null;
+  gpsAccuracyCircle = null;
+  updateGpsTrackingButton();
+}
+
+function startGpsTracking() {
+  if (!navigator.geolocation) {
+    updateGpsTrackingButton('unsupported');
+    alert('Geolocation is not supported in this browser.');
+    return;
+  }
+  if (gpsTrackingActive()) return;
+  gpsHasFix = false;
+  updateGpsTrackingButton();
+  gpsWatchId = navigator.geolocation.watchPosition(
+    updateGpsPosition,
+    (err) => {
+      console.warn('GPS tracking error:', err);
+      if (err.code === err.PERMISSION_DENIED) {
+        stopGpsTracking();
+        alert('Could not track your location. Please allow location permission.');
+      } else {
+        showGlobalError('GPS position temporarily unavailable.');
+        updateGpsTrackingButton();
+      }
+    },
+    {
+      enableHighAccuracy: true,
+      maximumAge: 5000,
+      timeout: 15000,
+    }
+  );
+  updateGpsTrackingButton();
+}
+
+function toggleGpsTracking() {
+  if (gpsTrackingActive()) stopGpsTracking();
+  else startGpsTracking();
+}
 
 async function loadMarkerProfile() {
   try {
@@ -1646,6 +1792,8 @@ document.getElementById('marker-picker-open').addEventListener('click', () => {
   if (panel.style.display === 'block') closeMarkerPicker();
   else openMarkerPicker();
 });
+
+document.getElementById('gps-track-toggle').addEventListener('click', toggleGpsTracking);
 
 document.getElementById('marker-cancel').addEventListener('click', () => {
   closeMarkerPicker();
