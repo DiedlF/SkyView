@@ -8,6 +8,8 @@ data/fallback_stats.json
 data/usage_stats.json
 data/markers.json
 
+.codex
+.state/
 
 # Secrets — never commit these
 *.env
