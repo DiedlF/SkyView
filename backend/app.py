@@ -461,7 +461,9 @@ _LOCATION_SEARCH_CACHE_MAX_ITEMS = 512
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     rid = getattr(request.state, "request_id", None) or uuid.uuid4().hex[:12]
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail, "requestId": rid}, headers={"X-Request-Id": rid})
+    headers = dict(exc.headers or {})
+    headers["X-Request-Id"] = rid
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail, "requestId": rid}, headers=headers)
 
 
 @app.exception_handler(Exception)
@@ -1018,6 +1020,26 @@ async def api_location_search(request: Request, q: str = Query(..., min_length=2
             s += 10
         return s
 
+    def _dedupe_results(items: list[dict]) -> list[dict]:
+        seen = set()
+        deduped = []
+        for r in sorted(items, key=lambda x: x["score"], reverse=True):
+            if icao_query and r.get("icao"):
+                key = ("icao", str(r.get("icao")).upper())
+            else:
+                key = (round(float(r["lat"]), 4), round(float(r["lon"]), 4), r["name"].lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(r)
+        return deduped
+
+    def _payload_from(items: list[dict], *, source: str) -> dict:
+        dedup = _dedupe_results(items)
+        payload = {"results": dedup[:limit], "count": min(len(dedup), limit), "source": source}
+        _location_search_cache_set(cache_key, payload)
+        return payload
+
     out = []
 
     # 1) Local seed hits (fast, curated)
@@ -1070,6 +1092,9 @@ async def api_location_search(request: Request, q: str = Query(..., min_length=2
                 "source": "airport_index",
             })
 
+    if icao_query and out:
+        return _payload_from(out, source="local_icao")
+
     # 2) Nominatim enrichment (paced: max ~1 req/s process-local)
     now = time.monotonic()
     wait_s = 1.0 - (now - app_state.last_nominatim_request)
@@ -1120,22 +1145,7 @@ async def api_location_search(request: Request, q: str = Query(..., min_length=2
         except Exception:
             continue
 
-    # De-duplicate by rounded lat/lon + name
-    seen = set()
-    dedup = []
-    for r in sorted(out, key=lambda x: x["score"], reverse=True):
-        if icao_query and r.get("icao"):
-            key = ("icao", str(r.get("icao")).upper())
-        else:
-            key = (round(float(r["lat"]), 4), round(float(r["lon"]), 4), r["name"].lower())
-        if key in seen:
-            continue
-        seen.add(key)
-        dedup.append(r)
-
-    payload = {"results": dedup[:limit], "count": min(len(dedup), limit)}
-    _location_search_cache_set(cache_key, payload)
-    return payload
+    return _payload_from(out, source="local_nominatim")
 
 
 # Backward-compat endpoints (legacy marker list API)

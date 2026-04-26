@@ -1243,15 +1243,11 @@ function getEffectiveOverlayLayer() {
     return document.getElementById('precip-type')?.value || 'total_precip';
   }
   if (currentOverlay === 'clouds') {
-    return document.getElementById('clouds-type')?.value || 'clouds_total';
+    return document.getElementById('clouds-type')?.value || 'clouds_total_mod';
   }
   if (currentOverlay === 'wave') {
     const level = document.getElementById('wave-level')?.value || '600';
     return `wave_${level}`;
-  }
-  if (currentOverlay === 'geopotential') {
-    const level = document.getElementById('geopotential-level')?.value || '850';
-    return `geopotential_${level}`;
   }
   return currentOverlay;
 }
@@ -1700,7 +1696,7 @@ document.getElementById('marker-search').addEventListener('input', (e) => {
   if (/^[A-Za-z]{4}$/.test(q)) {
     searchMarkerLocations(q);
   } else {
-    markerSearchDebounce = setTimeout(() => searchMarkerLocations(q), 220);
+    markerSearchDebounce = setTimeout(() => searchMarkerLocations(q), q.length < 3 ? 360 : 180);
   }
 });
 
@@ -1745,17 +1741,6 @@ const waveLevel = document.getElementById('wave-level');
 if (waveLevel) {
   waveLevel.addEventListener('change', () => {
     if (currentOverlay === 'wave') {
-      updateLegend();
-      updateInfoPanel();
-      loadOverlay();
-    }
-  });
-}
-
-const geopotentialLevel = document.getElementById('geopotential-level');
-if (geopotentialLevel) {
-  geopotentialLevel.addEventListener('change', () => {
-    if (currentOverlay === 'geopotential') {
       updateLegend();
       updateInfoPanel();
       loadOverlay();

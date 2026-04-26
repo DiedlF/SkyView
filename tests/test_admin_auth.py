@@ -40,3 +40,22 @@ def test_require_admin_fails_closed_when_unconfigured(monkeypatch):
         require_admin(HTTPBasicCredentials(username="admin", password="secret"))
 
     assert exc.value.status_code == 503
+
+
+def test_http_exception_handler_preserves_basic_auth_challenge():
+    import asyncio
+    import app as skyview_app
+    from fastapi import HTTPException
+
+    class _State:
+        request_id = "req-test"
+
+    class _Request:
+        state = _State()
+
+    exc = HTTPException(401, "Not authenticated", headers={"WWW-Authenticate": "Basic"})
+    response = asyncio.run(skyview_app.http_exception_handler(_Request(), exc))
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Basic"
+    assert response.headers["x-request-id"] == "req-test"

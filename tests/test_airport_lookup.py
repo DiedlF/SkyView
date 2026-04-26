@@ -36,3 +36,20 @@ def test_curated_matches_includes_burg_feuerstein():
     assert matches
     assert matches[0]["icao"] == "EDQE"
     assert "Burg Feuerstein" in matches[0]["name"]
+
+
+def test_location_search_icao_payload_uses_local_fast_path(monkeypatch):
+    import app as skyview_app
+
+    class _Request:
+        client = type("Client", (), {"host": "127.0.0.1"})()
+        headers = {}
+
+    monkeypatch.setattr(skyview_app.requests, "get", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("Nominatim should not be called")))
+
+    import asyncio
+    payload = asyncio.run(skyview_app.api_location_search(_Request(), q="EDQE", limit=8))
+
+    assert payload["source"] == "local_icao"
+    assert payload["results"]
+    assert payload["results"][0]["icao"] == "EDQE"
