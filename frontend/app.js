@@ -2466,7 +2466,7 @@ function renderMeteogramSvg(series) {
   if (!rows.length) return '<div style="color:#ffb3b3">No meteogram data.</div>';
 
   const W = 760, H = 620;
-  const m = { l: 48, r: 40, t: 18, b: 44 };
+  const m = { l: 72, r: 40, t: 34, b: 44 };
   const panels = [
     { key: 'wind', h: 260 },
     { key: 'precip', h: 115 },
@@ -2508,6 +2508,10 @@ function renderMeteogramSvg(series) {
   const hasSnow = snowMax > 0;
 
   const pWind = panels[0], pPre = panels[1], pTemp = panels[2];
+  const windPadTop = 18;
+  const windPadBottom = 4;
+  const windPlotY = pWind.y + windPadTop;
+  const windPlotH = Math.max(1, pWind.ph - windPadTop - windPadBottom);
 
   let svg = `<svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="Meteogram">`;
   svg += `<rect x="0" y="0" width="${W}" height="${H}" fill="#151b2d" rx="8"/>`;
@@ -2551,12 +2555,12 @@ function renderMeteogramSvg(series) {
   const windBottomAltM = pressureToApproxHeightM(1000);
   const yWind = (lev) => {
     const alt = pressureToApproxHeightM(lev);
-    return pWind.y + pWind.ph - ((alt - windBottomAltM) / (windTopAltM - windBottomAltM || 1)) * pWind.ph;
+    return windPlotY + windPlotH - ((alt - windBottomAltM) / (windTopAltM - windBottomAltM || 1)) * windPlotH;
   };
   const yWindAlt = (altM) => {
     if (!Number.isFinite(altM)) return null;
     const clamped = Math.max(windBottomAltM, Math.min(windTopAltM, Number(altM)));
-    return pWind.y + pWind.ph - ((clamped - windBottomAltM) / (windTopAltM - windBottomAltM || 1)) * pWind.ph;
+    return windPlotY + windPlotH - ((clamped - windBottomAltM) / (windTopAltM - windBottomAltM || 1)) * windPlotH;
   };
   const mkBarb = (xx, yy, speedKt = 0, dirDeg = 0) => {
     if (!(Number.isFinite(speedKt) && Number.isFinite(dirDeg))) return '';
@@ -2600,7 +2604,7 @@ function renderMeteogramSvg(series) {
   for (const a of altRefs) {
     const yy = yWind(a.p);
     svg += `<line x1="${m.l}" y1="${yy.toFixed(1)}" x2="${W - m.r}" y2="${yy.toFixed(1)}" stroke="rgba(255,255,255,0.20)" stroke-dasharray="3 3"/>`;
-    svg += `<text x="6" y="${(yy - 3).toFixed(1)}" fill="rgba(255,255,255,0.62)" font-size="9" text-anchor="start">~${a.z}m</text>`;
+    svg += `<text x="${m.l - 14}" y="${(yy + 3).toFixed(1)}" fill="rgba(255,255,255,0.62)" font-size="9" text-anchor="end">~${a.z}m</text>`;
   }
 
   const zeroDegPath = rows.map((r, i) => {
@@ -2654,8 +2658,8 @@ function renderMeteogramSvg(series) {
     svg += `<line x1="${m.l}" y1="${yZero.toFixed(1)}" x2="${W - m.r}" y2="${yZero.toFixed(1)}" stroke="rgba(255,255,255,0.35)" stroke-dasharray="4 3"/>`;
   }
 
-  svg += `<text x="6" y="${(pWind.y + 0).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Wind (surface–~7 km)</text>`;
-  if (zeroDegPath) svg += `<text x="52" y="${(pWind.y + 0).toFixed(1)}" fill="#ffd166" font-size="10">0°C level</text>`;
+  svg += `<text x="${m.l}" y="${(pWind.y - 10).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Wind (surface–~7 km)</text>`;
+  if (zeroDegPath) svg += `<text x="${m.l + 132}" y="${(pWind.y - 10).toFixed(1)}" fill="#ffd166" font-size="10">0°C level</text>`;
   svg += `<text x="6" y="${(pPre.y + 24).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Precip</text>`;
   if (hasSnow) svg += `<text x="${W - m.r + 8}" y="${(pPre.y + 24).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10" text-anchor="end">Snow</text>`;
   svg += `<text x="6" y="${(pTemp.y + 24).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Temp</text>`;
