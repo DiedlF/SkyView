@@ -101,6 +101,259 @@ def _precip_step_hours(model_used: str | None, step: int | None) -> float:
     return 1.0
 
 
+def _add_wind_overlay(
+    ov: dict,
+    d: dict,
+    li: np.ndarray,
+    lo: np.ndarray,
+    wind_level: str,
+    zoom: int | None,
+    lat: float,
+    lon: float,
+    lat_arr: np.ndarray,
+    lon_arr: np.ndarray,
+) -> None:
+    gust_mode = (wind_level == "gust10m")
+    u_key = "u_10m" if (wind_level == "10m" or gust_mode) else f"u_{wind_level}hpa"
+    v_key = "v_10m" if (wind_level == "10m" or gust_mode) else f"v_{wind_level}hpa"
+
+    if u_key not in d or v_key not in d:
+        return
+
+    if zoom is not None:
+        cell_size = CELL_SIZES_BY_ZOOM.get(int(zoom), 0.25)
+        anchor_lat = float(lat_arr[0])
+        anchor_lon = float(lon_arr[0])
+        lat_lo = anchor_lat + math.floor((lat - anchor_lat) / cell_size) * cell_size
+        lon_lo = anchor_lon + math.floor((lon - anchor_lon) / cell_size) * cell_size
+
+        li0 = int(np.searchsorted(lat_arr, lat_lo, side="left"))
+        li1 = int(np.searchsorted(lat_arr, lat_lo + cell_size, side="left"))
+        lo0 = int(np.searchsorted(lon_arr, lon_lo, side="left"))
+        lo1 = int(np.searchsorted(lon_arr, lon_lo + cell_size, side="left"))
+
+        li0 = max(0, min(li0, len(lat_arr)))
+        li1 = max(li0, min(li1, len(lat_arr)))
+        lo0 = max(0, min(lo0, len(lon_arr)))
+        lo1 = max(lo0, min(lo1, len(lon_arr)))
+
+        wli = np.arange(li0, li1, dtype=int)
+        wlo = np.arange(lo0, lo1, dtype=int)
+        if len(wli) == 0 or len(wlo) == 0:
+            wli, wlo = li, lo
+    else:
+        wli, wlo = li, lo
+
+    wix = np.ix_(wli, wlo)
+    u_mean = _cell_agg(d, u_key, wix, "mean")
+    v_mean = _cell_agg(d, v_key, wix, "mean")
+
+    if u_mean is None or v_mean is None:
+        return
+    if gust_mode:
+        gust = _cell_agg(d, "vmax_10m", wix, "max")
+        speed_ms = gust if gust is not None else math.sqrt(u_mean**2 + v_mean**2)
+    else:
+        speed_ms = math.sqrt(u_mean**2 + v_mean**2)
+    ov["wind_speed"] = round(speed_ms * 1.94384, 1)
+    ov["wind_dir"] = round((math.degrees(math.atan2(-u_mean, -v_mean)) + 360) % 360, 0)
+
+
+def _build_overlay_values_targeted(
+    d: dict,
+    li: np.ndarray,
+    lo: np.ndarray,
+    ww_max: int,
+    wind_level: str,
+    zoom: int | None,
+    lat: float,
+    lon: float,
+    lat_arr: np.ndarray,
+    lon_arr: np.ndarray,
+    model_used: str,
+    step: int,
+    requested_overlay_key: str | None,
+    include_wind: bool,
+) -> dict:
+    i0, j0 = int(li[0]), int(lo[0])
+    key = (requested_overlay_key or "").strip()
+    ov: dict = {"sigwx": ww_max}
+
+    if key in {"total_precip", "rain", "snow", "hail"}:
+        src = {"total_precip": "tp_rate", "rain": "rain_rate", "snow": "snow_rate", "hail": "hail_rate"}[key]
+        v = _safe_get(d, src, i0, j0)
+        ov[key] = round(max(v, 0.0), 2) if v is not None else None
+    elif key in {"clouds_low", "clouds_mid", "clouds_high", "clouds_total"}:
+        src = {"clouds_low": "clcl", "clouds_mid": "clcm", "clouds_high": "clch", "clouds_total": "clct"}[key]
+        v = _safe_get(d, src, i0, j0)
+        if v is not None:
+            ov[key] = round(v, 1)
+    elif key == "clouds_total_mod":
+        v = _safe_get(d, "clct_mod", i0, j0)
+        if v is not None:
+            if v <= 1.5:
+                v *= 100.0
+            ov[key] = round(v, 1)
+    elif key == "thermals":
+        v = _safe_get(d, "cape_ml", i0, j0)
+        if v is not None:
+            ov[key] = round(v, 1)
+    elif key == "dry_conv_top":
+        v = _safe_get(d, "htop_dc", i0, j0)
+        ov[key] = round(v, 0) if (v is not None and v > 0) else None
+    elif key == "ceiling":
+        v = _safe_get(d, "ceiling", i0, j0)
+        ov[key] = round(v, 0) if (v is not None and 0 < v < 20_000) else None
+    elif key == "cloud_base":
+        v = _safe_get(d, "hbas_sc", i0, j0)
+        ov[key] = round(v, 0) if (v is not None and v > 0) else None
+    elif key == "conv_thickness":
+        htop = _safe_get(d, "htop_sc", i0, j0)
+        hbas = _safe_get(d, "hbas_sc", i0, j0)
+        if htop is not None and hbas is not None:
+            thick = max(0.0, htop - hbas)
+            ov[key] = round(thick, 0) if thick > 0 else None
+    elif key == "lpi":
+        v = _safe_get(d, "lpi_max", i0, j0)
+        if v is None:
+            v = _safe_get(d, "lpi", i0, j0)
+        if v is not None:
+            ov[key] = round(v, 1)
+    elif key in {"cin_ml", "relhum_2m", "ashfl_s"}:
+        v = _safe_get(d, key, i0, j0)
+        if v is not None:
+            ov[key] = round(v, 1)
+    elif key == "mh":
+        mh = _safe_get(d, "mh", i0, j0)
+        hsurf = _safe_get(d, "hsurf", i0, j0)
+        ov[key] = round(mh + hsurf, 1) if (mh is not None and hsurf is not None) else None
+    elif key == "h_snow":
+        v = _safe_get(d, "h_snow", i0, j0)
+        if v is not None:
+            ov[key] = round(v, 3)
+    elif key == "hzerocl":
+        v = _safe_get(d, "hzerocl", i0, j0)
+        if v is not None and v > 0:
+            ov[key] = round(v, 0)
+    elif key == "dew_spread_2m":
+        t2m = _safe_get(d, "t_2m", i0, j0)
+        td2m = _safe_get(d, "td_2m", i0, j0)
+        if t2m is not None and td2m is not None:
+            ov[key] = round(t2m - td2m, 1)
+    elif key in {"t_2m", "t_950hpa", "t_850hpa", "t_700hpa", "t_600hpa", "t_500hpa", "t_300hpa"}:
+        v = _safe_get(d, key, i0, j0)
+        if v is not None:
+            ov[key] = round(_to_celsius(v), 1)
+    elif key == "lcl":
+        t2m = _safe_get(d, "t_2m", i0, j0)
+        td2m = _safe_get(d, "td_2m", i0, j0)
+        hsurf = _safe_get(d, "hsurf", i0, j0)
+        if t2m is not None and td2m is not None and hsurf is not None:
+            ov[key] = round(float(calc_lcl(np.float64(t2m), np.float64(td2m), np.float64(hsurf))), 0)
+    elif key == "climb_rate":
+        t2m = _safe_get(d, "t_2m", i0, j0)
+        td2m = _safe_get(d, "td_2m", i0, j0)
+        hsurf = _safe_get(d, "hsurf", i0, j0)
+        if t2m is not None and td2m is not None and hsurf is not None:
+            t_850 = _safe_get(d, "t_850hpa", i0, j0)
+            t_700 = _safe_get(d, "t_700hpa", i0, j0)
+            t_500 = _safe_get(d, "t_500hpa", i0, j0)
+            t_300 = _safe_get(d, "t_300hpa", i0, j0)
+            tupper: float | None = t_850
+            z_upper_m = 1500.0
+            if hsurf > 1000.0 and t_700 is not None:
+                tupper, z_upper_m = t_700, 3000.0
+            if hsurf > 2500.0 and t_500 is not None:
+                tupper, z_upper_m = t_500, 5500.0
+            if hsurf > 4000.0 and t_300 is not None:
+                tupper, z_upper_m = t_300, 9000.0
+            if tupper is not None:
+                thermal_class, lapse_factor, moisture_code = classify_thermal_strength(
+                    np.float64(_to_celsius(t2m)),
+                    np.float64(_to_celsius(td2m)),
+                    np.float64(_to_celsius(tupper)),
+                    np.float64(max((z_upper_m - hsurf) / 1000.0, 0.1)),
+                )
+                ov["climb_rate"] = round(float(calc_climb_rate_from_thermal_class(thermal_class)), 1)
+                ov["thermal_class"] = int(round(float(thermal_class)))
+                ov["lapse_factor"] = round(float(lapse_factor), 2)
+                mc = int(round(float(moisture_code)))
+                ov["moisture_class"] = _MOISTURE_LABELS[max(0, min(3, mc))]
+    elif key == "climb_rate_gold":
+        hsurf = _safe_get(d, "hsurf", i0, j0)
+        htop_dc = _safe_get(d, "htop_dc", i0, j0)
+        if hsurf is not None and htop_dc is not None:
+            crg = float(calc_climb_rate_gold(
+                np.asarray(hsurf, dtype=np.float64),
+                np.asarray(np.nan if _safe_get(d, "hbas_sc", i0, j0) is None else _safe_get(d, "hbas_sc", i0, j0), dtype=np.float64),
+                np.asarray(np.nan if _safe_get(d, "htop_sc", i0, j0) is None else _safe_get(d, "htop_sc", i0, j0), dtype=np.float64),
+                np.asarray(htop_dc, dtype=np.float64),
+                np.asarray(np.nan if _safe_get(d, "cape_ml_hourly_max", i0, j0) is None else _safe_get(d, "cape_ml_hourly_max", i0, j0), dtype=np.float64),
+            ))
+            if math.isfinite(crg):
+                ov[key] = round(float(crg), 1)
+    elif key == "climb_rate_cape":
+        cape = _safe_get(d, "cape_ml", i0, j0)
+        cin_ml = _safe_get(d, "cin_ml", i0, j0)
+        mh = _safe_get(d, "mh", i0, j0)
+        ashfl = _safe_get(d, "ashfl_s", i0, j0)
+        t2m = _safe_get(d, "t_2m", i0, j0)
+        td2m = _safe_get(d, "td_2m", i0, j0)
+        u10 = _safe_get(d, "u_10m", i0, j0)
+        v10 = _safe_get(d, "v_10m", i0, j0)
+        u850 = _safe_get(d, "u_850hpa", i0, j0)
+        v850 = _safe_get(d, "v_850hpa", i0, j0)
+        hsurf = _safe_get(d, "hsurf", i0, j0)
+        if None not in (cape, cin_ml, mh, ashfl, t2m, td2m, u10, v10, u850, v850, hsurf):
+            crc = float(calc_climb_rate_cape_enhanced(
+                np.asarray(cape, dtype=np.float64), np.asarray(cin_ml, dtype=np.float64),
+                np.asarray(mh, dtype=np.float64), np.asarray(ashfl, dtype=np.float64),
+                np.asarray(t2m, dtype=np.float64), np.asarray(td2m, dtype=np.float64),
+                np.asarray(u10, dtype=np.float64), np.asarray(v10, dtype=np.float64),
+                np.asarray(u850, dtype=np.float64), np.asarray(v850, dtype=np.float64),
+                np.asarray(hsurf, dtype=np.float64),
+                np.asarray(np.nan if _safe_get(d, "u_700hpa", i0, j0) is None else _safe_get(d, "u_700hpa", i0, j0), dtype=np.float64),
+                np.asarray(np.nan if _safe_get(d, "v_700hpa", i0, j0) is None else _safe_get(d, "v_700hpa", i0, j0), dtype=np.float64),
+                np.asarray(np.nan if _safe_get(d, "u_500hpa", i0, j0) is None else _safe_get(d, "u_500hpa", i0, j0), dtype=np.float64),
+                np.asarray(np.nan if _safe_get(d, "v_500hpa", i0, j0) is None else _safe_get(d, "v_500hpa", i0, j0), dtype=np.float64),
+                np.asarray(np.nan if _safe_get(d, "u_300hpa", i0, j0) is None else _safe_get(d, "u_300hpa", i0, j0), dtype=np.float64),
+                np.asarray(np.nan if _safe_get(d, "v_300hpa", i0, j0) is None else _safe_get(d, "v_300hpa", i0, j0), dtype=np.float64),
+            ))
+            if math.isfinite(crc):
+                ov[key] = round(crc, 1)
+    elif key.startswith("wave_"):
+        try:
+            level = int(key.split("_", 1)[1])
+        except Exception:
+            level = 0
+        omega_v = _safe_get(d, f"omega_{level}hpa", i0, j0)
+        temp_v = _safe_get(d, f"t_{level}hpa", i0, j0)
+        if omega_v is not None and temp_v is not None:
+            wave_v = float(calc_pressure_vertical_velocity_to_w_ms(
+                np.asarray(omega_v, dtype=np.float64), np.asarray(temp_v, dtype=np.float64), float(level)
+            ))
+            if math.isfinite(wave_v):
+                ov[key] = round(float(wave_v), 1)
+    elif key.startswith("geopotential_"):
+        try:
+            level = int(key.split("_", 1)[1])
+        except Exception:
+            level = 0
+        fi_v = _safe_get(d, f"fi_{level}hpa", i0, j0)
+        if fi_v is not None:
+            gh_v = float(fi_v) / G0
+            if math.isfinite(gh_v):
+                ov[key] = round(float(gh_v), 0)
+
+    if include_wind:
+        _add_wind_overlay(ov, d, li, lo, wind_level, zoom, lat, lon, lat_arr, lon_arr)
+
+    for k, v in list(ov.items()):
+        if isinstance(v, float) and not math.isfinite(v):
+            ov[k] = None
+    return ov
+
+
 # ─── Explorer path (scalar dict → overlay values) ──────────────────────────────
 
 def build_overlay_values_from_raw(
@@ -232,6 +485,8 @@ def build_overlay_values(
     lon_arr: np.ndarray,
     model_used: str,
     step: int,
+    requested_overlay_key: str | None = None,
+    include_wind: bool = True,
 ) -> dict:
     """Build overlay_values for /api/point from NPZ data arrays.
 
@@ -239,6 +494,24 @@ def build_overlay_values(
     All non-wind lookups use direct scalar indexing d[var][i0, j0] instead
     of np.ix_ + nanmean on a 1×1 sub-array.
     """
+    if requested_overlay_key is not None or not include_wind:
+        return _build_overlay_values_targeted(
+            d=d,
+            li=li,
+            lo=lo,
+            ww_max=ww_max,
+            wind_level=wind_level,
+            zoom=zoom,
+            lat=lat,
+            lon=lon,
+            lat_arr=lat_arr,
+            lon_arr=lon_arr,
+            model_used=model_used,
+            step=step,
+            requested_overlay_key=requested_overlay_key,
+            include_wind=include_wind,
+        )
+
     i0, j0 = int(li[0]), int(lo[0])
 
     ov: dict = {"sigwx": ww_max}

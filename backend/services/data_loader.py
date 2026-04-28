@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-import os
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 import threading
 
+from services.storage_io import read_static_arrays, read_step_arrays
+
 
 _data_inflight: Dict[str, threading.Event] = {}
 _data_inflight_lock = threading.Lock()
 _data_cache_meta: Dict[str, Dict[str, Any]] = {}
+_static_grid_cache: Dict[str, Dict[str, Any]] = {}
+_static_grid_lock = threading.Lock()
 
 SUBSTEP_SUPPORTED_VARS = {"cape_ml", "cin_ml", "hbas_sc", "htop_sc", "lpi"}
 STATIC_GRID_KEYS = {"hsurf"}
@@ -50,13 +53,17 @@ def _evict_cache_item(cache: Dict[str, Any], logger) -> None:
 
 
 def _load_static_grid_arrays(data_dir: str, model: str, logger) -> Dict[str, Any]:
-    model_dir = model.replace("_", "-")
-    static_path = os.path.join(data_dir, model_dir, "grid", "static.npz")
-    if not os.path.exists(static_path):
-        return {}
+    cache_key = f"{data_dir}|{model}"
+    with _static_grid_lock:
+        cached = _static_grid_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     try:
-        npz = np.load(static_path)
-        out: Dict[str, Any] = {k: npz[k] for k in npz.files}
+        out = read_static_arrays(data_dir=data_dir, model=model, logger=logger)
+        if out:
+            with _static_grid_lock:
+                _static_grid_cache[cache_key] = out
         return out
     except Exception as exc:
         logger.warning(f"Static grid load failed for {model}: {exc}")
@@ -120,7 +127,7 @@ def load_step_data(
     logger,
     substep_minutes: int = 0,
 ) -> Dict[str, Any]:
-    """Load .npz for model/run/step with selective-key support, LRU + singleflight."""
+    """Load step data with selective-key support, LRU + singleflight."""
     cache_key = f"{model}/{run}/{step:03d}"
 
     if cache_key in cache:
@@ -148,14 +155,7 @@ def load_step_data(
 
     if owner:
         try:
-            model_dir = model.replace("_", "-")
-            path = os.path.join(data_dir, model_dir, run, f"{step:03d}.npz")
-            if not os.path.exists(path):
-                logger.error(f"Data not found: {path}")
-                raise FileNotFoundError(f"Data not found: {path}")
-
             logger.debug(f"Owner load: {cache_key}" + (f" (keys: {len(keys)})" if keys else " (all)"))
-            npz = np.load(path)
 
             if keys is not None:
                 load_keys = set(keys) | {"lat", "lon"}
@@ -164,13 +164,19 @@ def load_step_data(
                         if key in SUBSTEP_SUPPORTED_VARS:
                             load_keys.add(f"{key}_substeps")
                             load_keys.add(f"{key}_substep_minutes")
-                arrays: Dict[str, Any] = {k: npz[k] for k in load_keys if k in npz.files}
+                arrays = read_step_arrays(
+                    data_dir=data_dir, model=model, run=run, step=step,
+                    keys=load_keys, logger=logger,
+                )
                 if cache_key in cache:
                     for k, v in cache[cache_key].items():
                         if k not in arrays:
                             arrays[k] = v  # atomic merge under lock
             else:
-                arrays = {k: npz[k] for k in npz.files}
+                arrays = read_step_arrays(
+                    data_dir=data_dir, model=model, run=run, step=step,
+                    keys=None, logger=logger,
+                )
 
             arrays = _maybe_attach_static_grid(arrays, data_dir, model, logger)
 
@@ -219,15 +225,7 @@ def load_step_data(
 
         # Fallback: owner crashed/partial fail
         logger.warning(f"Singleflight fallback: {cache_key}")
-        # Repeat load (duplicated for simplicity; refactor to _do_load if needed)
-        model_dir = model.replace("_", "-")
-        path = os.path.join(data_dir, model_dir, run, f"{step:03d}.npz")
-        if not os.path.exists(path):
-            logger.error(f"Data not found: {path}")
-            raise FileNotFoundError(f"Data not found: {path}")
-
         logger.debug(f"Fallback load: {cache_key}")
-        npz = np.load(path)
 
         if keys is not None:
             load_keys = set(keys) | {"lat", "lon"}
@@ -236,13 +234,19 @@ def load_step_data(
                     if key in SUBSTEP_SUPPORTED_VARS:
                         load_keys.add(f"{key}_substeps")
                         load_keys.add(f"{key}_substep_minutes")
-            arrays = {k: npz[k] for k in load_keys if k in npz.files}
+            arrays = read_step_arrays(
+                data_dir=data_dir, model=model, run=run, step=step,
+                keys=load_keys, logger=logger,
+            )
             if cache_key in cache:
                 for k, v in cache[cache_key].items():
                     if k not in arrays:
                         arrays[k] = v
         else:
-            arrays = {k: npz[k] for k in npz.files}
+            arrays = read_step_arrays(
+                data_dir=data_dir, model=model, run=run, step=step,
+                keys=None, logger=logger,
+            )
 
         arrays = _maybe_attach_static_grid(arrays, data_dir, model, logger)
 

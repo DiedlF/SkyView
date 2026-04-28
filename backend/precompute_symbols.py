@@ -10,6 +10,7 @@ import app
 from constants import LOW_ZOOM_GLOBAL_BBOX, CELL_SIZES_BY_ZOOM
 from services.symbol_compute import compute_symbols_payload, load_coverage_damping_cfg
 from services.symbol_ops import symbols_bin_bbox, symbols_bin_indices_for_bbox, save_symbols_precomputed_bin
+from services.storage_io import step_numbers_from_dir
 
 
 
@@ -22,9 +23,8 @@ def _model_dir_name(model: str) -> str:
 
 
 def _iter_steps(run_dir: str):
-    for f in sorted(os.listdir(run_dir)):
-        if f.endswith(".npz") and f[:-4].isdigit():
-            yield int(f[:-4]), os.path.join(run_dir, f)
+    for step in step_numbers_from_dir(run_dir):
+        yield step, os.path.join(run_dir, f"{step:03d}.npz")
 
 
 def _compute_symbols_payload_direct(*, api_model: str, valid_time: str, zoom: int, bbox: str) -> dict:

@@ -36,7 +36,7 @@ OVERLAY_NEEDS = {
     "h_snow": {"h_snow"},
     "dew_spread_2m": {"t_2m", "td_2m"},
     "conv_thickness": {"htop_sc", "hbas_sc"},
-    "lpi": {"lpi"},
+    "lpi": {"lpi", "lpi_max"},
     "cin_ml": {"cin_ml"},
     "hzerocl": {"hzerocl"},
     "t_2m": {"t_2m"},
@@ -46,11 +46,26 @@ OVERLAY_NEEDS = {
     "t_500hpa": {"t_500hpa"},
     "t_300hpa": {"t_300hpa"},
     "relhum_2m": {"relhum_2m"},
-    "mh": {"mh"},
+    "mh": {"mh", "hsurf"},
     "ashfl_s": {"ashfl_s"},
     "climb_rate": {"ashfl_s", "mh", "t_2m", "td_2m", "hsurf", "t_850hpa", "t_700hpa", "t_500hpa", "t_300hpa"},
-    "climb_rate_cape": {"climb_rate_cape"},
+    "climb_rate_gold": {"hsurf", "hbas_sc", "htop_sc", "htop_dc", "cape_ml_hourly_max"},
+    "climb_rate_cape": {
+        "cape_ml", "cin_ml", "mh", "ashfl_s", "t_2m", "td_2m", "hsurf",
+        "u_10m", "v_10m", "u_850hpa", "v_850hpa", "u_700hpa", "v_700hpa",
+        "u_500hpa", "v_500hpa", "u_300hpa", "v_300hpa",
+    },
     "lcl": {"t_2m", "td_2m", "hsurf"},
+    "wave_850": {"omega_850hpa", "t_850hpa"},
+    "wave_700": {"omega_700hpa", "t_700hpa"},
+    "wave_600": {"omega_600hpa", "t_600hpa"},
+    "wave_500": {"omega_500hpa", "t_500hpa"},
+    "geopotential_950": {"fi_950hpa"},
+    "geopotential_850": {"fi_850hpa"},
+    "geopotential_700": {"fi_700hpa"},
+    "geopotential_600": {"fi_600hpa"},
+    "geopotential_500": {"fi_500hpa"},
+    "geopotential_300": {"fi_300hpa"},
 }
 
 RAW_VALUE_KEYS = ["ww", "clcl", "clcm", "clch", "clct", "cape_ml", "cin_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi", "hzerocl", "ceiling"]
@@ -94,6 +109,7 @@ def build_point_router(
     *,
     resolve_time_with_cache_context,
     load_data,
+    load_point_data=None,
     POINT_KEYS,
     POINT_KEYS_MINIMAL,
     _resolve_eu_time_strict,
@@ -137,9 +153,6 @@ def build_point_router(
             ov=ov,
         )
         substep_minutes = substep if substep in (0, 15, 30, 45) else 0
-        d = load_data(run, step, model_used, keys=req_keys, substep_minutes=substep_minutes)
-        fallback_decision = "primary_model_only"
-
         cache_key = (
             model_used,
             run,
@@ -162,6 +175,21 @@ def build_point_router(
                 point_cache.move_to_end(cache_key)
                 return payload
             point_cache.pop(cache_key, None)
+
+        d = None
+        if load_point_data is not None and not include_wind:
+            d = load_point_data(
+                run,
+                step,
+                model_used,
+                req_keys,
+                lat=lat,
+                lon=lon,
+                substep_minutes=substep_minutes,
+            )
+        if d is None:
+            d = load_data(run, step, model_used, keys=req_keys, substep_minutes=substep_minutes)
+        fallback_decision = "primary_model_only"
 
         # EU fallback outside D2 domain or when D2 has no signal at the queried point.
         if model_used == "icon_d2":
@@ -265,6 +293,8 @@ def build_point_router(
                 lon_arr=lon_arr,
                 model_used=model_used,
                 step=step,
+                requested_overlay_key=ov if need_overlay else None,
+                include_wind=include_wind,
             )
             overlay_values = {}
             if include_wind:

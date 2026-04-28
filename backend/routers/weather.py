@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import os
+import tempfile
 import threading
 import uuid
 from collections import OrderedDict
@@ -47,6 +49,7 @@ from services.symbol_ops import (
     symbols_bin_indices_for_bbox,
 )
 from services.symbol_compute import compute_symbols_payload, load_coverage_damping_cfg
+from services.storage_io import read_step_point_arrays
 
 
 def _native_zoom_threshold_for_model(model_name: Optional[str]) -> int:
@@ -71,6 +74,311 @@ def build_weather_router(
     logger,
 ):
     router = APIRouter()
+    meteogram_inflight: dict[str, threading.Event] = {}
+    meteogram_inflight_lock = threading.Lock()
+    meteogram_build_semaphore = threading.Semaphore(
+        max(1, int(os.environ.get("SKYVIEW_METEOGRAM_BUILD_CONCURRENCY", "1")))
+    )
+    METEOGRAM_POINT_CACHE_VERSION = 1
+    EMAGRAM_POINT_CACHE_VERSION = 1
+    emagram_cache: OrderedDict[str, dict] = OrderedDict()
+    emagram_inflight: dict[str, threading.Event] = {}
+    emagram_inflight_lock = threading.Lock()
+    EMAGRAM_CACHE_MAX_ITEMS = int(os.environ.get("SKYVIEW_EMAGRAM_CACHE_MAX_ITEMS", "128"))
+
+    def _meteogram_cache_set(cache_key: str, payload: dict) -> None:
+        meteogram_cache[cache_key] = payload
+        meteogram_cache.move_to_end(cache_key)
+        while len(meteogram_cache) > METEOGRAM_CACHE_MAX_ITEMS:
+            meteogram_cache.popitem(last=False)
+
+    def _meteogram_disk_path(model_key: str, run_key: str, i: int, j: int) -> str:
+        return os.path.join(data_dir, "cache", "meteogram-point", model_key, run_key, f"{int(i)}_{int(j)}.json")
+
+    def _read_meteogram_disk_cache(path: str) -> Optional[dict]:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                wrapper = json.load(f)
+            if wrapper.get("version") != METEOGRAM_POINT_CACHE_VERSION:
+                return None
+            payload = wrapper.get("payload")
+            return payload if isinstance(payload, dict) else None
+        except FileNotFoundError:
+            return None
+        except Exception as exc:
+            logger.debug("Meteogram disk cache read failed for %s: %s", path, exc)
+            return None
+
+    def _write_meteogram_disk_cache(path: str, payload: dict) -> None:
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(prefix=".tmp-", suffix=".json", dir=os.path.dirname(path))
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump({"version": METEOGRAM_POINT_CACHE_VERSION, "payload": payload}, f, separators=(",", ":"))
+            os.replace(tmp_path, path)
+        except Exception as exc:
+            logger.debug("Meteogram disk cache write failed for %s: %s", path, exc)
+            try:
+                if "tmp_path" in locals() and os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
+
+    def _versioned_disk_path(kind: str, model_key: str, run_key: str, name: str) -> str:
+        return os.path.join(data_dir, "cache", kind, model_key, run_key, name)
+
+    def _read_versioned_disk_cache(path: str, version: int) -> Optional[dict]:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                wrapper = json.load(f)
+            if wrapper.get("version") != version:
+                return None
+            payload = wrapper.get("payload")
+            return payload if isinstance(payload, dict) else None
+        except FileNotFoundError:
+            return None
+        except Exception as exc:
+            logger.debug("Disk cache read failed for %s: %s", path, exc)
+            return None
+
+    def _write_versioned_disk_cache(path: str, version: int, payload: dict) -> None:
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(prefix=".tmp-", suffix=".json", dir=os.path.dirname(path))
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump({"version": version, "payload": payload}, f, separators=(",", ":"))
+            os.replace(tmp_path, path)
+        except Exception as exc:
+            logger.debug("Disk cache write failed for %s: %s", path, exc)
+            try:
+                if "tmp_path" in locals() and os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
+
+    def _cache_set(cache: OrderedDict, cache_key: str, payload: dict, max_items: int) -> None:
+        cache[cache_key] = payload
+        cache.move_to_end(cache_key)
+        while len(cache) > max_items:
+            cache.popitem(last=False)
+
+    def _load_point_arrays(
+        *,
+        run: str,
+        step: int,
+        model: str,
+        keys: list[str],
+        lat: Optional[float] = None,
+        lon: Optional[float] = None,
+        i: Optional[int] = None,
+        j: Optional[int] = None,
+    ) -> Optional[dict]:
+        return read_step_point_arrays(
+            data_dir=data_dir,
+            model=model,
+            run=run,
+            step=step,
+            keys=keys,
+            lat=lat,
+            lon=lon,
+            i=i,
+            j=j,
+            substep_supported_vars=set(),
+            logger=logger,
+        )
+
+    def _with_requested_point(payload: dict, lat: float, lon: float) -> dict:
+        out = dict(payload)
+        point = dict(out.get("point") or {})
+        point["requestedLat"] = round(float(lat), 5)
+        point["requestedLon"] = round(float(lon), 5)
+        out["point"] = point
+        return out
+
+    def _meteogram_steps(model: Optional[str]) -> tuple[str, list[dict]]:
+        merged = get_merged_timeline()
+        if not merged or not merged.get("steps"):
+            raise HTTPException(404, "No timeline available")
+
+        m = (model or "icon_d2").replace("-", "_")
+        if m != "icon_d2":
+            raise HTTPException(400, "api_meteogram_point currently supports model=icon_d2 only")
+        steps = [s for s in merged.get("steps", []) if s.get("model") == "icon_d2"]
+        if not steps:
+            raise HTTPException(404, "No timeline for model=icon_d2")
+        return m, steps
+
+    def _meteogram_grid_point(steps: list[dict], lat: float, lon: float) -> tuple[int, int, dict]:
+        for s in steps:
+            run_i, step_i, model_i = s.get("run"), int(s.get("step")), s.get("model")
+            try:
+                d = load_data(run_i, step_i, model_i, keys=["lat", "lon"])
+            except Exception:
+                continue
+            lat_arr = d.get("lat")
+            lon_arr = d.get("lon")
+            if lat_arr is None or lon_arr is None or len(lat_arr) == 0 or len(lon_arr) == 0:
+                continue
+            ii = int(np.argmin(np.abs(lat_arr - lat)))
+            jj = int(np.argmin(np.abs(lon_arr - lon)))
+            return ii, jj, {
+                "requestedLat": round(float(lat), 5), "requestedLon": round(float(lon), 5),
+                "gridLat": round(float(lat_arr[ii]), 5), "gridLon": round(float(lon_arr[jj]), 5),
+                "i": ii, "j": jj,
+            }
+        raise HTTPException(404, "No meteogram grid available")
+
+    def _build_meteogram_payload(
+        *,
+        steps: list[dict],
+        grid_point: dict,
+        ii: int,
+        jj: int,
+        needed_keys: list[str],
+        cancel_event: Optional[threading.Event] = None,
+    ) -> dict:
+        out: List[dict] = []
+        for s in steps:
+            if cancel_event is not None and cancel_event.is_set():
+                raise RuntimeError("meteogram request cancelled")
+            run_i, step_i, model_i = s.get("run"), int(s.get("step")), s.get("model")
+            try:
+                d = _load_point_arrays(run=run_i, step=step_i, model=model_i, keys=needed_keys, i=ii, j=jj)
+                local_i = local_j = 0
+                if d is None:
+                    d = load_data(run_i, step_i, model_i, keys=needed_keys)
+                    local_i, local_j = ii, jj
+            except Exception:
+                continue
+
+            def _g(k: str) -> Optional[float]:
+                arr = d.get(k)
+                if arr is None:
+                    return None
+                try:
+                    v = arr[local_i, local_j]
+                except Exception:
+                    return None
+                return float(v) if np.isfinite(v) else None
+
+            t2k = _g("t_2m")
+            tdk = _g("td_2m")
+            wind_levels: List[dict] = []
+            for lev in METEOGRAM_D2_LEVELS_HPA:
+                uu, vv = _g(f"u_{lev}hpa"), _g(f"v_{lev}hpa")
+                if uu is None or vv is None:
+                    wind_levels.append({"pressureHpa": lev, "speedKt": None, "dirDeg": None})
+                    continue
+                sp = math.hypot(uu, vv) * 1.943844
+                dr = (270.0 - math.degrees(math.atan2(vv, uu))) % 360.0
+                wind_levels.append({"pressureHpa": lev, "speedKt": round(sp, 1), "dirDeg": round(dr, 1)})
+
+            out.append({
+                "validTime": d.get("validTime") or s.get("validTime"),
+                "model": model_i, "run": run_i, "step": step_i,
+                "windLevels": wind_levels,
+                "precipTotal": _g("tot_prec"),
+                "snowDepthM": _g("h_snow"),
+                "hsurfM": _g("hsurf"),
+                "zeroDegAltM": _g("hzerocl"),
+                "t2mC": round(t2k - 273.15, 2) if t2k is not None else None,
+                "dewpoint2mC": round(tdk - 273.15, 2) if tdk is not None else None,
+            })
+
+        if not out:
+            raise HTTPException(404, "No meteogram data available")
+
+        out.sort(key=lambda r: r.get("validTime") or "")
+        prev_tot = prev_step = prev_run = None
+        for r in out:
+            tot = r.get("precipTotal")
+            step_i = r.get("step")
+            run_i = r.get("run")
+            rate = None
+            if tot is not None and prev_tot is not None and prev_step is not None and run_i == prev_run:
+                dt_h = max(1, int(step_i) - int(prev_step))
+                delta = float(tot) - float(prev_tot)
+                if np.isfinite(delta):
+                    rate = max(0.0, delta / float(dt_h))
+            r["precipRateTotal"] = round(rate, 3) if rate is not None else None
+            if tot is not None:
+                prev_tot, prev_step, prev_run = float(tot), int(step_i), run_i
+
+        return {"point": grid_point, "count": len(out), "series": out}
+
+    def _get_or_build_meteogram_payload(
+        *,
+        lat: float,
+        lon: float,
+        model: Optional[str],
+        cancel_event: Optional[threading.Event] = None,
+    ) -> dict:
+        m, steps = _meteogram_steps(model)
+        run_key = str(steps[0].get("run") or "")
+        ii, jj, grid_point = _meteogram_grid_point(steps, lat, lon)
+        cache_key = f"{m}|{run_key}|{ii}|{jj}"
+        disk_path = _meteogram_disk_path(m, run_key, ii, jj)
+
+        cached = meteogram_cache.get(cache_key)
+        if cached is not None:
+            meteogram_cache.move_to_end(cache_key)
+            return _with_requested_point(cached, lat, lon)
+
+        disk_payload = _read_meteogram_disk_cache(disk_path)
+        if disk_payload is not None:
+            _meteogram_cache_set(cache_key, disk_payload)
+            return _with_requested_point(disk_payload, lat, lon)
+
+        while True:
+            with meteogram_inflight_lock:
+                evt = meteogram_inflight.get(cache_key)
+                if evt is None:
+                    evt = threading.Event()
+                    meteogram_inflight[cache_key] = evt
+                    owner = True
+                    break
+                owner = False
+            if not owner:
+                while not evt.wait(timeout=0.5):
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise RuntimeError("meteogram request cancelled")
+                cached = meteogram_cache.get(cache_key)
+                if cached is not None:
+                    meteogram_cache.move_to_end(cache_key)
+                    return _with_requested_point(cached, lat, lon)
+                disk_payload = _read_meteogram_disk_cache(disk_path)
+                if disk_payload is not None:
+                    _meteogram_cache_set(cache_key, disk_payload)
+                    return _with_requested_point(disk_payload, lat, lon)
+
+        acquired = False
+        try:
+            while not acquired:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise RuntimeError("meteogram request cancelled")
+                acquired = meteogram_build_semaphore.acquire(timeout=0.5)
+
+            level_keys: List[str] = []
+            for lev in METEOGRAM_D2_LEVELS_HPA:
+                level_keys += [f"u_{lev}hpa", f"v_{lev}hpa"]
+            needed_keys = ["lat", "lon", "validTime", "tot_prec", "h_snow", "t_2m", "td_2m", "hsurf", "hzerocl"] + level_keys
+            payload = _build_meteogram_payload(
+                steps=steps,
+                grid_point=grid_point,
+                ii=ii,
+                jj=jj,
+                needed_keys=needed_keys,
+                cancel_event=cancel_event,
+            )
+            _meteogram_cache_set(cache_key, payload)
+            _write_meteogram_disk_cache(disk_path, payload)
+            return _with_requested_point(payload, lat, lon)
+        finally:
+            if acquired:
+                meteogram_build_semaphore.release()
+            with meteogram_inflight_lock:
+                meteogram_inflight.pop(cache_key, None)
+                evt.set()
 
     # ── /api/symbols ──────────────────────────────────────────────────────────
 
@@ -543,6 +851,141 @@ def build_weather_router(
             },
         }
 
+    def _emagram_with_requested_point(payload: dict, lat: float, lon: float) -> dict:
+        out = dict(payload)
+        point = dict(out.get("point") or {})
+        point["requestedLat"] = round(float(lat), 5)
+        point["requestedLon"] = round(float(lon), 5)
+        out["point"] = point
+        return out
+
+    def _build_emagram_payload(*, lat: float, lon: float, time: str, model: Optional[str]) -> dict:
+        requested_model = model or "icon_d2"
+        if requested_model not in ("icon_d2", "icon-d2"):
+            raise HTTPException(400, "api_emagram_point currently supports model=icon_d2 only")
+
+        run, step, model_used = resolve_time_with_cache_context(time, "icon_d2")
+
+        coord_data = load_data(run, step, model_used, keys=["lat", "lon"])
+        lat_arr = coord_data["lat"]
+        lon_arr = coord_data["lon"]
+        if len(lat_arr) == 0 or len(lon_arr) == 0:
+            raise HTTPException(404, "No grid coordinates available")
+        i = int(np.argmin(np.abs(lat_arr - lat)))
+        j = int(np.argmin(np.abs(lon_arr - lon)))
+
+        cache_key = f"{model_used}|{run}|{step}|{i}|{j}"
+        disk_path = _versioned_disk_path("emagram-point", model_used, run, f"{int(step):03d}_{i}_{j}.json")
+        cached = emagram_cache.get(cache_key)
+        if cached is not None:
+            emagram_cache.move_to_end(cache_key)
+            return _emagram_with_requested_point(cached, lat, lon)
+        disk_payload = _read_versioned_disk_cache(disk_path, EMAGRAM_POINT_CACHE_VERSION)
+        if disk_payload is not None:
+            _cache_set(emagram_cache, cache_key, disk_payload, EMAGRAM_CACHE_MAX_ITEMS)
+            return _emagram_with_requested_point(disk_payload, lat, lon)
+
+        while True:
+            with emagram_inflight_lock:
+                evt = emagram_inflight.get(cache_key)
+                if evt is None:
+                    evt = threading.Event()
+                    emagram_inflight[cache_key] = evt
+                    owner = True
+                    break
+                owner = False
+            if not owner:
+                evt.wait(timeout=30.0)
+                cached = emagram_cache.get(cache_key)
+                if cached is not None:
+                    emagram_cache.move_to_end(cache_key)
+                    return _emagram_with_requested_point(cached, lat, lon)
+                disk_payload = _read_versioned_disk_cache(disk_path, EMAGRAM_POINT_CACHE_VERSION)
+                if disk_payload is not None:
+                    _cache_set(emagram_cache, cache_key, disk_payload, EMAGRAM_CACHE_MAX_ITEMS)
+                    return _emagram_with_requested_point(disk_payload, lat, lon)
+
+        try:
+            keys = (
+                [f"t_{lev}hpa" for lev in EMAGRAM_D2_LEVELS_HPA]
+                + [f"fi_{lev}hpa" for lev in EMAGRAM_D2_LEVELS_HPA]
+                + [f"relhum_{lev}hpa" for lev in EMAGRAM_D2_LEVELS_HPA]
+                + [f"u_{lev}hpa" for lev in EMAGRAM_D2_LEVELS_HPA]
+                + [f"v_{lev}hpa" for lev in EMAGRAM_D2_LEVELS_HPA]
+            )
+            d = _load_point_arrays(run=run, step=step, model=model_used, keys=keys, i=i, j=j)
+            local_i = local_j = 0
+            if d is None:
+                d = load_data(run, step, model_used, keys=keys)
+                local_i, local_j = i, j
+
+            def _dewpoint_c(temp_c: float, rh_pct: float) -> Optional[float]:
+                if not np.isfinite(temp_c) or not np.isfinite(rh_pct):
+                    return None
+                rh = max(1e-4, min(100.0, float(rh_pct)))
+                a, b = 17.625, 243.04
+                gamma = math.log(rh / 100.0) + (a * float(temp_c)) / (b + float(temp_c))
+                td = (b * gamma) / (a - gamma)
+                return float(td) if np.isfinite(td) else None
+
+            levels: List[dict] = []
+            for lev in EMAGRAM_D2_LEVELS_HPA:
+                t_key, fi_key = f"t_{lev}hpa", f"fi_{lev}hpa"
+                rh_key, u_key, v_key = f"relhum_{lev}hpa", f"u_{lev}hpa", f"v_{lev}hpa"
+                t_val = d[t_key][local_i, local_j] if t_key in d else np.nan
+                fi_val = d[fi_key][local_i, local_j] if fi_key in d else np.nan
+                rh_val = d[rh_key][local_i, local_j] if rh_key in d else np.nan
+                u_val = d[u_key][local_i, local_j] if u_key in d else np.nan
+                v_val = d[v_key][local_i, local_j] if v_key in d else np.nan
+
+                if not any(np.isfinite(x) for x in (t_val, fi_val, rh_val, u_val, v_val)):
+                    continue
+
+                temp_c = (float(t_val) - 273.15) if np.isfinite(t_val) else None
+                alt_m = (float(fi_val) / G0) if np.isfinite(fi_val) else None
+                rh_pct = float(rh_val) if np.isfinite(rh_val) else None
+                dew_c = _dewpoint_c(temp_c, rh_pct) if (temp_c is not None and rh_pct is not None) else None
+                u_ms = float(u_val) if np.isfinite(u_val) else None
+                v_ms = float(v_val) if np.isfinite(v_val) else None
+                wind_ms = math.hypot(u_ms, v_ms) if (u_ms is not None and v_ms is not None) else None
+                wind_kt = wind_ms * 1.943844 if wind_ms is not None else None
+                wind_dir = (
+                    (270.0 - math.degrees(math.atan2(v_ms, u_ms))) % 360.0
+                    if (u_ms is not None and v_ms is not None) else None
+                )
+                levels.append({
+                    "pressureHpa": lev,
+                    "temperatureC": round(temp_c, 2) if temp_c is not None else None,
+                    "dewpointC": round(dew_c, 2) if dew_c is not None else None,
+                    "relativeHumidityPct": round(rh_pct, 1) if rh_pct is not None else None,
+                    "uMs": round(u_ms, 3) if u_ms is not None else None,
+                    "vMs": round(v_ms, 3) if v_ms is not None else None,
+                    "windSpeedMs": round(wind_ms, 2) if wind_ms is not None else None,
+                    "windSpeedKt": round(wind_kt, 1) if wind_kt is not None else None,
+                    "windDirDeg": round(wind_dir, 1) if wind_dir is not None else None,
+                    "geopotential": round(float(fi_val), 2) if np.isfinite(fi_val) else None,
+                    "altitudeM": round(alt_m, 1) if alt_m is not None else None,
+                })
+
+            levels.sort(key=lambda x: (x["altitudeM"] is None, x["altitudeM"] if x["altitudeM"] is not None else -x["pressureHpa"]))
+
+            payload = {
+                "model": model_used, "run": run, "step": step, "validTime": d.get("validTime"),
+                "point": {
+                    "requestedLat": round(float(lat), 5), "requestedLon": round(float(lon), 5),
+                    "gridLat": round(float(lat_arr[i]), 5), "gridLon": round(float(lon_arr[j]), 5),
+                    "i": i, "j": j,
+                },
+                "levels": levels, "count": len(levels),
+            }
+            _cache_set(emagram_cache, cache_key, payload, EMAGRAM_CACHE_MAX_ITEMS)
+            _write_versioned_disk_cache(disk_path, EMAGRAM_POINT_CACHE_VERSION, payload)
+            return payload
+        finally:
+            with emagram_inflight_lock:
+                emagram_inflight.pop(cache_key, None)
+                evt.set()
+
     # ── /api/emagram_point ────────────────────────────────────────────────────
 
     @router.get("/api/emagram_point")
@@ -560,10 +1003,7 @@ def build_weather_router(
                 cancel_event = threading.Event()
                 yield json.dumps({"type": "progress", "message": "starting emagram"}) + "\n"
                 task = asyncio.create_task(
-                    run_in_threadpool(lambda: asyncio.run(
-                        api_emagram_point(request=request, lat=lat, lon=lon, time=time,
-                                          model=model, stream=False, _internal=True)
-                    ))
+                    run_in_threadpool(lambda: _build_emagram_payload(lat=lat, lon=lon, time=time, model=model))
                 )
                 while not task.done():
                     if await request.is_disconnected():
@@ -581,87 +1021,7 @@ def build_weather_router(
                     yield json.dumps({"type": "error", "detail": str(exc)}) + "\n"
             return StreamingResponse(_gen(), media_type="application/x-ndjson")
 
-        requested_model = model or "icon_d2"
-        if requested_model not in ("icon_d2", "icon-d2"):
-            raise HTTPException(400, "api_emagram_point currently supports model=icon_d2 only")
-
-        run, step, model_used = resolve_time_with_cache_context(time, "icon_d2")
-
-        keys = (
-            [f"t_{lev}hpa" for lev in EMAGRAM_D2_LEVELS_HPA]
-            + [f"fi_{lev}hpa" for lev in EMAGRAM_D2_LEVELS_HPA]
-            + [f"relhum_{lev}hpa" for lev in EMAGRAM_D2_LEVELS_HPA]
-            + [f"u_{lev}hpa" for lev in EMAGRAM_D2_LEVELS_HPA]
-            + [f"v_{lev}hpa" for lev in EMAGRAM_D2_LEVELS_HPA]
-        )
-        d = load_data(run, step, model_used, keys=keys)
-        lat_arr = d["lat"]
-        lon_arr = d["lon"]
-        if len(lat_arr) == 0 or len(lon_arr) == 0:
-            raise HTTPException(404, "No grid coordinates available")
-
-        i = int(np.argmin(np.abs(lat_arr - lat)))
-        j = int(np.argmin(np.abs(lon_arr - lon)))
-
-        def _dewpoint_c(temp_c: float, rh_pct: float) -> Optional[float]:
-            if not np.isfinite(temp_c) or not np.isfinite(rh_pct):
-                return None
-            rh = max(1e-4, min(100.0, float(rh_pct)))
-            a, b = 17.625, 243.04
-            gamma = math.log(rh / 100.0) + (a * float(temp_c)) / (b + float(temp_c))
-            td = (b * gamma) / (a - gamma)
-            return float(td) if np.isfinite(td) else None
-
-        levels: List[dict] = []
-        for lev in EMAGRAM_D2_LEVELS_HPA:
-            t_key, fi_key = f"t_{lev}hpa", f"fi_{lev}hpa"
-            rh_key, u_key, v_key = f"relhum_{lev}hpa", f"u_{lev}hpa", f"v_{lev}hpa"
-            t_val = d[t_key][i, j] if t_key in d else np.nan
-            fi_val = d[fi_key][i, j] if fi_key in d else np.nan
-            rh_val = d[rh_key][i, j] if rh_key in d else np.nan
-            u_val = d[u_key][i, j] if u_key in d else np.nan
-            v_val = d[v_key][i, j] if v_key in d else np.nan
-
-            if not any(np.isfinite(x) for x in (t_val, fi_val, rh_val, u_val, v_val)):
-                continue
-
-            temp_c = (float(t_val) - 273.15) if np.isfinite(t_val) else None
-            alt_m = (float(fi_val) / G0) if np.isfinite(fi_val) else None
-            rh_pct = float(rh_val) if np.isfinite(rh_val) else None
-            dew_c = _dewpoint_c(temp_c, rh_pct) if (temp_c is not None and rh_pct is not None) else None
-            u_ms = float(u_val) if np.isfinite(u_val) else None
-            v_ms = float(v_val) if np.isfinite(v_val) else None
-            wind_ms = math.hypot(u_ms, v_ms) if (u_ms is not None and v_ms is not None) else None
-            wind_kt = wind_ms * 1.943844 if wind_ms is not None else None
-            wind_dir = (
-                (270.0 - math.degrees(math.atan2(v_ms, u_ms))) % 360.0
-                if (u_ms is not None and v_ms is not None) else None
-            )
-            levels.append({
-                "pressureHpa": lev,
-                "temperatureC": round(temp_c, 2) if temp_c is not None else None,
-                "dewpointC": round(dew_c, 2) if dew_c is not None else None,
-                "relativeHumidityPct": round(rh_pct, 1) if rh_pct is not None else None,
-                "uMs": round(u_ms, 3) if u_ms is not None else None,
-                "vMs": round(v_ms, 3) if v_ms is not None else None,
-                "windSpeedMs": round(wind_ms, 2) if wind_ms is not None else None,
-                "windSpeedKt": round(wind_kt, 1) if wind_kt is not None else None,
-                "windDirDeg": round(wind_dir, 1) if wind_dir is not None else None,
-                "geopotential": round(float(fi_val), 2) if np.isfinite(fi_val) else None,
-                "altitudeM": round(alt_m, 1) if alt_m is not None else None,
-            })
-
-        levels.sort(key=lambda x: (x["altitudeM"] is None, x["altitudeM"] if x["altitudeM"] is not None else -x["pressureHpa"]))
-
-        return {
-            "model": model_used, "run": run, "step": step, "validTime": d.get("validTime"),
-            "point": {
-                "requestedLat": round(float(lat), 5), "requestedLon": round(float(lon), 5),
-                "gridLat": round(float(lat_arr[i]), 5), "gridLon": round(float(lon_arr[j]), 5),
-                "i": i, "j": j,
-            },
-            "levels": levels, "count": len(levels),
-        }
+        return await run_in_threadpool(lambda: _build_emagram_payload(lat=lat, lon=lon, time=time, model=model))
 
     # ── /api/meteogram_point ──────────────────────────────────────────────────
 
@@ -679,9 +1039,8 @@ def build_weather_router(
                 cancel_event = threading.Event()
                 yield json.dumps({"type": "progress", "message": "starting meteogram"}) + "\n"
                 task = asyncio.create_task(
-                    run_in_threadpool(lambda: asyncio.run(
-                        api_meteogram_point(request=request, lat=lat, lon=lon,
-                                            model=model, stream=False, _internal=True)
+                    run_in_threadpool(lambda: _get_or_build_meteogram_payload(
+                        lat=lat, lon=lon, model=model, cancel_event=cancel_event
                     ))
                 )
                 while not task.done():
@@ -700,116 +1059,9 @@ def build_weather_router(
                     yield json.dumps({"type": "error", "detail": str(exc)}) + "\n"
             return StreamingResponse(_gen(), media_type="application/x-ndjson")
 
-        merged = get_merged_timeline()
-        if not merged or not merged.get("steps"):
-            raise HTTPException(404, "No timeline available")
-
-        m = (model or "icon_d2").replace("-", "_")
-        if m != "icon_d2":
-            raise HTTPException(400, "api_meteogram_point currently supports model=icon_d2 only")
-        steps = [s for s in merged.get("steps", []) if s.get("model") == "icon_d2"]
-        if not steps:
-            raise HTTPException(404, "No timeline for model=icon_d2")
-
-        run_key = str(steps[0].get("run") or "")
-        cache_key = f"{m}|{run_key}|{round(float(lat), 4)}|{round(float(lon), 4)}"
-        cached = meteogram_cache.get(cache_key)
-        if cached is not None:
-            meteogram_cache.move_to_end(cache_key)
-            return cached
-
-        level_keys: List[str] = []
-        for lev in METEOGRAM_D2_LEVELS_HPA:
-            level_keys += [f"u_{lev}hpa", f"v_{lev}hpa"]
-
-        needed_keys = ["lat", "lon", "validTime", "tot_prec", "h_snow", "t_2m", "td_2m", "hsurf", "hzerocl"] + level_keys
-
-        out: List[dict] = []
-        grid_point: Optional[dict] = None
-        ii = jj = None
-
-        for s in steps:
-            run_i, step_i, model_i = s.get("run"), int(s.get("step")), s.get("model")
-            try:
-                d = load_data(run_i, step_i, model_i, keys=needed_keys)
-            except Exception:
-                continue
-
-            lat_arr = d.get("lat")
-            lon_arr = d.get("lon")
-            if lat_arr is None or lon_arr is None or len(lat_arr) == 0 or len(lon_arr) == 0:
-                continue
-
-            if ii is None or jj is None:
-                ii = int(np.argmin(np.abs(lat_arr - lat)))
-                jj = int(np.argmin(np.abs(lon_arr - lon)))
-                grid_point = {
-                    "requestedLat": round(float(lat), 5), "requestedLon": round(float(lon), 5),
-                    "gridLat": round(float(lat_arr[ii]), 5), "gridLon": round(float(lon_arr[jj]), 5),
-                    "i": ii, "j": jj,
-                }
-
-            def _g(k: str) -> Optional[float]:
-                arr = d.get(k)
-                if arr is None:
-                    return None
-                try:
-                    v = arr[ii, jj]
-                except Exception:
-                    return None
-                return float(v) if np.isfinite(v) else None
-
-            t2k = _g("t_2m")
-            tdk = _g("td_2m")
-            wind_levels: List[dict] = []
-            for lev in METEOGRAM_D2_LEVELS_HPA:
-                uu, vv = _g(f"u_{lev}hpa"), _g(f"v_{lev}hpa")
-                if uu is None or vv is None:
-                    wind_levels.append({"pressureHpa": lev, "speedKt": None, "dirDeg": None})
-                    continue
-                sp = math.hypot(uu, vv) * 1.943844
-                dr = (270.0 - math.degrees(math.atan2(vv, uu))) % 360.0
-                wind_levels.append({"pressureHpa": lev, "speedKt": round(sp, 1), "dirDeg": round(dr, 1)})
-
-            out.append({
-                "validTime": d.get("validTime") or s.get("validTime"),
-                "model": model_i, "run": run_i, "step": step_i,
-                "windLevels": wind_levels,
-                "precipTotal": _g("tot_prec"),
-                "snowDepthM": _g("h_snow"),
-                "hsurfM": _g("hsurf"),
-                "zeroDegAltM": _g("hzerocl"),
-                "t2mC": round(t2k - 273.15, 2) if t2k is not None else None,
-                "dewpoint2mC": round(tdk - 273.15, 2) if tdk is not None else None,
-            })
-
-        if not out:
-            raise HTTPException(404, "No meteogram data available")
-
-        out.sort(key=lambda r: r.get("validTime") or "")
-
-        # De-accumulate precipitation
-        prev_tot = prev_step = prev_run = None
-        for r in out:
-            tot = r.get("precipTotal")
-            step_i = r.get("step")
-            run_i = r.get("run")
-            rate = None
-            if tot is not None and prev_tot is not None and prev_step is not None and run_i == prev_run:
-                dt_h = max(1, int(step_i) - int(prev_step))
-                delta = float(tot) - float(prev_tot)
-                if np.isfinite(delta):
-                    rate = max(0.0, delta / float(dt_h))
-            r["precipRateTotal"] = round(rate, 3) if rate is not None else None
-            if tot is not None:
-                prev_tot, prev_step, prev_run = float(tot), int(step_i), run_i
-
-        payload = {"point": grid_point, "count": len(out), "series": out}
-        meteogram_cache[cache_key] = payload
-        meteogram_cache.move_to_end(cache_key)
-        while len(meteogram_cache) > METEOGRAM_CACHE_MAX_ITEMS:
-            meteogram_cache.popitem(last=False)
-        return payload
+        return await run_in_threadpool(lambda: _get_or_build_meteogram_payload(
+            lat=lat, lon=lon, model=model
+        ))
 
     @router.get("/api/nowcast_point")
     async def api_nowcast_point(

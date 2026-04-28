@@ -3,13 +3,22 @@
 from __future__ import annotations
 
 import os
+import threading
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import HTTPException
 
+from services.storage_io import step_numbers_from_dir
 
-def get_available_runs(data_dir: str):
+_TIMELINE_CACHE_TTL_SECONDS = float(os.environ.get("SKYVIEW_TIMELINE_CACHE_TTL_SECONDS", "10"))
+_timeline_cache_lock = threading.Lock()
+_runs_cache: tuple[float, str, list] | None = None
+_merged_cache: tuple[float, str, dict | None] | None = None
+
+
+def _get_available_runs_uncached(data_dir: str):
     runs = []
     for model_dir in ["icon-d2", "icon-eu"]:
         model_path = os.path.join(data_dir, model_dir)
@@ -24,16 +33,11 @@ def get_available_runs(data_dir: str):
                 run_dt = datetime.strptime(d, "%Y%m%d%H")
             except ValueError:
                 continue
-            npz_files = sorted([f for f in os.listdir(run_path) if f.endswith(".npz")])
             steps = []
-            for f in npz_files:
-                try:
-                    step = int(f[:-4])
-                    vt = run_dt.replace(tzinfo=timezone.utc)
-                    vt = vt.timestamp() + step * 3600
-                    steps.append({"step": step, "validTime": datetime.fromtimestamp(vt, tz=timezone.utc).isoformat().replace('+00:00', 'Z')})
-                except ValueError:
-                    continue
+            for step in step_numbers_from_dir(run_path):
+                vt = run_dt.replace(tzinfo=timezone.utc)
+                vt = vt.timestamp() + step * 3600
+                steps.append({"step": step, "validTime": datetime.fromtimestamp(vt, tz=timezone.utc).isoformat().replace('+00:00', 'Z')})
             if steps:
                 runs.append({
                     "run": d,
@@ -45,8 +49,21 @@ def get_available_runs(data_dir: str):
     return runs
 
 
-def get_merged_timeline(data_dir: str):
-    runs = get_available_runs(data_dir)
+def get_available_runs(data_dir: str):
+    global _runs_cache
+    if _TIMELINE_CACHE_TTL_SECONDS <= 0:
+        return _get_available_runs_uncached(data_dir)
+    now = time.monotonic()
+    with _timeline_cache_lock:
+        if _runs_cache is not None and _runs_cache[1] == data_dir and (now - _runs_cache[0]) <= _TIMELINE_CACHE_TTL_SECONDS:
+            return _runs_cache[2]
+    runs = _get_available_runs_uncached(data_dir)
+    with _timeline_cache_lock:
+        _runs_cache = (now, data_dir, runs)
+    return runs
+
+
+def _build_merged_timeline(runs: list):
     if not runs:
         return None
 
@@ -85,6 +102,20 @@ def get_merged_timeline(data_dir: str):
         "d2Run": d2_run["run"] if d2_run else None,
         "euRun": eu_run["run"] if eu_run else None,
     }
+
+
+def get_merged_timeline(data_dir: str):
+    global _merged_cache
+    if _TIMELINE_CACHE_TTL_SECONDS <= 0:
+        return _build_merged_timeline(_get_available_runs_uncached(data_dir))
+    now = time.monotonic()
+    with _timeline_cache_lock:
+        if _merged_cache is not None and _merged_cache[1] == data_dir and (now - _merged_cache[0]) <= _TIMELINE_CACHE_TTL_SECONDS:
+            return _merged_cache[2]
+    merged = _build_merged_timeline(get_available_runs(data_dir))
+    with _timeline_cache_lock:
+        _merged_cache = (now, data_dir, merged)
+    return merged
 
 
 def resolve_time(data_dir: str, time_str: str, model: Optional[str] = None) -> tuple[str, int, str]:

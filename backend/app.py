@@ -88,6 +88,7 @@ import marker_auth as _marker_auth
 from services.model_select import resolve_eu_time_strict as svc_resolve_eu_time_strict, load_eu_data_strict as svc_load_eu_data_strict
 from services.data_loader import load_step_data
 from services.app_state import AppState
+from services.storage_io import read_step_point_arrays, step_numbers_from_dir
 from routers.core import build_core_router
 from routers.point import build_point_router
 from routers.domain import build_domain_router
@@ -574,7 +575,7 @@ def classify_point(clcl, clcm, clch, cape_ml, cin_ml, htop_dc, hbas_sc, htop_sc,
 
 
 def load_data(run: str, step: int, model: str, keys: Optional[List[str]] = None, substep_minutes: int = 0) -> Dict[str, Any]:
-    """Load .npz data for a given run/step/model (service-backed)."""
+    """Load forecast data for a given run/step/model (service-backed)."""
     return load_step_data(
         data_dir=DATA_DIR,
         model=model,
@@ -585,6 +586,34 @@ def load_data(run: str, step: int, model: str, keys: Optional[List[str]] = None,
         keys=keys,
         logger=logger,
         substep_minutes=substep_minutes,
+    )
+
+
+def load_point_data(
+    run: str,
+    step: int,
+    model: str,
+    keys: List[str],
+    *,
+    lat: Optional[float] = None,
+    lon: Optional[float] = None,
+    i: Optional[int] = None,
+    j: Optional[int] = None,
+    substep_minutes: int = 0,
+) -> Optional[Dict[str, Any]]:
+    return read_step_point_arrays(
+        data_dir=DATA_DIR,
+        model=model,
+        run=run,
+        step=step,
+        keys=keys,
+        lat=lat,
+        lon=lon,
+        i=i,
+        j=j,
+        substep_minutes=substep_minutes,
+        substep_supported_vars={"cape_ml", "cin_ml", "hbas_sc", "htop_sc", "lpi"},
+        logger=logger,
     )
 
 
@@ -1510,6 +1539,7 @@ def _try_load_eu_fallback(time_str: str, cfg: dict, max_delta_hours: float = EU_
 app.include_router(build_point_router(
     resolve_time_with_cache_context=resolve_time_with_cache_context,
     load_data=load_data,
+    load_point_data=load_point_data,
     POINT_KEYS=POINT_KEYS,
     POINT_KEYS_MINIMAL=POINT_KEYS_MINIMAL,
     _resolve_eu_time_strict=_resolve_eu_time_strict,
@@ -2076,10 +2106,12 @@ def _ingest_model_timings() -> dict[str, dict[str, Any]]:
         full_steps = None
         full_run = None
         for run in run_dirs:
-            npz_files = sorted(glob.glob(os.path.join(base, run, "*.npz")))
-            if len(npz_files) >= expected_steps[model_key]:
-                full_dt = datetime.fromtimestamp(max(os.path.getmtime(p) for p in npz_files), tz=timezone.utc)
-                full_steps = len(npz_files)
+            run_path = os.path.join(base, run)
+            step_count = len(step_numbers_from_dir(run_path))
+            storage_paths = sorted(glob.glob(os.path.join(run_path, "*.npz"))) + sorted(glob.glob(os.path.join(run_path, "*.zarr")))
+            if step_count >= expected_steps[model_key] and storage_paths:
+                full_dt = datetime.fromtimestamp(max(os.path.getmtime(p) for p in storage_paths), tz=timezone.utc)
+                full_steps = step_count
                 full_run = run
                 break
 
@@ -2099,10 +2131,11 @@ def _ingest_model_timings() -> dict[str, dict[str, Any]]:
         ingest_running_minutes = None
         latest_run_step_count = 0
         if latest_run:
-            latest_run_npz = sorted(glob.glob(os.path.join(base, latest_run, "*.npz")))
-            latest_run_step_count = len(latest_run_npz)
-            if latest_run_npz:
-                first_dt = datetime.fromtimestamp(min(os.path.getmtime(p) for p in latest_run_npz), tz=timezone.utc)
+            latest_run_path = os.path.join(base, latest_run)
+            latest_run_storage = sorted(glob.glob(os.path.join(latest_run_path, "*.npz"))) + sorted(glob.glob(os.path.join(latest_run_path, "*.zarr")))
+            latest_run_step_count = len(step_numbers_from_dir(latest_run_path))
+            if latest_run_storage:
+                first_dt = datetime.fromtimestamp(min(os.path.getmtime(p) for p in latest_run_storage), tz=timezone.utc)
                 latest_run_first_ingested_iso = first_dt.isoformat().replace("+00:00", "Z")
                 if latest_run_step_count < expected_steps[model_key]:
                     ingest_running_minutes = round((now - first_dt).total_seconds() / 60.0, 1)
@@ -2169,21 +2202,26 @@ async def api_admin_storage():
         for run in runs:
             rp = os.path.join(base, run)
             npz_files = sorted(glob.glob(os.path.join(rp, "*.npz")))
-            run_bytes = sum(os.path.getsize(p) for p in npz_files if os.path.exists(p))
-            latest_npz_mtime = None
-            if npz_files:
-                latest_npz_mtime = datetime.fromtimestamp(max(os.path.getmtime(p) for p in npz_files), tz=timezone.utc)
+            zarr_dirs = sorted(glob.glob(os.path.join(rp, "*.zarr")))
+            storage_paths = npz_files + zarr_dirs
+            step_count = len(step_numbers_from_dir(rp))
+            run_bytes = _dir_size_bytes(rp)
+            latest_storage_mtime = None
+            if storage_paths:
+                latest_storage_mtime = datetime.fromtimestamp(max(os.path.getmtime(p) for p in storage_paths), tz=timezone.utc)
 
             run_items.append({
                 "run": run,
                 "npzFiles": len(npz_files),
+                "zarrSteps": len(zarr_dirs),
+                "steps": step_count,
                 "bytes": int(run_bytes),
-                "latestNpzsUpdatedAt": latest_npz_mtime.isoformat().replace("+00:00", "Z") if latest_npz_mtime else None,
+                "latestStorageUpdatedAt": latest_storage_mtime.isoformat().replace("+00:00", "Z") if latest_storage_mtime else None,
             })
 
-            if latest_full_ingested_at is None and len(npz_files) >= expected_steps[model_key]:
-                latest_full_ingested_at = latest_npz_mtime
-                latest_full_ingested_step_count = len(npz_files)
+            if latest_full_ingested_at is None and step_count >= expected_steps[model_key]:
+                latest_full_ingested_at = latest_storage_mtime
+                latest_full_ingested_step_count = step_count
 
         mt = model_timings.get(model_key, {})
 
@@ -2354,19 +2392,31 @@ def _static_grid_info() -> Dict[str, Any]:
     for model_dir, model_key in (("icon-d2", "icon_d2"), ("icon-eu", "icon_eu")):
         grid_dir = os.path.join(DATA_DIR, model_dir, "grid")
         static_path = os.path.join(grid_dir, "static.npz")
+        static_zarr = os.path.join(grid_dir, "static.zarr")
+        static_exists = os.path.exists(static_path) or os.path.isdir(static_zarr)
         entry: Dict[str, Any] = {
             "path": grid_dir,
             "staticPath": static_path,
-            "exists": os.path.exists(static_path),
-            "bytes": int(os.path.getsize(static_path)) if os.path.exists(static_path) else 0,
+            "staticZarrPath": static_zarr,
+            "exists": static_exists,
+            "bytes": (
+                (int(os.path.getsize(static_path)) if os.path.exists(static_path) else 0)
+                + (_dir_size_bytes(static_zarr) if os.path.isdir(static_zarr) else 0)
+            ),
             "updatedAt": None,
             "shape": None,
             "fields": None,
             "gridHash": None,
         }
-        if os.path.exists(static_path):
+        if static_exists:
             try:
-                entry["updatedAt"] = datetime.fromtimestamp(os.path.getmtime(static_path), tz=timezone.utc).isoformat().replace("+00:00", "Z")
+                mtimes = []
+                if os.path.exists(static_path):
+                    mtimes.append(os.path.getmtime(static_path))
+                if os.path.isdir(static_zarr):
+                    mtimes.append(os.path.getmtime(static_zarr))
+                if mtimes:
+                    entry["updatedAt"] = datetime.fromtimestamp(max(mtimes), tz=timezone.utc).isoformat().replace("+00:00", "Z")
             except Exception:
                 pass
         if os.path.exists(static_path):

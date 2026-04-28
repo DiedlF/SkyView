@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """ICON-D2 and ICON-EU data ingester for Skyview.
-Downloads regular-lat-lon GRIB2 from DWD, optionally crops, saves .npz.
+Downloads regular-lat-lon GRIB2 from DWD, optionally crops, saves .npz/.zarr.
 
 Config-driven: reads ingest_config.yaml for variable groups and region settings.
 ICON-D2: full native grid (746×1215).
@@ -31,6 +31,7 @@ from logging_config import setup_logging
 from constants import ICON_EU_STEP_3H_START, LOW_ZOOM_PRECOMPUTED_BINS_ENABLED
 from classify import classify_clouds_and_bases
 from convective_filters import filter_hbas_with_mh
+from services.storage_io import should_write_zarr, step_zarr_path, static_zarr_path, write_zarr_group, zarr_available
 
 logger = setup_logging(
     __name__,
@@ -82,7 +83,7 @@ def _write_static_grid_bundle(model: str, arrays: dict, run: str):
     grid_dir = _grid_dir_for_model(model)
     os.makedirs(grid_dir, exist_ok=True)
     static_path = _grid_static_path(model)
-    tmp_static = static_path + ".tmp"
+    tmp_static = static_path + ".tmp.npz"
     digest = hashlib.sha256()
     digest.update(lat_1d.tobytes())
     digest.update(lon_1d.tobytes())
@@ -97,6 +98,19 @@ def _write_static_grid_bundle(model: str, arrays: dict, run: str):
         coordinate_grid=np.asarray("regular_lat_lon"),
     )
     os.replace(tmp_static, static_path)
+    if should_write_zarr():
+        try:
+            write_zarr_group(
+                static_zarr_path(DATA_DIR, model),
+                {"lat": lat_1d, "lon": lon_1d, "hsurf": hsurf},
+                attrs={
+                    "grid_hash": digest.hexdigest(),
+                    "source_run": str(run),
+                    "coordinate_grid": "regular_lat_lon",
+                },
+            )
+        except Exception as exc:
+            logger.warning(f"Static Zarr write failed for {model}: {exc}")
     return True
 
 
@@ -1203,6 +1217,24 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
         except OSError:
             pass
         raise
+    if should_write_zarr():
+        try:
+            zarr_arrays = {"lat": lat_1d, "lon": lon_1d, **dynamic_arrays}
+            if write_zarr_group(
+                step_zarr_path(DATA_DIR, model, run, step),
+                zarr_arrays,
+                attrs={
+                    "run": str(run),
+                    "step": int(step),
+                    "model": str(model).replace("-", "_"),
+                    "coordinate_grid": "regular_lat_lon",
+                },
+            ):
+                logger.debug(f"Step {step:03d}: saved Zarr bundle")
+            elif not zarr_available():
+                logger.warning("Zarr write requested but zarr/numcodecs is not installed")
+        except Exception as exc:
+            logger.warning(f"Step {step:03d}: Zarr write failed: {exc}")
     if wrote_static_bundle:
         logger.debug(f"Step {step:03d}: refreshed static grid bundle for {model}")
     logger.debug(f"Step {step:03d}: saved ({len(arrays)} vars, shape {arrays.get('ww', next(iter(arrays.values()))).shape})")
@@ -1702,6 +1734,9 @@ def main():
             npz = os.path.join(out_dir, f"{step:03d}.npz")
             if os.path.exists(npz):
                 os.unlink(npz)
+            zarr_dir = step_zarr_path(DATA_DIR, model, run, step)
+            if os.path.isdir(zarr_dir):
+                shutil.rmtree(zarr_dir)
 
         step_npz = os.path.join(out_dir, f"{step:03d}.npz")
         existed_before = os.path.exists(step_npz)
