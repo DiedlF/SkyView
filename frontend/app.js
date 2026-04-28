@@ -2513,7 +2513,7 @@ function renderMeteogramSvg(series) {
   const windPlotY = pWind.y + windPadTop;
   const windPlotH = Math.max(1, pWind.ph - windPadTop - windPadBottom);
 
-  let svg = `<svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="Meteogram">`;
+  let svg = `<svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="Meteogram" data-plot-left="${m.l}" data-plot-right="${W - m.r}" data-plot-top="${m.t}" data-plot-bottom="${H - m.b}">`;
   svg += `<rect x="0" y="0" width="${W}" height="${H}" fill="#151b2d" rx="8"/>`;
 
   for (const p of panels) {
@@ -2688,6 +2688,138 @@ function renderMeteogramSvg(series) {
   return svg;
 }
 
+function attachMeteogramHover(svg, series) {
+  const rows = (series || []).filter(r => r && r.validTime);
+  if (!svg || !rows.length) return;
+  const ns = 'http://www.w3.org/2000/svg';
+  const plotLeft = Number(svg.dataset.plotLeft);
+  const plotRight = Number(svg.dataset.plotRight);
+  const plotTop = Number(svg.dataset.plotTop);
+  const plotBottom = Number(svg.dataset.plotBottom);
+  if (![plotLeft, plotRight, plotTop, plotBottom].every(Number.isFinite) || plotRight <= plotLeft || plotBottom <= plotTop) return;
+
+  const make = (name, attrs = {}) => {
+    const el = document.createElementNS(ns, name);
+    for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, String(value));
+    return el;
+  };
+  const num = (value) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  };
+  const fmt = (value, decimals = 0, suffix = '') => {
+    const n = num(value);
+    return n == null ? '—' : `${n.toFixed(decimals)}${suffix}`;
+  };
+  const fmtAlt = (value) => {
+    const n = num(value);
+    if (n == null) return '—';
+    return n < 1000 ? `${Math.round(n)} m` : `${(n / 1000).toFixed(1)} km`;
+  };
+  const fmtWind = (speed, dir) => {
+    const s = num(speed), d = num(dir);
+    if (s == null && d == null) return '—';
+    if (s == null) return `${Math.round(d)}°`;
+    if (d == null) return `${Math.round(s)} kt`;
+    return `${Math.round(s)} kt / ${Math.round(d)}°`;
+  };
+  const windLevel = (row, pressureHpa) => {
+    const levels = Array.isArray(row.windLevels) ? row.windLevels : [];
+    return levels.find(w => Number(w.pressureHpa) === pressureHpa) || null;
+  };
+  const hoverTime = (validTime) => {
+    const d = new Date(validTime);
+    if (Number.isNaN(d.getTime())) return String(validTime || '—');
+    const wd = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getUTCDay()];
+    const dd = String(d.getUTCDate()).padStart(2, '0');
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const hh = String(d.getUTCHours()).padStart(2, '0');
+    return `${wd} ${dd}.${mm}. ${hh}Z`;
+  };
+  const localPoint = (event) => {
+    const pt = svg.createSVGPoint();
+    pt.x = event.clientX;
+    pt.y = event.clientY;
+    const ctm = svg.getScreenCTM();
+    return ctm ? pt.matrixTransform(ctm.inverse()) : null;
+  };
+
+  const layer = make('g', { style: 'display:none;pointer-events:none' });
+  const crosshair = make('line', {
+    y1: plotTop,
+    y2: plotBottom,
+    stroke: 'rgba(255,255,255,0.78)',
+    'stroke-width': 1,
+    'stroke-dasharray': '4 3',
+  });
+  const tooltip = make('g');
+  const tooltipBg = make('rect', {
+    width: 184,
+    height: 116,
+    rx: 6,
+    fill: 'rgba(10,14,26,0.94)',
+    stroke: 'rgba(255,255,255,0.24)',
+  });
+  tooltip.appendChild(tooltipBg);
+  const tooltipLines = Array.from({ length: 7 }, (_, i) => {
+    const text = make('text', {
+      x: 10,
+      y: 17 + i * 15,
+      fill: i === 0 ? '#ffffff' : 'rgba(255,255,255,0.84)',
+      'font-size': i === 0 ? 11 : 10,
+      'font-weight': i === 0 ? 700 : 400,
+    });
+    tooltip.appendChild(text);
+    return text;
+  });
+  layer.append(crosshair, tooltip);
+
+  const hitbox = make('rect', {
+    x: plotLeft,
+    y: plotTop,
+    width: plotRight - plotLeft,
+    height: plotBottom - plotTop,
+    fill: 'transparent',
+    style: 'cursor:crosshair;pointer-events:all',
+  });
+
+  const show = (event) => {
+    const pt = localPoint(event);
+    if (!pt) return;
+    const ratio = Math.max(0, Math.min(1, (pt.x - plotLeft) / (plotRight - plotLeft)));
+    const idx = Math.max(0, Math.min(rows.length - 1, Math.round(ratio * (rows.length - 1))));
+    const xx = rows.length <= 1 ? plotLeft : plotLeft + (idx / (rows.length - 1)) * (plotRight - plotLeft);
+    const row = rows[idx];
+    const surfaceWind = windLevel(row, 1000) || windLevel(row, 975);
+    const w850 = windLevel(row, 850);
+    const w700 = windLevel(row, 700);
+
+    tooltipLines[0].textContent = hoverTime(row.validTime);
+    tooltipLines[1].textContent = `Surface wind: ${fmtWind(row.wind10mKt ?? surfaceWind?.speedKt, row.windDir10mDeg ?? surfaceWind?.dirDeg)}`;
+    tooltipLines[2].textContent = `~1500 m wind: ${fmtWind(w850?.speedKt, w850?.dirDeg)}`;
+    tooltipLines[3].textContent = `~3000 m wind: ${fmtWind(w700?.speedKt, w700?.dirDeg)}`;
+    tooltipLines[4].textContent = `0°C level: ${fmtAlt(row.zeroDegAltM)}`;
+    tooltipLines[5].textContent = `Precip: ${fmt(row.precipRateTotal, 1, ' mm/h')}`;
+    tooltipLines[6].textContent = `Temp / dew: ${fmt(row.t2mC, 1, '°C')} / ${fmt(row.dewpoint2mC, 1, '°C')}`;
+
+    const tipW = 184, tipH = 116;
+    const tipX = (xx + 12 + tipW <= plotRight) ? xx + 12 : xx - tipW - 12;
+    const tipY = Math.max(plotTop + 8, Math.min(plotBottom - tipH - 8, pt.y - tipH / 2));
+    crosshair.setAttribute('x1', xx.toFixed(1));
+    crosshair.setAttribute('x2', xx.toFixed(1));
+    tooltip.setAttribute('transform', `translate(${tipX.toFixed(1)},${tipY.toFixed(1)})`);
+    layer.style.display = '';
+  };
+  const hide = () => {
+    layer.style.display = 'none';
+  };
+
+  svg.append(layer, hitbox);
+  hitbox.addEventListener('pointermove', show);
+  hitbox.addEventListener('pointerdown', show);
+  hitbox.addEventListener('pointerleave', hide);
+}
+
 function chartSeriesValues(series, key) {
   return series.map((r) => {
     const v = r[key];
@@ -2834,6 +2966,7 @@ async function openMeteogramAt(lat, lon, model = 'icon_d2') {
     const glon = (p.gridLon ?? lon);
     if (meteogramTitle) meteogramTitle.textContent = `Meteogram · ${glat}, ${glon} · ${String(modelUsed).toUpperCase().replace('_','-')} · Run ${runUsed}`;
     meteogramBody.innerHTML = renderMeteogramSvg(data.series || []);
+    attachMeteogramHover(meteogramBody.querySelector('svg'), data.series || []);
   } catch (e) {
     if (e && (e.name === 'AbortError' || String(e.message || '').toLowerCase().includes('aborted'))) {
       return;
