@@ -1,6 +1,6 @@
 # Skyview TODO
 
-**Last updated:** 2026-04-26
+**Last updated:** 2026-04-28
 **State:** ✅ Core stable. P1 (arch/cache) complete. P2 (cache correctness) complete. P3 (quality gates) in progress. Admin auth shipped (HTTP Basic). Meteogram shipped. Several new overlays shipped (geopotential, wave, hourly-max cloud base, Gold climb-rate, 600 hPa wind, mh-in-MSL). ICON-D2 substep ingest extended through 48h. Next planned feature: 15-minute symbols (plan in `docs/SYMBOLS_15MIN_IMPLEMENTATION_PLAN_2026-04-13.md`).
 
 ---
@@ -59,6 +59,9 @@
 ### D) UX / Frontend
 
 - [x] **Meteogram** — backend `/api/meteogram_point` (streaming with heartbeats, UTC times, grid-index reuse) + frontend overlay with temp/precip/wind charts and per-point cache. (commits `fe10e93`, `4e09c00`, `56b3fe5`, `22d3d13`, `0a660b6`)
+- [ ] **Meteogram hsurf info** — show surface elevation / model terrain height context in the meteogram.
+- [ ] **Meteogram 2m wind** — add near-surface 2m wind values to the meteogram display/tooltips if available from ingest.
+- [ ] **Meteogram cloud cover by altitude** — add cloud-cover information across available altitude/pressure levels to the meteogram.
 - [ ] **Hover tooltip** — change point tooltip to hover-based overlay value display
 - [ ] **Desktop/mobile verify** — test interaction model and fallback behavior across device types
 - [ ] **Precipitation layer split** — expose precipitation as three distinct layers in the UI: convective only, grid-scale only, and total/cumulative (current behavior). Requires backend overlay handlers and computed-field paths to surface the component fields separately, plus frontend toggles, legend, and point-popup attribution. Supersedes the earlier "Precipitation toggle" item.
