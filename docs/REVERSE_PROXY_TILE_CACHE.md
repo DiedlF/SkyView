@@ -3,11 +3,13 @@
 ## Goal
 Reduce repeated overlay tile load on backend by caching `/api/overlay_tile/*` at proxy layer.
 
+This is the preferred first implementation step for the tile-delivery recommendations in `PERFORMANCE_RECOMMENDATIONS_2026-04-26.md`: a proxy hit avoids FastAPI, Python cache lookups, data loading, colorization, and PNG encoding entirely.
+
 ## Recommended cache key inputs
 - path includes `z/x/y`
-- query includes `layer`, `time`, optional `model`, optional rendering params
+- query includes `layer`, `time`, optional `model`, `clientClass`, optional `substep`, and any future rendering params
 
-Because `time`/`model` are part of query, cache entries naturally separate by timestep/run context.
+Because the full request URI includes `time`, `model`, `clientClass`, and `substep`, cache entries naturally separate by timestep/run context and mobile/desktop tile variants.
 
 ---
 
@@ -64,5 +66,7 @@ skyview.local {
 ## Validation checklist
 1. Request same tile twice and verify second is proxy HIT (`X-Proxy-Cache` or plugin equivalent).
 2. Switch timestep and ensure different query string produces distinct cache entry.
-3. Confirm backend `/api/status` tile misses decrease under repeat pan/zoom.
-4. Ensure cache max size and inactive TTL are bounded for your disk budget.
+3. Switch `clientClass` or `substep` and ensure the cache key separates those variants.
+4. Confirm backend tile misses decrease under repeat pan/zoom via `/api/perf_stats` or admin perf telemetry.
+5. Confirm visual output is unchanged for desktop, mobile, and substep-capable overlays.
+6. Ensure cache max size and inactive TTL are bounded for your disk budget.

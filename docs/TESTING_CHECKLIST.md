@@ -1,4 +1,6 @@
-# Overlay Positioning Fix - Testing Checklist
+# Overlay Positioning Regression Checklist
+
+Status note (2026-04-26): retained as a focused manual checklist for overlay alignment regressions. Broader smoke, regression, contract, and performance checks live in `scripts/qa_*.py` and the pytest wrappers in `tests/`.
 
 ## Quick Test (5 minutes)
 

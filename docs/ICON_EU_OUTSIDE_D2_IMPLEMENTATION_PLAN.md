@@ -101,4 +101,4 @@ This increases EU per-run volume by +48 steps (~+109% vs previous EU step count)
   - `scripts/qa_regression.py`
   - `scripts/qa_contract.py`
 - Boundary evidence and request examples are tracked in:
-  - `docs/QA_BASELINE_2026-02-15.md`
+  - `archive/QA_BASELINE_2026-02-15.md`

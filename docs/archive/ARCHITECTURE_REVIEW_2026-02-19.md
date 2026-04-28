@@ -1,7 +1,7 @@
 # Skyview Architecture Review — 2026-02-19
 
 **Scope:** Architecture, performance, and maintainability findings from code review.  
-**Status:** Findings documented; quick wins partially applied (see bug fixes below).
+**Status note (2026-04-26):** Historical review. Many findings below have since been implemented or partially superseded: routers/services exist, `AppState` exists, data-cache sizing and singleflight were added, point selective-key loading was implemented, marker auth moved to `backend/marker_auth.py`, and blocking calls were wrapped. Treat this document as background context, not the current backlog. Current work is tracked in `../../TODO.md`, `../README.md`, and `../PERFORMANCE_RECOMMENDATIONS_2026-04-26.md`.
 
 ---
 

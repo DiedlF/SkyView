@@ -2,6 +2,7 @@
 
 **Datum:** 2026-02-17
 **Scope:** Backend (Python/FastAPI) + Frontend (Vanilla JS/HTML/CSS)
+**Status note (2026-04-26):** Historical review snapshot. Several high-priority findings have since been addressed, including default CORS hardening, marker auth extraction/startup policy, data-cache LRU/singleflight, symbol/ww alignment, ingest cleanup hardening, Leaflet SRI, and global frontend error banners. Use this file for context only; current open work is tracked in `../../TODO.md` and `../README.md`.
 
 ---
 

@@ -3,7 +3,7 @@
 **Date:** 2026-02-15  
 **Goal:** Consolidate architecture, improve reliability/performance, and unlock faster feature delivery.
 
-> Consolidated master version: `docs/IMPROVEMENT_IDEAS_SUMMARY.md`
+> Superseded by `IMPROVEMENT_IDEAS_SUMMARY.md`, which is now also archived.
 > This file is kept as the execution-detail companion.
 
 ---

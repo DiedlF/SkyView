@@ -46,7 +46,7 @@
 - [ ] **CORS production** — doc that `SKYVIEW_CORS_ORIGINS` must be set to real hostname before public deploy; default already safe (localhost allowlist). (PR11)
 - [ ] **CI integration coverage can silently skip** — add synthetic `.npz` fixtures + `TestClient` API tests so core endpoints are exercised without live DWD/Explorer. (docs/README backlog #3)
 - [ ] **Local developer setup docs** — document `python3`, Ruff installation, test/lint/run commands, expected env vars. (docs/README backlog #8)
-- [ ] **Root onboarding README** — short root `README.md` pointing to `SPEC.md`, `TODO.md`, `docs/README.md`. (docs/README backlog #9)
+- [x] **Root onboarding README** — short root `README.md` pointing to `SPEC.md`, `TODO.md`, `docs/README.md`. (docs cleanup 2026-04-26)
 
 ### C) Data / Model Harmonization (ICON-EU ↔ D2)
 
@@ -78,6 +78,7 @@
 
 ### G) Overlay Perf — HTTP/Cache Delivery (Phase 5)
 
+- [ ] **Performance recommendations follow-up** — use `docs/PERFORMANCE_RECOMMENDATIONS_2026-04-26.md` as the current execution note: expand perf probes for `/api/overlay_tile` and `/api/symbols`, validate reverse-proxy tile caching, benchmark PNG encoding options, tune overlay prewarm, reduce frontend marker churn, and consider wind/static-grid caches only with before/after evidence.
 - [ ] Revisit `Cache-Control`/ETag policy for tile responses (PR7)
 - [ ] Verify browser/CDN reuse for identical tile URLs
 - [ ] Add hit telemetry split by client class
@@ -182,5 +183,5 @@
 - Multi-worker deployment unsafe (process-local state) — document, defer Redis until needed.
 - `_eu_strict_cache` resets on restart — expected, not a bug.
 - OpenAir: resume as separate mini-project with own QA checklist.
-- The `docs/README.md` "Remaining Findings / Improvement Backlog" section (2026-04 review) is the source of items A/B/D/I/J above marked "(docs/README backlog #N)".
+- Items still marked "(docs/README backlog #N)" were imported from the 2026-04 documentation cleanup; `TODO.md` is now the source of truth for those backlog entries.
 - `docs/SYMBOLS_15MIN_IMPLEMENTATION_PLAN_2026-04-13.md` is the design doc for the next D-section feature.

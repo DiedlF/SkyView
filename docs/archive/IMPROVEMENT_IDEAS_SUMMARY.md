@@ -2,6 +2,7 @@
 
 **Date:** 2026-02-15  
 **Purpose:** Single consolidated document combining improvement ideas + implementation plan.
+**Status note (2026-04-26):** Historical roadmap. Many P0/P1 items have shipped or moved into more specific plans. Use `../../TODO.md` for current priorities, `../PERFORMANCE_RECOMMENDATIONS_2026-04-26.md` for the active performance follow-up, and `../SYMBOLS_15MIN_IMPLEMENTATION_PLAN_2026-04-13.md` for the next symbol-timing feature.
 
 ---
 
