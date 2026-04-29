@@ -50,6 +50,14 @@ def _write_step_zarr(tmp_path):
             "lon": np.array([11.0, 12.0], dtype=np.float32),
             "ww": np.array([[10.0, 20.0], [30.0, 40.0]], dtype=np.float32),
             "cape_ml": np.array([[1000.0, 2000.0], [3000.0, 4000.0]], dtype=np.float32),
+            "cape_ml_substeps": np.array(
+                [
+                    [[11.0, 12.0], [13.0, 14.0]],
+                    [[21.0, 22.0], [23.0, 24.0]],
+                ],
+                dtype=np.float32,
+            ),
+            "cape_ml_substep_minutes": np.array([15, 30], dtype=np.int16),
         },
     )
 
@@ -144,3 +152,25 @@ def test_zarr_point_reader_returns_compact_arrays(tmp_path, monkeypatch):
     assert float(data["ww"][0, 0]) == 40.0
     assert float(data["cape_ml"][0, 0]) == 4000.0
     assert data["validTime"] == "2026-04-26T01:00:00Z"
+
+
+def test_zarr_point_reader_keeps_substep_series_compact(tmp_path, monkeypatch):
+    if not storage_io.zarr_available():
+        return
+    _write_step_zarr(tmp_path)
+    monkeypatch.setenv("SKYVIEW_DATA_LAYOUT", "auto")
+
+    data = storage_io.read_step_point_arrays(
+        data_dir=str(tmp_path),
+        model="icon_d2",
+        run="2026042600",
+        step=1,
+        keys=["cape_ml_substeps", "cape_ml_substep_minutes"],
+        lat=47.8,
+        lon=11.8,
+    )
+
+    assert data is not None
+    assert data["cape_ml_substeps"].shape == (2, 1, 1)
+    assert data["cape_ml_substep_minutes"].tolist() == [15, 30]
+    assert data["cape_ml_substeps"][:, 0, 0].tolist() == [14.0, 24.0]

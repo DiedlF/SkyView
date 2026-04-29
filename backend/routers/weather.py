@@ -52,6 +52,12 @@ from services.symbol_compute import compute_symbols_payload, load_coverage_dampi
 from services.storage_io import read_step_point_arrays
 
 
+STREAMING_NDJSON_HEADERS = {
+    "Cache-Control": "no-cache, no-transform",
+    "X-Accel-Buffering": "no",
+}
+
+
 def _native_zoom_threshold_for_model(model_name: Optional[str]) -> int:
     normalized = str(model_name or "icon_d2").replace("-", "_")
     return SYMBOL_MODE_NATIVE_ZOOM_EU if normalized == "icon_eu" else SYMBOL_MODE_NATIVE_ZOOM_D2
@@ -81,10 +87,15 @@ def build_weather_router(
     )
     METEOGRAM_POINT_CACHE_VERSION = 1
     EMAGRAM_POINT_CACHE_VERSION = 1
+    NOWCAST_POINT_CACHE_VERSION = 1
     emagram_cache: OrderedDict[str, dict] = OrderedDict()
     emagram_inflight: dict[str, threading.Event] = {}
     emagram_inflight_lock = threading.Lock()
     EMAGRAM_CACHE_MAX_ITEMS = int(os.environ.get("SKYVIEW_EMAGRAM_CACHE_MAX_ITEMS", "128"))
+    nowcast_cache: OrderedDict[str, dict] = OrderedDict()
+    nowcast_inflight: dict[str, threading.Event] = {}
+    nowcast_inflight_lock = threading.Lock()
+    NOWCAST_CACHE_MAX_ITEMS = int(os.environ.get("SKYVIEW_NOWCAST_CACHE_MAX_ITEMS", "128"))
 
     def _meteogram_cache_set(cache_key: str, payload: dict) -> None:
         meteogram_cache[cache_key] = payload
@@ -859,6 +870,14 @@ def build_weather_router(
         out["point"] = point
         return out
 
+    def _nowcast_with_requested_point(payload: dict, lat: float, lon: float) -> dict:
+        out = dict(payload)
+        point = dict(out.get("point") or {})
+        point["requestedLat"] = round(float(lat), 5)
+        point["requestedLon"] = round(float(lon), 5)
+        out["point"] = point
+        return out
+
     def _build_emagram_payload(*, lat: float, lon: float, time: str, model: Optional[str]) -> dict:
         requested_model = model or "icon_d2"
         if requested_model not in ("icon_d2", "icon-d2"):
@@ -1019,7 +1038,11 @@ def build_weather_router(
                     if cancel_event.is_set():
                         return
                     yield json.dumps({"type": "error", "detail": str(exc)}) + "\n"
-            return StreamingResponse(_gen(), media_type="application/x-ndjson")
+            return StreamingResponse(
+                _gen(),
+                media_type="application/x-ndjson",
+                headers=STREAMING_NDJSON_HEADERS,
+            )
 
         return await run_in_threadpool(lambda: _build_emagram_payload(lat=lat, lon=lon, time=time, model=model))
 
@@ -1057,49 +1080,17 @@ def build_weather_router(
                     if cancel_event.is_set():
                         return
                     yield json.dumps({"type": "error", "detail": str(exc)}) + "\n"
-            return StreamingResponse(_gen(), media_type="application/x-ndjson")
+            return StreamingResponse(
+                _gen(),
+                media_type="application/x-ndjson",
+                headers=STREAMING_NDJSON_HEADERS,
+            )
 
         return await run_in_threadpool(lambda: _get_or_build_meteogram_payload(
             lat=lat, lon=lon, model=model
         ))
 
-    @router.get("/api/nowcast_point")
-    async def api_nowcast_point(
-        request: Request,
-        lat: float = Query(..., ge=-90, le=90),
-        lon: float = Query(..., ge=-180, le=180),
-        model: Optional[str] = Query("icon_d2"),
-        hours: int = Query(24, ge=1, le=24),
-        stream: bool = Query(False),
-        _internal: bool = False,
-    ):
-        if stream and not _internal:
-            async def _gen():
-                cancel_event = threading.Event()
-                yield json.dumps({"type": "progress", "message": "starting nowcast"}) + "\n"
-                task = asyncio.create_task(
-                    run_in_threadpool(lambda: asyncio.run(
-                        api_nowcast_point(request=request, lat=lat, lon=lon,
-                                          model=model, hours=hours,
-                                          stream=False, _internal=True)
-                    ))
-                )
-                while not task.done():
-                    if await request.is_disconnected():
-                        cancel_event.set()
-                        task.cancel()
-                        return
-                    yield json.dumps({"type": "heartbeat", "message": "working"}) + "\n"
-                    await asyncio.sleep(1.0)
-                try:
-                    payload = await task
-                    yield json.dumps({"type": "done", "data": payload}) + "\n"
-                except Exception as exc:
-                    if cancel_event.is_set():
-                        return
-                    yield json.dumps({"type": "error", "detail": str(exc)}) + "\n"
-            return StreamingResponse(_gen(), media_type="application/x-ndjson")
-
+    def _build_nowcast_payload(*, lat: float, lon: float, model: Optional[str], hours: int) -> dict:
         m = (model or "icon_d2").replace("-", "_")
         if m != "icon_d2":
             raise HTTPException(400, "api_nowcast_point currently supports model=icon_d2 only")
@@ -1132,11 +1123,38 @@ def build_weather_router(
                 raise HTTPException(404, "No nowcast data available")
 
         run_key = str(steps[0].get("run") or "")
-        cache_key = f"{m}|{run_key}|{round(float(lat), 4)}|{round(float(lon), 4)}|h{int(hours)}"
-        cached = meteogram_cache.get(cache_key)
+        ii, jj, grid_point = _meteogram_grid_point(steps, lat, lon)
+        cache_key = f"{m}|{run_key}|{ii}|{jj}|h{int(hours)}"
+        disk_path = _versioned_disk_path("nowcast-point", m, run_key, f"h{int(hours)}_{ii}_{jj}.json")
+
+        cached = nowcast_cache.get(cache_key)
         if cached is not None:
-            meteogram_cache.move_to_end(cache_key)
-            return cached
+            nowcast_cache.move_to_end(cache_key)
+            return _nowcast_with_requested_point(cached, lat, lon)
+        disk_payload = _read_versioned_disk_cache(disk_path, NOWCAST_POINT_CACHE_VERSION)
+        if disk_payload is not None:
+            _cache_set(nowcast_cache, cache_key, disk_payload, NOWCAST_CACHE_MAX_ITEMS)
+            return _nowcast_with_requested_point(disk_payload, lat, lon)
+
+        while True:
+            with nowcast_inflight_lock:
+                evt = nowcast_inflight.get(cache_key)
+                if evt is None:
+                    evt = threading.Event()
+                    nowcast_inflight[cache_key] = evt
+                    owner = True
+                    break
+                owner = False
+            if not owner:
+                evt.wait(timeout=30.0)
+                cached = nowcast_cache.get(cache_key)
+                if cached is not None:
+                    nowcast_cache.move_to_end(cache_key)
+                    return _nowcast_with_requested_point(cached, lat, lon)
+                disk_payload = _read_versioned_disk_cache(disk_path, NOWCAST_POINT_CACHE_VERSION)
+                if disk_payload is not None:
+                    _cache_set(nowcast_cache, cache_key, disk_payload, NOWCAST_CACHE_MAX_ITEMS)
+                    return _nowcast_with_requested_point(disk_payload, lat, lon)
 
         wanted_keys = [
             "lat", "lon", "cape_ml", "cin_ml", "hbas_sc", "htop_sc", "lpi",
@@ -1147,101 +1165,130 @@ def build_weather_router(
             "lpi_substeps", "lpi_substep_minutes",
         ]
 
-        out = []
-        grid_point = None
-        ii = jj = None
-
-        for s in steps:
-            run_i, step_i, model_i = s.get("run"), int(s.get("step")), s.get("model")
-            try:
-                d = load_data(run_i, step_i, model_i, keys=wanted_keys)
-            except Exception:
-                continue
-
-            lat_arr = d.get("lat")
-            lon_arr = d.get("lon")
-            if lat_arr is None or lon_arr is None or len(lat_arr) == 0 or len(lon_arr) == 0:
-                continue
-
-            if ii is None or jj is None:
-                ii = int(np.argmin(np.abs(lat_arr - lat)))
-                jj = int(np.argmin(np.abs(lon_arr - lon)))
-                grid_point = {
-                    "requestedLat": round(float(lat), 5), "requestedLon": round(float(lon), 5),
-                    "gridLat": round(float(lat_arr[ii]), 5), "gridLon": round(float(lon_arr[jj]), 5),
-                    "i": ii, "j": jj,
-                }
-
-            base_vt = d.get("validTime") or s.get("validTime")
-            try:
-                base_dt = datetime.fromisoformat(str(base_vt).replace("Z", "+00:00"))
-            except Exception:
-                continue
-            if horizon_limit is not None and base_dt > horizon_limit:
-                break
-
-            def _scalar(key: str):
-                arr = d.get(key)
-                if arr is None:
-                    return None
+        try:
+            out = []
+            for s in steps:
+                run_i, step_i, model_i = s.get("run"), int(s.get("step")), s.get("model")
                 try:
-                    val = float(arr[ii, jj])
-                    return val if np.isfinite(val) else None
+                    d = _load_point_arrays(run=run_i, step=step_i, model=model_i, keys=wanted_keys, i=ii, j=jj)
+                    local_i = local_j = 0
+                    if d is None:
+                        d = load_data(run_i, step_i, model_i, keys=wanted_keys)
+                        local_i, local_j = ii, jj
                 except Exception:
-                    return None
-
-            def _collect_series(key: str):
-                arr = d.get(f"{key}_substeps")
-                mins = d.get(f"{key}_substep_minutes")
-                if arr is None or mins is None:
-                    return {0: _scalar(key)}
-                minute_list = [int(x) for x in np.asarray(mins).tolist()]
-                out_map = {}
-                for idx, minute in enumerate(minute_list):
-                    try:
-                        val = float(arr[idx, ii, jj])
-                        out_map[minute] = val if np.isfinite(val) else None
-                    except Exception:
-                        out_map[minute] = None
-                return out_map
-
-            cape_map = _collect_series("cape_ml")
-            cin_map = _collect_series("cin_ml")
-            hbas_map = _collect_series("hbas_sc")
-            htop_map = _collect_series("htop_sc")
-            lpi_map = _collect_series("lpi")
-            all_minutes = sorted(set(cape_map) | set(cin_map) | set(hbas_map) | set(htop_map) | set(lpi_map) | {0})
-
-            for minute in all_minutes:
-                vt = base_dt + timedelta(minutes=int(minute))
-                if horizon_limit is not None and vt > horizon_limit:
                     continue
-                hbas_raw = hbas_map.get(minute)
-                htop_raw = htop_map.get(minute)
-                hbas_v = 0.0 if hbas_raw is None else float(hbas_raw)
-                htop_v = 0.0 if htop_raw is None else float(htop_raw)
-                conv_thickness = max(0.0, htop_v - hbas_v)
-                out.append({
-                    "validTime": vt.isoformat().replace("+00:00", "Z"),
-                    "run": run_i,
-                    "step": step_i,
-                    "substepMinutes": int(minute),
-                    "capeMl": cape_map.get(minute),
-                    "cinMl": cin_map.get(minute),
-                    "hbasSc": hbas_v,
-                    "htopSc": htop_v,
-                    "cloudThickness": conv_thickness,
-                    "lpi": lpi_map.get(minute),
-                })
 
-        if not out:
-            raise HTTPException(404, "No nowcast data available")
-        out.sort(key=lambda r: r.get("validTime") or "")
-        payload = {"point": grid_point, "count": len(out), "hours": int(hours), "series": out}
-        meteogram_cache[cache_key] = payload
-        meteogram_cache.move_to_end(cache_key)
-        while len(meteogram_cache) > METEOGRAM_CACHE_MAX_ITEMS:
-            meteogram_cache.popitem(last=False)
-        return payload
+                base_vt = d.get("validTime") or s.get("validTime")
+                try:
+                    base_dt = datetime.fromisoformat(str(base_vt).replace("Z", "+00:00"))
+                except Exception:
+                    continue
+                if horizon_limit is not None and base_dt > horizon_limit:
+                    break
+
+                def _scalar(key: str):
+                    arr = d.get(key)
+                    if arr is None:
+                        return None
+                    try:
+                        val = float(arr[local_i, local_j])
+                        return val if np.isfinite(val) else None
+                    except Exception:
+                        return None
+
+                def _collect_series(key: str):
+                    arr = d.get(f"{key}_substeps")
+                    mins = d.get(f"{key}_substep_minutes")
+                    if arr is None or mins is None:
+                        return {0: _scalar(key)}
+                    minute_list = [int(x) for x in np.asarray(mins).tolist()]
+                    out_map = {}
+                    for idx, minute in enumerate(minute_list):
+                        try:
+                            val = float(arr[idx, local_i, local_j])
+                            out_map[minute] = val if np.isfinite(val) else None
+                        except Exception:
+                            out_map[minute] = None
+                    return out_map
+
+                cape_map = _collect_series("cape_ml")
+                cin_map = _collect_series("cin_ml")
+                hbas_map = _collect_series("hbas_sc")
+                htop_map = _collect_series("htop_sc")
+                lpi_map = _collect_series("lpi")
+                all_minutes = sorted(set(cape_map) | set(cin_map) | set(hbas_map) | set(htop_map) | set(lpi_map) | {0})
+
+                for minute in all_minutes:
+                    vt = base_dt + timedelta(minutes=int(minute))
+                    if horizon_limit is not None and vt > horizon_limit:
+                        continue
+                    hbas_raw = hbas_map.get(minute)
+                    htop_raw = htop_map.get(minute)
+                    hbas_v = 0.0 if hbas_raw is None else float(hbas_raw)
+                    htop_v = 0.0 if htop_raw is None else float(htop_raw)
+                    conv_thickness = max(0.0, htop_v - hbas_v)
+                    out.append({
+                        "validTime": vt.isoformat().replace("+00:00", "Z"),
+                        "run": run_i,
+                        "step": step_i,
+                        "substepMinutes": int(minute),
+                        "capeMl": cape_map.get(minute),
+                        "cinMl": cin_map.get(minute),
+                        "hbasSc": hbas_v,
+                        "htopSc": htop_v,
+                        "cloudThickness": conv_thickness,
+                        "lpi": lpi_map.get(minute),
+                    })
+
+            if not out:
+                raise HTTPException(404, "No nowcast data available")
+            out.sort(key=lambda r: r.get("validTime") or "")
+            payload = {"point": grid_point, "count": len(out), "hours": int(hours), "series": out}
+            _cache_set(nowcast_cache, cache_key, payload, NOWCAST_CACHE_MAX_ITEMS)
+            _write_versioned_disk_cache(disk_path, NOWCAST_POINT_CACHE_VERSION, payload)
+            return _nowcast_with_requested_point(payload, lat, lon)
+        finally:
+            with nowcast_inflight_lock:
+                nowcast_inflight.pop(cache_key, None)
+                evt.set()
+
+    @router.get("/api/nowcast_point")
+    async def api_nowcast_point(
+        request: Request,
+        lat: float = Query(..., ge=-90, le=90),
+        lon: float = Query(..., ge=-180, le=180),
+        model: Optional[str] = Query("icon_d2"),
+        hours: int = Query(24, ge=1, le=24),
+        stream: bool = Query(False),
+        _internal: bool = False,
+    ):
+        if stream and not _internal:
+            async def _gen():
+                cancel_event = threading.Event()
+                yield json.dumps({"type": "progress", "message": "starting nowcast"}) + "\n"
+                task = asyncio.create_task(
+                    run_in_threadpool(lambda: _build_nowcast_payload(lat=lat, lon=lon, model=model, hours=hours))
+                )
+                while not task.done():
+                    if await request.is_disconnected():
+                        cancel_event.set()
+                        task.cancel()
+                        return
+                    yield json.dumps({"type": "heartbeat", "message": "working"}) + "\n"
+                    await asyncio.sleep(1.0)
+                try:
+                    payload = await task
+                    yield json.dumps({"type": "done", "data": payload}) + "\n"
+                except Exception as exc:
+                    if cancel_event.is_set():
+                        return
+                    yield json.dumps({"type": "error", "detail": str(exc)}) + "\n"
+            return StreamingResponse(
+                _gen(),
+                media_type="application/x-ndjson",
+                headers=STREAMING_NDJSON_HEADERS,
+            )
+
+        return await run_in_threadpool(lambda: _build_nowcast_payload(lat=lat, lon=lon, model=model, hours=hours))
 
     return router

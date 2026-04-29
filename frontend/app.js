@@ -2203,7 +2203,7 @@ const nowcastOverlay = document.getElementById('nowcast-overlay');
 const nowcastClose = document.getElementById('nowcast-close');
 const nowcastTitle = document.getElementById('nowcast-title');
 const nowcastBody = document.getElementById('nowcast-body');
-let emagramState = { open: false, lat: null, lon: null, model: '', zoom: null, loading: false, reqId: 0, allowedIndices: [] };
+let emagramState = { open: false, lat: null, lon: null, model: '', zoom: null, loading: false, reqId: 0, allowedIndices: [], abortCtrl: null };
 let meteogramState = { open: false, lat: null, lon: null, model: '', abortCtrl: null, chartTemp: null, chartPrecip: null, chartWind: null };
 let nowcastState = { open: false, lat: null, lon: null, model: '', abortCtrl: null, chartA: null, chartB: null };
 const emagramCache = new Map();
@@ -2245,6 +2245,11 @@ function closeHelp() {
 
 function closeEmagram() {
   emagramState.open = false;
+  emagramState.loading = false;
+  if (emagramState.abortCtrl) {
+    try { emagramState.abortCtrl.abort(); } catch {}
+    emagramState.abortCtrl = null;
+  }
   if (emagramOverlay) emagramOverlay.style.display = 'none';
 }
 
@@ -3064,6 +3069,10 @@ function emagramNav(delta) {
 
 async function openEmagramAt(lat, lon, time = 'latest', model = '') {
   if (!emagramOverlay || !emagramBody) return;
+  if (emagramState.abortCtrl) {
+    try { emagramState.abortCtrl.abort(); } catch {}
+  }
+  const abortCtrl = new AbortController();
   const fixedModel = 'icon_d2';
   const fixedZoom = (emagramState.zoom != null) ? emagramState.zoom : map.getZoom();
   const allowedIndices = emagramAllowedIndices();
@@ -3072,7 +3081,7 @@ async function openEmagramAt(lat, lon, time = 'latest', model = '') {
   }
   const hadContent = emagramState.open && emagramBody.innerHTML.trim().length > 0;
   const reqId = (emagramState.reqId || 0) + 1;
-  emagramState = { open: true, lat: Number(lat), lon: Number(lon), model: fixedModel, zoom: fixedZoom, loading: true, reqId, allowedIndices };
+  emagramState = { open: true, lat: Number(lat), lon: Number(lon), model: fixedModel, zoom: fixedZoom, loading: true, reqId, allowedIndices, abortCtrl };
   emagramOverlay.style.display = 'flex';
   if (!hadContent) emagramBody.innerHTML = '<div style="opacity:.8">Loading profile…</div>';
   else emagramSetLoadingUI(true);
@@ -3087,7 +3096,7 @@ async function openEmagramAt(lat, lon, time = 'latest', model = '') {
         if (!st) return;
         if (evt?.type === 'progress') st.textContent = evt.message || 'loading…';
         if (evt?.type === 'heartbeat') st.textContent = 'loading…';
-      });
+      }, { signal: abortCtrl.signal });
       emagramCacheSet(cacheKey, d);
     }
     if (reqId !== emagramState.reqId) return;
@@ -3108,6 +3117,10 @@ async function openEmagramAt(lat, lon, time = 'latest', model = '') {
     emagramState.loading = false;
     emagramSetLoadingUI(false);
   } catch (e) {
+    if (e && (e.name === 'AbortError' || String(e.message || '').toLowerCase().includes('aborted'))) {
+      return;
+    }
+    if (reqId !== emagramState.reqId) return;
     if (!hadContent) emagramBody.innerHTML = `<div style="color:#ff9f9f">Failed to load emagram: ${String(e.message || e)}</div>`;
     else {
       const st = document.getElementById('emNavStatus');
@@ -3115,6 +3128,8 @@ async function openEmagramAt(lat, lon, time = 'latest', model = '') {
     }
     emagramState.loading = false;
     emagramSetLoadingUI(false);
+  } finally {
+    if (emagramState.abortCtrl === abortCtrl) emagramState.abortCtrl = null;
   }
 }
 

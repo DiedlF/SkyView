@@ -230,14 +230,23 @@ def read_step_point_arrays(
             arr = group[key]
             if arr.ndim == 0:
                 value = arr[()]
+            elif arr.ndim == 1:
+                value = arr[...]
             elif arr.ndim == 2:
-                value = arr[i, j]
+                if key.endswith("_substep_minutes"):
+                    value = arr[...]
+                else:
+                    value = arr[i, j]
             elif arr.ndim == 3:
-                value = arr[0, i, j]
+                if key.endswith("_substeps"):
+                    value = arr[:, i:i + 1, j:j + 1]
+                else:
+                    value = arr[0, i, j]
         if value is None:
             value = _read_static_point_value(data_dir=data_dir, model=model, key=key, i=i, j=j, logger=logger)
         if value is not None:
-            out[key] = _as_scalar_array(value)
+            value_arr = np.asarray(value)
+            out[key] = value_arr if value_arr.ndim > 0 else _as_scalar_array(value)
 
     return out
 
