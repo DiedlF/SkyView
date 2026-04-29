@@ -14,7 +14,7 @@ from services.symbol_compute import compute_symbols_payload  # noqa: E402
 from symbol_logic import aggregate_symbol_cell  # noqa: E402
 
 
-def _symbol_arrays(*, substep_minutes: int, include_precomputed: bool) -> dict:
+def _symbol_arrays(*, substep_minutes: int, include_precomputed: bool, live_fields: bool = False) -> dict:
     lat = np.array([47.8, 48.0, 48.2], dtype=np.float32)
     lon = np.array([10.8, 11.0, 11.2], dtype=np.float32)
     shape = (3, 3)
@@ -22,7 +22,7 @@ def _symbol_arrays(*, substep_minutes: int, include_precomputed: bool) -> dict:
     if substep_minutes:
         valid += timedelta(minutes=substep_minutes)
 
-    cape = 20.0 if substep_minutes else 0.0
+    cape = 20.0 if live_fields else 0.0
     out = {
         "lat": lat,
         "lon": lon,
@@ -51,7 +51,7 @@ def _symbol_arrays(*, substep_minutes: int, include_precomputed: bool) -> dict:
     return out
 
 
-def _compute(*, substep_minutes: int):
+def _compute(*, substep_minutes: int, substep_mode: bool = False):
     calls = []
 
     def resolve_time(time, model):
@@ -62,6 +62,7 @@ def _compute(*, substep_minutes: int):
         return _symbol_arrays(
             substep_minutes=substep_minutes,
             include_precomputed=("sym_code" in set(keys or [])),
+            live_fields=substep_mode,
         )
 
     payload = compute_symbols_payload(
@@ -77,6 +78,7 @@ def _compute(*, substep_minutes: int):
         strict_window_hours=0.5,
         load_coverage_damping_cfg=lambda: {"enabled": False},
         substep_minutes=substep_minutes,
+        substep_mode=substep_mode,
     )
     return payload, calls
 
@@ -87,17 +89,31 @@ def test_hourly_symbols_keep_precomputed_path():
     assert calls[0]["substep"] == 0
     assert "sym_code" in calls[0]["keys"]
     assert payload["diagnostics"]["substepMinutes"] == 0
+    assert payload["diagnostics"]["substepMode"] is False
     assert {s["type"] for s in payload["symbols"]} == {"clear"}
 
 
 def test_substep_symbols_use_live_substep_fields():
-    payload, calls = _compute(substep_minutes=15)
+    payload, calls = _compute(substep_minutes=15, substep_mode=True)
 
     assert calls[0]["substep"] == 15
     assert "sym_code" not in calls[0]["keys"]
     assert "lpi" in calls[0]["keys"]
     assert payload["validTime"] == "2026-04-29T12:15:00Z"
     assert payload["diagnostics"]["substepMinutes"] == 15
+    assert payload["diagnostics"]["substepMode"] is True
+    assert {s["type"] for s in payload["symbols"]} == {"cu_hum"}
+
+
+def test_substep_mode_minute_zero_uses_live_symbol_fields():
+    payload, calls = _compute(substep_minutes=0, substep_mode=True)
+
+    assert calls[0]["substep"] == 0
+    assert "sym_code" not in calls[0]["keys"]
+    assert "lpi" in calls[0]["keys"]
+    assert payload["validTime"] == "2026-04-29T12:00:00Z"
+    assert payload["diagnostics"]["substepMinutes"] == 0
+    assert payload["diagnostics"]["substepMode"] is True
     assert {s["type"] for s in payload["symbols"]} == {"cu_hum"}
 
 

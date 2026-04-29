@@ -702,10 +702,13 @@ function currentStepSupportsSubsteps() {
   return normalizeModelName(currentBaseStep()?.model) === 'icon_d2';
 }
 
+function currentSubstepModeActive() {
+  return currentStepMinutes === 15 && currentStepSupportsSubsteps();
+}
+
 function currentRequestSubstepMinutes() {
-  if (currentStepMinutes !== 15) return 0;
-  if (!currentStepSupportsSubsteps()) return 0;
-  return [15, 30, 45].includes(currentSubstepMinutes) ? currentSubstepMinutes : 0;
+  if (!currentSubstepModeActive()) return 0;
+  return [0, 15, 30, 45].includes(currentSubstepMinutes) ? currentSubstepMinutes : 0;
 }
 
 function validDateForStep(stepIndex, substepMinutes = 0) {
@@ -725,7 +728,7 @@ function updateInfoPanel() {
   const prevBtn = document.getElementById('overlay-substep-prev');
   const nextBtn = document.getElementById('overlay-substep-next');
   if (!info || !sep || !prevBtn || !nextBtn) return;
-  const showSelectedTime = currentStepMinutes === 15 && currentStepSupportsSubsteps();
+  const showSelectedTime = currentSubstepModeActive();
   info.style.display = showSelectedTime ? '' : 'none';
   sep.style.display = showSelectedTime ? '' : 'none';
   prevBtn.style.display = 'none';
@@ -869,7 +872,7 @@ async function loadSymbols() {
       const step = timesteps[currentTimeIndex];
       const modelParam = step && step.model ? `&model=${step.model}` : '';
       const substepMinutes = currentRequestSubstepMinutes();
-      const substepParam = substepMinutes > 0 ? `&substep=${substepMinutes}` : '';
+      const substepParam = currentSubstepModeActive() ? `&substep_mode=1&substep=${substepMinutes}` : '';
       symbolTimePending = true;
       updateInfoPanel();
       const res = await fetch(`/api/symbols?bbox=${bbox}&zoom=${zoom}&time=${encodeURIComponent(time)}${modelParam}${substepParam}`, { signal });
