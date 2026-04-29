@@ -18,6 +18,9 @@ let windRetryTimer = null;
 let overlayObjectUrl = null;
 let currentOverlay = 'none';
 let currentSubstepMinutes = 0;
+let displayedSymbolTimeIndex = null;
+let displayedSymbolSubstepMinutes = 0;
+let symbolTimePending = false;
 let windEnabled = false;
 let windLevel = '10m';
 let modelCapabilities = {};  // Store model capabilities from API
@@ -706,12 +709,18 @@ function currentRequestSubstepMinutes() {
   return [15, 30, 45].includes(currentSubstepMinutes) ? currentSubstepMinutes : 0;
 }
 
-function selectedValidDate() {
-  const base = currentBaseTime();
+function validDateForStep(stepIndex, substepMinutes = 0) {
+  const base = timesteps[stepIndex]?.validTime || '';
   if (!base) return null;
   const d = new Date(base);
   if (!Number.isFinite(d.getTime())) return null;
-  d.setUTCMinutes(d.getUTCMinutes() + currentRequestSubstepMinutes());
+  d.setUTCMinutes(d.getUTCMinutes() + substepMinutes);
+  return d;
+}
+
+function displayedSymbolValidDate() {
+  if (displayedSymbolTimeIndex == null) return null;
+  const d = validDateForStep(displayedSymbolTimeIndex, displayedSymbolSubstepMinutes);
   return d;
 }
 
@@ -723,13 +732,17 @@ function updateInfoPanel() {
   const prevBtn = document.getElementById('overlay-substep-prev');
   const nextBtn = document.getElementById('overlay-substep-next');
   if (!info || !sep || !prevBtn || !nextBtn) return;
-  const showSelectedTime = currentStepMinutes === 15;
-  const selected = selectedValidDate();
+  const showSelectedTime = currentStepMinutes === 15 && currentStepSupportsSubsteps();
   info.style.display = showSelectedTime ? '' : 'none';
   sep.style.display = showSelectedTime ? '' : 'none';
   prevBtn.style.display = 'none';
   nextBtn.style.display = 'none';
-  if (showSelectedTime) info.textContent = selected ? `Selected: ${formatDateMinute(selected)}` : 'Selected: --';
+  if (showSelectedTime) {
+    const selected = symbolTimePending ? null : displayedSymbolValidDate();
+    info.textContent = selected ? `Selected: ${formatDateMinute(selected)}` : 'Selected: updating...';
+  } else {
+    info.textContent = 'Selected: --';
+  }
   prevBtn.disabled = true;
   nextBtn.disabled = true;
 }
@@ -850,6 +863,7 @@ async function loadSymbols() {
     const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
     const zoom = map.getZoom();
     const time = timesteps[currentTimeIndex]?.validTime || '';
+    const requestTimeIndex = currentTimeIndex;
     const reqId = ++symbolsRequestSeq;
     if (symbolsAbortCtrl) symbolsAbortCtrl.abort();
     symbolsAbortCtrl = new AbortController();
@@ -860,6 +874,8 @@ async function loadSymbols() {
       const modelParam = step && step.model ? `&model=${step.model}` : '';
       const substepMinutes = currentRequestSubstepMinutes();
       const substepParam = substepMinutes > 0 ? `&substep=${substepMinutes}` : '';
+      symbolTimePending = true;
+      updateInfoPanel();
       const res = await fetch(`/api/symbols?bbox=${bbox}&zoom=${zoom}&time=${encodeURIComponent(time)}${modelParam}${substepParam}`, { signal });
       if (!res.ok) await throwHttpError(res, 'API');
       if (reqId !== symbolsRequestSeq) return;
@@ -888,6 +904,10 @@ async function loadSymbols() {
       });
       symbolLayer.clearLayers();
       nextMarkers.forEach(marker => marker.addTo(symbolLayer));
+      displayedSymbolTimeIndex = requestTimeIndex;
+      displayedSymbolSubstepMinutes = Number(data?.diagnostics?.substepMinutes ?? substepMinutes) || 0;
+      symbolTimePending = false;
+      updateInfoPanel();
       
       // Update info panel
       // Override with precise cellSize if available
@@ -910,6 +930,8 @@ async function loadSymbols() {
       }
     } catch (e) {
       if (e.name === 'AbortError') return;
+      symbolTimePending = false;
+      updateInfoPanel();
       console.error('Error loading symbols:', e);
       markApiFailure('symbols', e);
       updateFallbackBanner(null);
@@ -2039,6 +2061,7 @@ function buildTimeline() {
   });
   
   updateTimelineNavButtons();
+  updateInfoPanel();
   updateValidTime();
   updateDateStrip();
 }
@@ -2116,6 +2139,7 @@ function updateTimeline(options = {}) {
   }
   
   updateTimelineNavButtons();
+  updateInfoPanel();
   updateValidTime();
   // Delay date strip update to let scroll settle
   setTimeout(updateDateStrip, 100);
