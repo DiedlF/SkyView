@@ -18,8 +18,7 @@ let windRetryTimer = null;
 let overlayObjectUrl = null;
 let currentOverlay = 'none';
 let currentSubstepMinutes = 0;
-let displayedSymbolTimeIndex = null;
-let displayedSymbolSubstepMinutes = 0;
+let displayedSymbolValidTime = null;
 let symbolTimePending = false;
 let windEnabled = false;
 let windLevel = '10m';
@@ -718,12 +717,6 @@ function validDateForStep(stepIndex, substepMinutes = 0) {
   return d;
 }
 
-function displayedSymbolValidDate() {
-  if (displayedSymbolTimeIndex == null) return null;
-  const d = validDateForStep(displayedSymbolTimeIndex, displayedSymbolSubstepMinutes);
-  return d;
-}
-
 // Update info panel zoom/grid
 const CELL_KM = {5:200, 6:110, 7:55, 8:28, 9:13, 10:7, 11:3, 12:2};
 function updateInfoPanel() {
@@ -738,8 +731,12 @@ function updateInfoPanel() {
   prevBtn.style.display = 'none';
   nextBtn.style.display = 'none';
   if (showSelectedTime) {
-    const selected = symbolTimePending ? null : displayedSymbolValidDate();
-    info.textContent = selected ? `Selected: ${formatDateMinute(selected)}` : 'Selected: updating...';
+    const selected = symbolTimePending || !displayedSymbolValidTime ? null : new Date(displayedSymbolValidTime);
+    if (selected && !Number.isFinite(selected.getTime())) {
+      info.textContent = 'Selected: updating...';
+    } else {
+      info.textContent = selected ? `Selected: ${formatDateMinute(selected)}` : 'Selected: updating...';
+    }
   } else {
     info.textContent = 'Selected: --';
   }
@@ -863,7 +860,6 @@ async function loadSymbols() {
     const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
     const zoom = map.getZoom();
     const time = timesteps[currentTimeIndex]?.validTime || '';
-    const requestTimeIndex = currentTimeIndex;
     const reqId = ++symbolsRequestSeq;
     if (symbolsAbortCtrl) symbolsAbortCtrl.abort();
     symbolsAbortCtrl = new AbortController();
@@ -904,8 +900,7 @@ async function loadSymbols() {
       });
       symbolLayer.clearLayers();
       nextMarkers.forEach(marker => marker.addTo(symbolLayer));
-      displayedSymbolTimeIndex = requestTimeIndex;
-      displayedSymbolSubstepMinutes = Number(data?.diagnostics?.substepMinutes ?? substepMinutes) || 0;
+      displayedSymbolValidTime = data.validTime || validDateForStep(currentTimeIndex, substepMinutes)?.toISOString() || null;
       symbolTimePending = false;
       updateInfoPanel();
       

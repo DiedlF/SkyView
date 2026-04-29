@@ -123,6 +123,7 @@ def aggregate_symbol_cell(
     s_hsurf  = c_hsurf[np.ix_(iter_cli, iter_clo)]
     s_mh     = c_mh[np.ix_(iter_cli, iter_clo)]
     s_ceil   = ceil_arr[np.ix_(iter_cli, iter_clo)]
+    s_ww     = cell_ww[::stride, ::stride]
 
     # ── Convection branch ─────────────────────────────────────────────────────
     conv_mask_s   = np.isfinite(s_cape_hourly_max) & (s_cape_hourly_max > CAPE_CONV_THRESHOLD)
@@ -201,7 +202,7 @@ def aggregate_symbol_cell(
             if not np.any(ceil_mask_s):
                 sym = "clear"
             else:
-                cloud_mask_s = np.isfinite(cell_ww[np.ix_(iter_cli, iter_clo)]) & (cell_ww[np.ix_(iter_cli, iter_clo)] >= 2) & (cell_ww[np.ix_(iter_cli, iter_clo)] <= 3)
+                cloud_mask_s = np.isfinite(s_ww) & (s_ww >= 2) & (s_ww <= 3)
                 strat_mask_s = ceil_mask_s & cloud_mask_s
                 if not np.any(strat_mask_s):
                     sym = "clear"

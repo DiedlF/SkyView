@@ -11,6 +11,7 @@ BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..", "backend")
 sys.path.insert(0, BACKEND_DIR)
 
 from services.symbol_compute import compute_symbols_payload  # noqa: E402
+from symbol_logic import aggregate_symbol_cell  # noqa: E402
 
 
 def _symbol_arrays(*, substep_minutes: int, include_precomputed: bool) -> dict:
@@ -98,3 +99,40 @@ def test_substep_symbols_use_live_substep_fields():
     assert payload["validTime"] == "2026-04-29T12:15:00Z"
     assert payload["diagnostics"]["substepMinutes"] == 15
     assert {s["type"] for s in payload["symbols"]} == {"cu_hum"}
+
+
+def test_substep_live_aggregation_uses_cell_local_weather_indices():
+    shape = (3, 3)
+    cli = np.array([1, 2], dtype=int)
+    clo = np.array([1, 2], dtype=int)
+    ww = np.zeros(shape, dtype=np.float32)
+    ww[np.ix_(cli, clo)] = 2.0
+    ceiling = np.zeros(shape, dtype=np.float32)
+    ceiling[np.ix_(cli, clo)] = 1500.0
+    zeros = np.zeros(shape, dtype=np.float32)
+
+    sym, cb_hm, best_i, best_j = aggregate_symbol_cell(
+        cli=cli,
+        clo=clo,
+        cell_ww=ww[np.ix_(cli, clo)],
+        ceil_arr=ceiling,
+        c_clcl=zeros,
+        c_clcm=zeros,
+        c_clch=zeros,
+        c_cape_hourly_max=zeros,
+        c_htop_dc=zeros,
+        c_hbas_sc_hourly_max=zeros,
+        c_htop_sc_hourly_max=zeros,
+        c_lpi_max=zeros,
+        c_hsurf=zeros,
+        c_mh=zeros,
+        classify_point_fn=lambda **_kwargs: "clear",
+        zoom=10,
+        pre_has_cape=False,
+        pre_has_ceil=True,
+    )
+
+    assert sym == "st"
+    assert cb_hm == 15
+    assert best_i in cli
+    assert best_j in clo
