@@ -8,3 +8,5 @@ xarray
 requests
 Pillow>=10.0.0
 PyYAML>=6.0.1
+zarr==2.17.0
+numcodecs==0.12.1
