@@ -400,6 +400,7 @@ def build_weather_router(
         bbox: str = Query("30,-30,72,45"),
         time: str = Query("latest"),
         model: Optional[str] = Query(None),
+        substep: int = Query(0, ge=0, le=45),
     ):
         t0 = perf_counter()
         rid = request.headers.get("X-Request-ID") or uuid.uuid4().hex[:12]
@@ -416,19 +417,17 @@ def build_weather_router(
         # Working bbox may be expanded to fixed world bins at low zoom.
         lat_min, lon_min, lat_max, lon_max = req_lat_min, req_lon_min, req_lat_max, req_lon_max
 
-        symbol_keys = [
-            "ww", "ceiling", "clcl", "clcm", "clch",
-            "cape_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hsurf", "mh",
-            "sym_code", "cb_hm",
-        ]
         requested_model_normalized = str(model or "icon_d2").replace("-", "_")
         native_zoom_threshold = _native_zoom_threshold_for_model(requested_model_normalized)
+        requested_substep = substep if substep in (0, 15, 30, 45) and requested_model_normalized == "icon_d2" else 0
+        precomputed_allowed = requested_substep == 0
         symbol_mode = (
-            "precomputed" if (zoom <= SYMBOL_MODE_PRECOMPUTED_MAX_ZOOM and LOW_ZOOM_PRECOMPUTED_BINS_ENABLED) else
+            "precomputed" if (precomputed_allowed and zoom <= SYMBOL_MODE_PRECOMPUTED_MAX_ZOOM and LOW_ZOOM_PRECOMPUTED_BINS_ENABLED) else
             ("native" if zoom >= native_zoom_threshold else "fixed_grid")
         )
         requested_model_for_mode = requested_model_normalized if symbol_mode == "native" else model
         run, step, model_used = resolve_time_with_cache_context(time, requested_model_for_mode)
+        substep_minutes = requested_substep if model_used == "icon_d2" else 0
         is_low_zoom_global = symbol_mode == "precomputed"
         is_native_zoom = symbol_mode == "native"
 
@@ -451,7 +450,8 @@ def build_weather_router(
             i1 = int(math.floor((req_lat_max - WORLD_GRID_ANCHOR_LAT) / cell_size))
             j0 = int(math.floor((req_lon_min - WORLD_GRID_ANCHOR_LON) / cell_size))
             j1 = int(math.floor((req_lon_max - WORLD_GRID_ANCHOR_LON) / cell_size))
-            symbols_cache_key = f"{model_used}|{run}|{step}|z{zoom}|cells|{i0}:{i1}:{j0}:{j1}"
+            substep_key = f"|sub:{substep_minutes}" if substep_minutes else ""
+            symbols_cache_key = f"{model_used}|{run}|{step}{substep_key}|z{zoom}|cells|{i0}:{i1}:{j0}:{j1}"
         else:
             symbols_cache_key = None
 
@@ -522,6 +522,7 @@ def build_weather_router(
             freshness_minutes_from_run=_freshness_minutes_from_run,
             strict_window_hours=EU_STRICT_MAX_DELTA_HOURS,
             load_coverage_damping_cfg=load_coverage_damping_cfg,
+            substep_minutes=substep_minutes,
         )
         t_agg_ms += (perf_counter() - t_comp0) * 1000.0
 

@@ -15,8 +15,8 @@ OV_ALIAS = {
 }
 
 SYMBOL_KEYS = {
-    "ww", "ceiling", "clcl", "clcm", "clch", "cape_ml",
-    "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hsurf",
+    "ww", "ceiling", "clcl", "clcm", "clch", "cape_ml", "cin_ml",
+    "htop_dc", "hbas_sc", "htop_sc", "lpi", "lpi_max", "hsurf",
 }
 
 OVERLAY_NEEDS = {
@@ -152,7 +152,7 @@ def build_point_router(
             need_overlay=need_overlay,
             ov=ov,
         )
-        substep_minutes = substep if substep in (0, 15, 30, 45) else 0
+        substep_minutes = substep if substep in (0, 15, 30, 45) and model_used == "icon_d2" else 0
         cache_key = (
             model_used,
             run,
@@ -237,7 +237,7 @@ def build_point_router(
             v = float(d[key][li0, lo0])
             return None if not np.isfinite(v) else v
 
-        scalar_values = {k: _get(k) for k in set(RAW_VALUE_KEYS) | {"hsurf", "lpi"}}
+        scalar_values = {k: _get(k) for k in set(RAW_VALUE_KEYS) | {"hsurf", "lpi", "lpi_max"}}
 
         result = {}
         for key in RAW_VALUE_KEYS:

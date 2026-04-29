@@ -16,9 +16,10 @@
     <div id="time-toolbar">
       <button id="prev-1h">◀</button>
       <div id="step-buttons">
-        <button class="step-btn active" data-step="1">1h</button>
-        <button class="step-btn" data-step="3">3h</button>
-        <button class="step-btn" data-step="6">6h</button>
+        <button class="step-btn" data-step="15">15min</button>
+        <button class="step-btn active" data-step="60">1h</button>
+        <button class="step-btn" data-step="180">3h</button>
+        <button class="step-btn" data-step="360">6h</button>
       </div>
       <button id="next-1h">▶</button>
       <span id="utc-label">UTC</span>
@@ -36,7 +37,7 @@
       <span class="info-sep" id="fallback-info-sep" style="display:none;">·</span>
       <span id="fallback-info" style="display:none;color:#ffd36b;">Fallback timestep: --</span>
       <span class="info-sep" id="overlay-substep-sep" style="display:none;">·</span>
-      <span id="overlay-substep-info" style="display:none;color:#8fc2ff;">Overlay substep: +15 min</span>
+      <span id="overlay-substep-info" style="display:none;color:#8fc2ff;">Selected: --</span>
       <button id="overlay-substep-prev" style="display:none;">−15</button>
       <button id="overlay-substep-next" style="display:none;">+15</button>
     </div>

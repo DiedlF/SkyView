@@ -43,6 +43,9 @@ SYMBOL_KEYS: list[str] = [
     "lpi_max", "hsurf", "mh",
     "sym_code", "cb_hm",
 ]
+SYMBOL_SUBSTEP_KEYS: list[str] = [
+    k for k in SYMBOL_KEYS if k not in ("sym_code", "cb_hm")
+] + ["lpi"]
 
 
 def _compute_native_symbols_from_points(
@@ -125,11 +128,12 @@ def compute_symbols_payload(
     model: Optional[str],
     symbol_mode: str,
     resolve_time_with_cache_context: Callable[[str, Optional[str]], tuple[str, int, str]],
-    load_data: Callable[[str, int, str, Optional[List[str]]], Dict[str, Any]],
+    load_data: Callable[..., Dict[str, Any]],
     load_eu_data_strict: Callable[[str, List[str]], Any],
     freshness_minutes_from_run: Callable[[str], Any],
     strict_window_hours: float,
     load_coverage_damping_cfg: Callable[[], dict],
+    substep_minutes: int = 0,
 ) -> dict:
     cell_size = CELL_SIZES_BY_ZOOM[zoom]
     parts = bbox.split(",")
@@ -146,8 +150,15 @@ def compute_symbols_payload(
     requested_model_normalized = str(model or "icon_d2").replace("-", "_")
     requested_model_for_mode = requested_model_normalized if symbol_mode == "native" else model
     run, step, model_used = resolve_time_with_cache_context(time, requested_model_for_mode)
+    effective_substep = int(substep_minutes) if int(substep_minutes or 0) in (15, 30, 45) and model_used == "icon_d2" else 0
 
-    d = load_data(run, step, model_used, keys=SYMBOL_KEYS)
+    d = load_data(
+        run,
+        step,
+        model_used,
+        keys=SYMBOL_SUBSTEP_KEYS if effective_substep else SYMBOL_KEYS,
+        substep_minutes=effective_substep,
+    )
     lat = d["lat"]
     lon = d["lon"]
     d2_lat_min = float(d.get("_latMin", np.min(lat)))
@@ -177,6 +188,7 @@ def compute_symbols_payload(
                 "euShare": 0.0,
                 "servedFrom": "computed",
                 "symbolMode": symbol_mode,
+                "substepMinutes": effective_substep,
             },
         }
 
@@ -187,15 +199,31 @@ def compute_symbols_payload(
     c_clcl = _slice_array(d["clcl"], li, lo) if "clcl" in d else np.zeros_like(ww)
     c_clcm = _slice_array(d["clcm"], li, lo) if "clcm" in d else np.zeros_like(ww)
     c_clch = _slice_array(d["clch"], li, lo) if "clch" in d else np.zeros_like(ww)
-    c_cape_hourly_max = _slice_array(d.get("cape_ml_hourly_max", d.get("cape_ml", np.zeros_like(ww))), li, lo)
+    c_cape_hourly_max = _slice_array(
+        d.get("cape_ml", np.zeros_like(ww)) if effective_substep else d.get("cape_ml_hourly_max", d.get("cape_ml", np.zeros_like(ww))),
+        li,
+        lo,
+    )
     c_htop_dc = _slice_array(d["htop_dc"], li, lo) if "htop_dc" in d else np.zeros_like(ww)
-    c_hbas_sc_hourly_max = _slice_array(d.get("hbas_sc_hourly_max", d.get("hbas_sc", np.zeros_like(ww))), li, lo)
-    c_htop_sc_hourly_max = _slice_array(d.get("htop_sc_hourly_max", d.get("htop_sc", np.zeros_like(ww))), li, lo)
-    c_lpi_max = _slice_array(d["lpi_max"], li, lo) if "lpi_max" in d else np.zeros_like(ww)
+    c_hbas_sc_hourly_max = _slice_array(
+        d.get("hbas_sc", np.zeros_like(ww)) if effective_substep else d.get("hbas_sc_hourly_max", d.get("hbas_sc", np.zeros_like(ww))),
+        li,
+        lo,
+    )
+    c_htop_sc_hourly_max = _slice_array(
+        d.get("htop_sc", np.zeros_like(ww)) if effective_substep else d.get("htop_sc_hourly_max", d.get("htop_sc", np.zeros_like(ww))),
+        li,
+        lo,
+    )
+    c_lpi_max = _slice_array(
+        d.get("lpi", d.get("lpi_max", np.zeros_like(ww))) if effective_substep else d.get("lpi_max", np.zeros_like(ww)),
+        li,
+        lo,
+    )
     c_hsurf = _slice_array(d["hsurf"], li, lo) if "hsurf" in d else np.zeros_like(ww)
     c_mh = _slice_array(d["mh"], li, lo) if "mh" in d else np.zeros_like(ww)
-    c_sym_code = _slice_array(d["sym_code"], li, lo) if "sym_code" in d else None
-    c_cb_hm = _slice_array(d["cb_hm"], li, lo) if "cb_hm" in d else None
+    c_sym_code = None if effective_substep else (_slice_array(d["sym_code"], li, lo) if "sym_code" in d else None)
+    c_cb_hm = None if effective_substep else (_slice_array(d["cb_hm"], li, lo) if "cb_hm" in d else None)
 
     if c_hbas_sc_hourly_max is not None and c_hsurf is not None and c_mh is not None:
         c_hbas_sc_hourly_max, _ = filter_hbas_with_mh(c_hbas_sc_hourly_max, c_hsurf, c_mh, margin_m=1500.0, hard_cap_agl_m=6500.0)
@@ -352,6 +380,7 @@ def compute_symbols_payload(
                 "euShare": (round(eu_count / total_native, 4) if total_native else 0.0),
                 "servedFrom": "computed",
                 "symbolMode": symbol_mode,
+                "substepMinutes": effective_substep,
             },
         }
 
@@ -604,5 +633,6 @@ def compute_symbols_payload(
             "euShare": round(eu_share, 4),
             "servedFrom": "computed",
             "symbolMode": symbol_mode,
+            "substepMinutes": effective_substep,
         },
     }

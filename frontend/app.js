@@ -8,6 +8,7 @@ let windRequestSeq = 0;
 let markerStartupCentered = false;
 let ingestPulseRevision = null;
 let ingestPulseRunning = null;
+let currentStepMinutes = 60;
 let overlayAbortCtrl = null;
 let symbolsAbortCtrl = null;
 let windAbortCtrl = null;
@@ -16,7 +17,7 @@ let symbolsRetryTimer = null;
 let windRetryTimer = null;
 let overlayObjectUrl = null;
 let currentOverlay = 'none';
-let overlaySubstepMinutes = 0;
+let currentSubstepMinutes = 0;
 let windEnabled = false;
 let windLevel = '10m';
 let modelCapabilities = {};  // Store model capabilities from API
@@ -665,6 +666,15 @@ function formatDateShort(d) {
   return `${days[d.getUTCDay()]}, ${dd}.${mm}., ${hh} UTC`;
 }
 
+function formatDateMinute(d) {
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const min = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${days[d.getUTCDay()]}, ${dd}.${mm}., ${hh}:${min} UTC`;
+}
+
 function parseRunToDate(run) {
   if (!run || !/^\d{10}$/.test(run)) return null;
   const y = Number(run.slice(0, 4));
@@ -672,6 +682,37 @@ function parseRunToDate(run) {
   const d = Number(run.slice(6, 8));
   const h = Number(run.slice(8, 10));
   return new Date(Date.UTC(y, m, d, h, 0, 0));
+}
+
+function normalizeModelName(model) {
+  return String(model || '').replace('-', '_');
+}
+
+function currentBaseStep() {
+  return timesteps[currentTimeIndex] || null;
+}
+
+function currentBaseTime() {
+  return currentBaseStep()?.validTime || '';
+}
+
+function currentStepSupportsSubsteps() {
+  return normalizeModelName(currentBaseStep()?.model) === 'icon_d2';
+}
+
+function currentRequestSubstepMinutes() {
+  if (currentStepMinutes !== 15) return 0;
+  if (!currentStepSupportsSubsteps()) return 0;
+  return [15, 30, 45].includes(currentSubstepMinutes) ? currentSubstepMinutes : 0;
+}
+
+function selectedValidDate() {
+  const base = currentBaseTime();
+  if (!base) return null;
+  const d = new Date(base);
+  if (!Number.isFinite(d.getTime())) return null;
+  d.setUTCMinutes(d.getUTCMinutes() + currentRequestSubstepMinutes());
+  return d;
 }
 
 // Update info panel zoom/grid
@@ -682,16 +723,15 @@ function updateInfoPanel() {
   const prevBtn = document.getElementById('overlay-substep-prev');
   const nextBtn = document.getElementById('overlay-substep-next');
   if (!info || !sep || !prevBtn || !nextBtn) return;
-  const layer = getEffectiveOverlayLayer();
-  const supported = overlaySupportsSubsteps(layer);
-  const active = supported && overlaySubstepMinutes > 0;
-  info.style.display = active ? '' : 'none';
-  sep.style.display = supported ? '' : 'none';
-  prevBtn.style.display = supported ? '' : 'none';
-  nextBtn.style.display = supported ? '' : 'none';
-  if (active) info.textContent = `Overlay substep: +${overlaySubstepMinutes} min`;
-  prevBtn.disabled = !supported;
-  nextBtn.disabled = !supported;
+  const showSelectedTime = currentStepMinutes === 15;
+  const selected = selectedValidDate();
+  info.style.display = showSelectedTime ? '' : 'none';
+  sep.style.display = showSelectedTime ? '' : 'none';
+  prevBtn.style.display = 'none';
+  nextBtn.style.display = 'none';
+  if (showSelectedTime) info.textContent = selected ? `Selected: ${formatDateMinute(selected)}` : 'Selected: --';
+  prevBtn.disabled = true;
+  nextBtn.disabled = true;
 }
 
 function updateZoom() {
@@ -750,7 +790,7 @@ async function loadTimesteps() {
     // Use merged timeline (D2 for first 48h + EU for extended range)
     const merged = data.merged;
     if (merged && merged.steps.length) {
-      timesteps = merged.steps;
+      timesteps = timelineStepsWithContext(merged);
       currentTimeIndex = 0;
       currentRun = merged.run;
       currentTimelineSignature = buildTimelineSignature(merged);
@@ -760,7 +800,7 @@ async function loadTimesteps() {
       // Fallback: use first available run
       const latestRun = data.runs && data.runs[0];
       if (!latestRun || !latestRun.steps.length) throw new Error('No data available');
-      timesteps = latestRun.steps;
+      timesteps = timelineStepsWithContext(latestRun);
       currentTimeIndex = 0;
       currentRun = latestRun.run;
       currentTimelineSignature = buildTimelineSignature(latestRun);
@@ -792,6 +832,15 @@ function buildTimelineSignature(source) {
   return `${runBits.join('|')}::${stepBits.join(',')}`;
 }
 
+function timelineStepsWithContext(source) {
+  if (!source || !Array.isArray(source.steps)) return [];
+  return source.steps.map((step) => ({
+    ...step,
+    model: step.model || source.model,
+    run: step.run || source.run,
+  }));
+}
+
 // Load symbols
 async function loadSymbols() {
   clearLayerRetry('symbols');
@@ -809,7 +858,9 @@ async function loadSymbols() {
       // Pass model hint if timestep has model info (from merged timeline)
       const step = timesteps[currentTimeIndex];
       const modelParam = step && step.model ? `&model=${step.model}` : '';
-      const res = await fetch(`/api/symbols?bbox=${bbox}&zoom=${zoom}&time=${encodeURIComponent(time)}${modelParam}`, { signal });
+      const substepMinutes = currentRequestSubstepMinutes();
+      const substepParam = substepMinutes > 0 ? `&substep=${substepMinutes}` : '';
+      const res = await fetch(`/api/symbols?bbox=${bbox}&zoom=${zoom}&time=${encodeURIComponent(time)}${modelParam}${substepParam}`, { signal });
       if (!res.ok) await throwHttpError(res, 'API');
       if (reqId !== symbolsRequestSeq) return;
       const data = await res.json();
@@ -956,13 +1007,15 @@ async function loadPoint(lat, lon, time, model, windLvl = '10m', zoom = null) {
     const overlayParam = (overlayKey && overlayKey !== 'none') ? `&overlay_key=${encodeURIComponent(overlayKey)}` : '';
     const includeWind = windEnabled ? '&include_wind=1' : '&include_wind=0';
     const includeSymbol = '&include_symbol=1';
-    const substepParam = (overlaySupportsSubsteps(overlayKey) && overlaySubstepMinutes > 0) ? `&substep=${overlaySubstepMinutes}` : '';
+    const pointSubstepMinutes = currentRequestSubstepMinutes();
+    const substepParam = pointSubstepMinutes > 0 ? `&substep=${pointSubstepMinutes}` : '';
     const res = await fetch(`/api/point?lat=${lat}&lon=${lon}&time=${encodeURIComponent(time)}${modelParam}${windParam}${zoomParam}${includeOverlay}${overlayParam}${includeWind}${includeSymbol}${substepParam}`);
     if (!res.ok) await throwHttpError(res, 'API');
     const data = await res.json();
 
     const symbolName = SYMBOL_NAMES[data.symbol] || data.symbol || 'N/A';
     let lines = [`<b>${symbolName}</b>`];
+    if (data.substepMinutes) lines.push(`Time: ${formatDateMinute(new Date(data.validTime))}`);
 
     // Show active overlay value if an overlay is selected
     if (overlayKey !== 'none' && data.overlay_values) {
@@ -1409,41 +1462,9 @@ function overlaySupportsSubsteps(layer) {
 }
 
 function cycleOverlaySubstep(delta) {
-  const layer = getEffectiveOverlayLayer();
-  if (!overlaySupportsSubsteps(layer)) return;
-  const allowed = [0, 15, 30, 45];
-  const idx = allowed.indexOf(overlaySubstepMinutes);
-  const nextIdx = idx + delta;
-
-  if (nextIdx >= allowed.length) {
-    if (currentTimeIndex < timesteps.length - 1) {
-      currentTimeIndex++;
-      overlaySubstepMinutes = allowed[0];
-      updateTimeline();
-      loadSymbols();
-      loadOverlay();
-      loadWind();
-      loadD2Border();
-    }
-    return;
-  }
-
-  if (nextIdx < 0) {
-    if (currentTimeIndex > 0) {
-      currentTimeIndex--;
-      overlaySubstepMinutes = allowed[allowed.length - 1];
-      updateTimeline();
-      loadSymbols();
-      loadOverlay();
-      loadWind();
-      loadD2Border();
-    }
-    return;
-  }
-
-  overlaySubstepMinutes = allowed[nextIdx];
-  updateInfoPanel();
-  loadOverlay();
+  if (currentStepMinutes !== 15) return;
+  if (delta > 0) stepForward();
+  else if (delta < 0) stepBackward();
 }
 
 function lonLatToTile(lat, lon, z) {
@@ -1537,7 +1558,8 @@ async function loadOverlay() {
         clientClass,
       });
       if (overlayStep && overlayStep.model) params.append('model', overlayStep.model);
-      if (overlaySupportsSubsteps(effectiveOverlay) && overlaySubstepMinutes > 0) params.append('substep', String(overlaySubstepMinutes));
+      const substepMinutes = currentRequestSubstepMinutes();
+      if (overlaySupportsSubsteps(effectiveOverlay) && substepMinutes > 0) params.append('substep', String(substepMinutes));
 
       // Ignore stale responses that arrive out of order
       if (reqId !== overlayRequestSeq) return;
@@ -1856,7 +1878,6 @@ document.getElementById('wind-level').addEventListener('change', (e) => {
 document.querySelectorAll('input[name="overlay"]').forEach(radio => {
   radio.addEventListener('change', (e) => {
     currentOverlay = e.target.value;
-    if (!overlaySupportsSubsteps(getEffectiveOverlayLayer())) overlaySubstepMinutes = 0;
     updateLegend();
     updateInfoPanel();
     loadOverlay();
@@ -1916,8 +1937,7 @@ map.on('click', (e) => {
 });
 
 map.getContainer().addEventListener('wheel', (e) => {
-  const layer = getEffectiveOverlayLayer();
-  if (!e.shiftKey || !overlaySupportsSubsteps(layer)) return;
+  if (!e.shiftKey || currentStepMinutes !== 15) return;
   e.preventDefault();
   cycleOverlaySubstep(e.deltaY > 0 ? 1 : -1);
 }, { passive: false });
@@ -1932,7 +1952,6 @@ const timeline = document.getElementById('timeline');
 const dateStrip = document.getElementById('date-strip');
 const prev1hBtn = document.getElementById('prev-1h');
 const next1hBtn = document.getElementById('next-1h');
-let currentStep = 1;  // Step size in hours
 let dayMeta = [];  // [{dateStr, firstIdx, noonIdx}]
 
 // Step size buttons
@@ -1940,7 +1959,15 @@ document.querySelectorAll('.step-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.step-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
-    currentStep = parseInt(btn.dataset.step);
+    const prevStepMinutes = currentStepMinutes;
+    currentStepMinutes = parseInt(btn.dataset.step, 10);
+    if (currentStepMinutes !== 15 && currentSubstepMinutes !== 0) {
+      currentSubstepMinutes = 0;
+      refreshForTimestepChange();
+    } else if (currentStepMinutes !== prevStepMinutes) {
+      updateInfoPanel();
+      updateTimelineNavButtons();
+    }
   });
 });
 
@@ -1992,6 +2019,7 @@ function buildTimeline() {
     
     hourEl.addEventListener('click', () => {
       currentTimeIndex = idx;
+      currentSubstepMinutes = 0;
       updateTimeline();
       loadSymbols();
       loadOverlay();
@@ -2070,11 +2098,13 @@ timeline.addEventListener('scroll', updateDateStrip);
 
 function updateTimelineNavButtons() {
   const hasSteps = timesteps.length > 0;
-  prev1hBtn.disabled = !hasSteps || currentTimeIndex <= 0;
-  next1hBtn.disabled = !hasSteps || currentTimeIndex >= timesteps.length - 1;
+  const canSubstep = currentStepMinutes === 15 && currentStepSupportsSubsteps();
+  prev1hBtn.disabled = !hasSteps || (currentTimeIndex <= 0 && (!canSubstep || currentSubstepMinutes <= 0));
+  next1hBtn.disabled = !hasSteps || (currentTimeIndex >= timesteps.length - 1 && (!canSubstep || currentSubstepMinutes >= 45));
 }
 
-function updateTimeline() {
+function updateTimeline(options = {}) {
+  if (!currentStepSupportsSubsteps() && currentSubstepMinutes !== 0) currentSubstepMinutes = 0;
   const hours = timeline.querySelectorAll('.timeline-hour');
   hours.forEach((el) => {
     el.classList.toggle('active', parseInt(el.dataset.index) === currentTimeIndex);
@@ -2089,7 +2119,7 @@ function updateTimeline() {
   updateValidTime();
   // Delay date strip update to let scroll settle
   setTimeout(updateDateStrip, 100);
-  if (emagramState.open && Number.isFinite(emagramState.lat) && Number.isFinite(emagramState.lon)) {
+  if (options.refreshEmagram !== false && emagramState.open && Number.isFinite(emagramState.lat) && Number.isFinite(emagramState.lon)) {
     const step = timesteps[currentTimeIndex] || null;
     openEmagramAt(emagramState.lat, emagramState.lon, step?.validTime || 'latest', step?.model || emagramState.model || '');
   }
@@ -2103,14 +2133,32 @@ function refreshForTimestepChange() {
   loadD2Border();
 }
 
+function refreshForSubstepChange() {
+  updateTimeline({ refreshEmagram: false });
+  loadSymbols();
+  if (overlaySupportsSubsteps(getEffectiveOverlayLayer())) loadOverlay();
+}
+
 function stepForward() {
-  // Find next timestep that's >= currentStep hours ahead
   const prevIndex = currentTimeIndex;
-  if (currentStep === 1) {
+  const prevSubstep = currentSubstepMinutes;
+
+  if (currentStepMinutes === 15 && currentStepSupportsSubsteps()) {
+    if (currentSubstepMinutes < 45) {
+      currentSubstepMinutes += 15;
+      refreshForSubstepChange();
+      return true;
+    }
+    if (currentTimeIndex < timesteps.length - 1) {
+      currentTimeIndex++;
+      currentSubstepMinutes = 0;
+    }
+  } else if (currentStepMinutes <= 60) {
     if (currentTimeIndex < timesteps.length - 1) currentTimeIndex++;
+    currentSubstepMinutes = 0;
   } else {
     const curTime = new Date(timesteps[currentTimeIndex].validTime).getTime();
-    const targetTime = curTime + currentStep * 3600000;
+    const targetTime = curTime + currentStepMinutes * 60000;
     let bestIdx = currentTimeIndex;
     for (let i = currentTimeIndex + 1; i < timesteps.length; i++) {
       const t = new Date(timesteps[i].validTime).getTime();
@@ -2118,19 +2166,33 @@ function stepForward() {
       if (i === timesteps.length - 1) bestIdx = i;
     }
     if (bestIdx > currentTimeIndex) currentTimeIndex = bestIdx;
+    currentSubstepMinutes = 0;
   }
-  if (currentTimeIndex === prevIndex) return false;
+  if (currentTimeIndex === prevIndex && currentSubstepMinutes === prevSubstep) return false;
   refreshForTimestepChange();
   return true;
 }
 
 function stepBackward() {
   const prevIndex = currentTimeIndex;
-  if (currentStep === 1) {
+  const prevSubstep = currentSubstepMinutes;
+
+  if (currentStepMinutes === 15 && currentStepSupportsSubsteps()) {
+    if (currentSubstepMinutes > 0) {
+      currentSubstepMinutes -= 15;
+      refreshForSubstepChange();
+      return true;
+    }
+    if (currentTimeIndex > 0) {
+      currentTimeIndex--;
+      currentSubstepMinutes = currentStepSupportsSubsteps() ? 45 : 0;
+    }
+  } else if (currentStepMinutes <= 60) {
     if (currentTimeIndex > 0) currentTimeIndex--;
+    currentSubstepMinutes = 0;
   } else {
     const curTime = new Date(timesteps[currentTimeIndex].validTime).getTime();
-    const targetTime = curTime - currentStep * 3600000;
+    const targetTime = curTime - currentStepMinutes * 60000;
     let bestIdx = currentTimeIndex;
     for (let i = currentTimeIndex - 1; i >= 0; i--) {
       const t = new Date(timesteps[i].validTime).getTime();
@@ -2138,8 +2200,9 @@ function stepBackward() {
       if (i === 0) bestIdx = i;
     }
     if (bestIdx < currentTimeIndex) currentTimeIndex = bestIdx;
+    currentSubstepMinutes = 0;
   }
-  if (currentTimeIndex === prevIndex) return false;
+  if (currentTimeIndex === prevIndex && currentSubstepMinutes === prevSubstep) return false;
   refreshForTimestepChange();
   return true;
 }
@@ -3248,7 +3311,7 @@ async function refreshTimelineIfChanged() {
     if (!source) return;
 
     const newRun = source.run || source.run;
-    const newSteps = source.steps;
+    const newSteps = timelineStepsWithContext(source);
     const newRunTime = source.runTime;
     const newTimelineSignature = buildTimelineSignature(source);
 
