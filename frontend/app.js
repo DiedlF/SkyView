@@ -1985,8 +1985,7 @@ document.querySelectorAll('.step-btn').forEach(btn => {
       currentSubstepMinutes = 0;
       refreshForTimestepChange();
     } else if (currentStepMinutes !== prevStepMinutes) {
-      updateInfoPanel();
-      updateTimelineNavButtons();
+      refreshForSubstepChange();
     }
   });
 });
