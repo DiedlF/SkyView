@@ -88,7 +88,7 @@ import marker_auth as _marker_auth
 from services.model_select import resolve_eu_time_strict as svc_resolve_eu_time_strict, load_eu_data_strict as svc_load_eu_data_strict
 from services.data_loader import load_step_data
 from services.app_state import AppState
-from services.storage_io import read_step_point_arrays, step_numbers_from_dir
+from services.storage_io import read_step_point_arrays, step_numbers_from_dir, static_zarr_path
 from routers.core import build_core_router
 from routers.point import build_point_router
 from routers.domain import build_domain_router
@@ -1625,8 +1625,8 @@ async def api_status():
     tile_desktop_bytes = sum(len(v[0]) for v in tile_cache_desktop.values()) if tile_cache_desktop else 0
     tile_mobile_bytes = sum(len(v[0]) for v in tile_cache_mobile.values()) if tile_cache_mobile else 0
     payload.setdefault("cache", {})["server"] = {
-        "npzDataItems": len(data_cache),
-        "npzDataMax": DATA_CACHE_MAX_ITEMS,
+        "zarrDataItems": len(data_cache),
+        "zarrDataMax": DATA_CACHE_MAX_ITEMS,
         "meteogramItems": len(meteogram_cache),
         "meteogramMax": METEOGRAM_CACHE_MAX_ITEMS,
         "estTileBytes": tile_desktop_bytes + tile_mobile_bytes,
@@ -2085,7 +2085,7 @@ def _ingest_model_timings() -> dict[str, dict[str, Any]]:
     """Per-model run timing diagnostics from local files.
 
     latestRunAvailableAt uses runTime from timeline; latestRunFullyIngestedAt uses max mtime of
-    npz files in the newest run that has full expected step coverage.
+    Zarr groups in the newest run that has full expected step coverage.
 
     ingestDurationMinutes measures actual local ingest wall time:
     latestRunFullyIngestedAt - latestRunFirstIngestedAt.
@@ -2108,7 +2108,7 @@ def _ingest_model_timings() -> dict[str, dict[str, Any]]:
         for run in run_dirs:
             run_path = os.path.join(base, run)
             step_count = len(step_numbers_from_dir(run_path))
-            storage_paths = sorted(glob.glob(os.path.join(run_path, "*.npz"))) + sorted(glob.glob(os.path.join(run_path, "*.zarr")))
+            storage_paths = sorted(glob.glob(os.path.join(run_path, "*.zarr")))
             if step_count >= expected_steps[model_key] and storage_paths:
                 full_dt = datetime.fromtimestamp(max(os.path.getmtime(p) for p in storage_paths), tz=timezone.utc)
                 full_steps = step_count
@@ -2132,7 +2132,7 @@ def _ingest_model_timings() -> dict[str, dict[str, Any]]:
         latest_run_step_count = 0
         if latest_run:
             latest_run_path = os.path.join(base, latest_run)
-            latest_run_storage = sorted(glob.glob(os.path.join(latest_run_path, "*.npz"))) + sorted(glob.glob(os.path.join(latest_run_path, "*.zarr")))
+            latest_run_storage = sorted(glob.glob(os.path.join(latest_run_path, "*.zarr")))
             latest_run_step_count = len(step_numbers_from_dir(latest_run_path))
             if latest_run_storage:
                 first_dt = datetime.fromtimestamp(min(os.path.getmtime(p) for p in latest_run_storage), tz=timezone.utc)
@@ -2201,9 +2201,8 @@ async def api_admin_storage():
 
         for run in runs:
             rp = os.path.join(base, run)
-            npz_files = sorted(glob.glob(os.path.join(rp, "*.npz")))
             zarr_dirs = sorted(glob.glob(os.path.join(rp, "*.zarr")))
-            storage_paths = npz_files + zarr_dirs
+            storage_paths = zarr_dirs
             step_count = len(step_numbers_from_dir(rp))
             run_bytes = _dir_size_bytes(rp)
             latest_storage_mtime = None
@@ -2212,7 +2211,6 @@ async def api_admin_storage():
 
             run_items.append({
                 "run": run,
-                "npzFiles": len(npz_files),
                 "zarrSteps": len(zarr_dirs),
                 "steps": step_count,
                 "bytes": int(run_bytes),
@@ -2391,18 +2389,13 @@ def _static_grid_info() -> Dict[str, Any]:
     out: Dict[str, Any] = {"models": {}, "available": False}
     for model_dir, model_key in (("icon-d2", "icon_d2"), ("icon-eu", "icon_eu")):
         grid_dir = os.path.join(DATA_DIR, model_dir, "grid")
-        static_path = os.path.join(grid_dir, "static.npz")
-        static_zarr = os.path.join(grid_dir, "static.zarr")
-        static_exists = os.path.exists(static_path) or os.path.isdir(static_zarr)
+        static_zarr = static_zarr_path(DATA_DIR, model_key)
+        static_exists = os.path.isdir(static_zarr)
         entry: Dict[str, Any] = {
             "path": grid_dir,
-            "staticPath": static_path,
             "staticZarrPath": static_zarr,
             "exists": static_exists,
-            "bytes": (
-                (int(os.path.getsize(static_path)) if os.path.exists(static_path) else 0)
-                + (_dir_size_bytes(static_zarr) if os.path.isdir(static_zarr) else 0)
-            ),
+            "bytes": _dir_size_bytes(static_zarr) if static_exists else 0,
             "updatedAt": None,
             "shape": None,
             "fields": None,
@@ -2410,27 +2403,23 @@ def _static_grid_info() -> Dict[str, Any]:
         }
         if static_exists:
             try:
-                mtimes = []
-                if os.path.exists(static_path):
-                    mtimes.append(os.path.getmtime(static_path))
-                if os.path.isdir(static_zarr):
-                    mtimes.append(os.path.getmtime(static_zarr))
-                if mtimes:
-                    entry["updatedAt"] = datetime.fromtimestamp(max(mtimes), tz=timezone.utc).isoformat().replace("+00:00", "Z")
+                entry["updatedAt"] = datetime.fromtimestamp(os.path.getmtime(static_zarr), tz=timezone.utc).isoformat().replace("+00:00", "Z")
             except Exception:
                 pass
-        if os.path.exists(static_path):
+        if static_exists:
             try:
-                with np.load(static_path) as static_npz:
-                    fields = list(static_npz.files)
-                    entry["shape"] = list(static_npz["hsurf"].shape) if "hsurf" in static_npz else None
-                    entry["fields"] = fields
-                    if "grid_hash" in static_npz:
-                        entry["gridHash"] = str(static_npz["grid_hash"].tolist())
-                    if "source_run" in static_npz:
-                        entry["sourceRun"] = str(static_npz["source_run"].tolist())
-                    if "coordinate_grid" in static_npz:
-                        entry["coordinateGrid"] = str(static_npz["coordinate_grid"].tolist())
+                import zarr
+
+                group = zarr.open_group(static_zarr, mode="r")
+                fields = list(group.array_keys())
+                entry["shape"] = list(group["hsurf"].shape) if "hsurf" in group else None
+                entry["fields"] = fields
+                if "grid_hash" in group.attrs:
+                    entry["gridHash"] = str(group.attrs["grid_hash"])
+                if "source_run" in group.attrs:
+                    entry["sourceRun"] = str(group.attrs["source_run"])
+                if "coordinate_grid" in group.attrs:
+                    entry["coordinateGrid"] = str(group.attrs["coordinate_grid"])
             except Exception:
                 entry["staticReadError"] = True
         out["models"][model_key] = entry
@@ -2701,8 +2690,8 @@ async def api_admin_overview_metrics():
     for mk in ("icon_d2", "icon_eu"):
         runs = (storage.get("models", {}).get(mk, {}) or {}).get("runs", []) or []
         for r in runs:
-            npz = int(r.get("npzFiles") or 0)
-            if npz >= expected_steps[mk]:
+            steps = int(r.get("zarrSteps") or r.get("steps") or 0)
+            if steps >= expected_steps[mk]:
                 break
             streak += 1
 

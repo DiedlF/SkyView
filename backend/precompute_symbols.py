@@ -4,7 +4,6 @@
 import os
 import argparse
 import asyncio
-import numpy as np
 
 import app
 from constants import LOW_ZOOM_GLOBAL_BBOX, CELL_SIZES_BY_ZOOM
@@ -24,7 +23,7 @@ def _model_dir_name(model: str) -> str:
 
 def _iter_steps(run_dir: str):
     for step in step_numbers_from_dir(run_dir):
-        yield step, os.path.join(run_dir, f"{step:03d}.npz")
+        yield step
 
 
 def _compute_symbols_payload_direct(*, api_model: str, valid_time: str, zoom: int, bbox: str) -> dict:
@@ -51,8 +50,7 @@ async def _run(model: str, run: str, zooms: list[int], steps_filter: set[int] | 
         print(f"Run dir not found: {run_dir}")
         return 1
 
-    # Most .npz files do not carry validTime; build run+step -> validTime map
-    # from timeline metadata instead of relying on npz payload internals.
+    # Build run+step -> validTime map from timeline metadata.
     step_to_valid_time: dict[int, str] = {}
     try:
         runs = app.get_available_runs()
@@ -83,15 +81,11 @@ async def _run(model: str, run: str, zooms: list[int], steps_filter: set[int] | 
         print("Unsupported mode. Use --mode direct or --mode http.")
         return 2
 
-    for step, path in _iter_steps(run_dir):
+    for step in _iter_steps(run_dir):
         if steps_filter and step not in steps_filter:
             continue
         try:
             valid_time = step_to_valid_time.get(step)
-            if not valid_time:
-                # Backward fallback for datasets that embed validTime directly.
-                z = np.load(path)
-                valid_time = z["validTime"].item() if "validTime" in z.files else None
             if not valid_time:
                 continue
             for zoom in zooms:

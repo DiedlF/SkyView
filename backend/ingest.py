@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """ICON-D2 and ICON-EU data ingester for Skyview.
-Downloads regular-lat-lon GRIB2 from DWD, optionally crops, saves .npz/.zarr.
+Downloads regular-lat-lon GRIB2 from DWD, optionally crops, saves Zarr groups.
 
 Config-driven: reads ingest_config.yaml for variable groups and region settings.
 ICON-D2: full native grid (746×1215).
@@ -31,7 +31,17 @@ from logging_config import setup_logging
 from constants import ICON_EU_STEP_3H_START, LOW_ZOOM_PRECOMPUTED_BINS_ENABLED
 from classify import classify_clouds_and_bases
 from convective_filters import filter_hbas_with_mh
-from services.storage_io import should_write_zarr, step_zarr_path, static_zarr_path, write_zarr_group, zarr_available
+from services.storage_io import (
+    read_static_arrays,
+    read_step_arrays,
+    should_write_zarr,
+    step_exists,
+    step_numbers_from_dir,
+    step_zarr_path,
+    static_zarr_path,
+    write_zarr_group,
+    zarr_available,
+)
 
 logger = setup_logging(
     __name__,
@@ -69,10 +79,6 @@ def _grid_dir_for_model(model: str) -> str:
     return os.path.join(DATA_DIR, model, "grid")
 
 
-def _grid_static_path(model: str) -> str:
-    return os.path.join(_grid_dir_for_model(model), "static.npz")
-
-
 def _write_static_grid_bundle(model: str, arrays: dict, run: str):
     if "lat" not in arrays or "lon" not in arrays or "hsurf" not in arrays:
         return False
@@ -82,36 +88,19 @@ def _write_static_grid_bundle(model: str, arrays: dict, run: str):
 
     grid_dir = _grid_dir_for_model(model)
     os.makedirs(grid_dir, exist_ok=True)
-    static_path = _grid_static_path(model)
-    tmp_static = static_path + ".tmp.npz"
     digest = hashlib.sha256()
     digest.update(lat_1d.tobytes())
     digest.update(lon_1d.tobytes())
     digest.update(np.nan_to_num(hsurf, nan=-9999.0).tobytes())
-    np.savez_compressed(
-        tmp_static,
-        lat=lat_1d,
-        lon=lon_1d,
-        hsurf=hsurf,
-        grid_hash=np.asarray(digest.hexdigest()),
-        source_run=np.asarray(run),
-        coordinate_grid=np.asarray("regular_lat_lon"),
+    return write_zarr_group(
+        static_zarr_path(DATA_DIR, model),
+        {"lat": lat_1d, "lon": lon_1d, "hsurf": hsurf},
+        attrs={
+            "grid_hash": digest.hexdigest(),
+            "source_run": str(run),
+            "coordinate_grid": "regular_lat_lon",
+        },
     )
-    os.replace(tmp_static, static_path)
-    if should_write_zarr():
-        try:
-            write_zarr_group(
-                static_zarr_path(DATA_DIR, model),
-                {"lat": lat_1d, "lon": lon_1d, "hsurf": hsurf},
-                attrs={
-                    "grid_hash": digest.hexdigest(),
-                    "source_run": str(run),
-                    "coordinate_grid": "regular_lat_lon",
-                },
-            )
-        except Exception as exc:
-            logger.warning(f"Static Zarr write failed for {model}: {exc}")
-    return True
 
 
 def _symbol_code_map() -> dict[str, int]:
@@ -894,7 +883,7 @@ def get_bounds_for_model(model, config):
 
 def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profile_name="full",
                 prev_acc=None, prev_step=None):
-    """Download all variables for one step, optionally crop, save as .npz.
+    """Download all variables for one step, optionally crop, save as Zarr.
 
     tmp_dir is accepted for backward-compat but no longer used: all downloads and
     decompression are now handled in memory.
@@ -906,7 +895,7 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
                   completes. cfgrib stays single-threaded (eccodes C library).
 
     Precip rates (tp_rate, rain_rate, snow_rate, hail_rate) are computed inline and written into
-    the same .npz, avoiding a separate post-processing read+rewrite pass.
+    the same Zarr group, avoiding a separate post-processing read+rewrite pass.
 
     Args:
         prev_acc: dict of raw precip accumulation arrays from the previous step
@@ -918,8 +907,8 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
         curr_acc holds the current step's raw precip accumulations for the next iteration.
         curr_acc is None when the step was skipped (already existed) or had no precip data.
     """
-    out_path = os.path.join(out_dir, f"{step:03d}.npz")
-    if os.path.exists(out_path):
+    out_path = step_zarr_path(DATA_DIR, model, run, step)
+    if os.path.isdir(out_path):
         logger.debug(f"Step {step:03d}: already exists, skipping")
         return True, None
 
@@ -978,7 +967,6 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
     workers = INGEST_WORKERS
     arrays: Dict[str, np.ndarray] = {}
     lat_1d = lon_1d = None
-    out_tmp_path = os.path.join(out_dir, f".{step:03d}.tmp.npz")
 
     # Track which required variables failed so we can abort after the pool drains.
     failed_required: Optional[str] = None
@@ -1094,14 +1082,16 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
     wrote_static_bundle = False
 
     # ── Static variables (hsurf etc.) — cached per model grid ────────────────
+    cached_static_arrays = None
     for svar in static_vars:
         if model == "icon-eu" and svar in d2_only:
             continue
         grid_dir = _grid_dir_for_model(model)
         os.makedirs(grid_dir, exist_ok=True)
-        svar_cache = os.path.join(grid_dir, f"{svar}.npy")
-        if os.path.exists(svar_cache):
-            arrays[svar] = np.load(svar_cache)
+        if cached_static_arrays is None:
+            cached_static_arrays = read_static_arrays(data_dir=DATA_DIR, model=model, logger=logger)
+        if svar in cached_static_arrays:
+            arrays[svar] = cached_static_arrays[svar]
         else:
             url = build_url(run, 0, svar, model, config=config, profile_name=profile_name)
             grib_bytes = _download_and_decompress(url)
@@ -1110,18 +1100,8 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
                     data, _, _ = _parse_grib_from_bytes(grib_bytes, bounds)
                     arr = data.astype(np.float32)
                     arrays[svar] = arr
-                    os.makedirs(out_dir, exist_ok=True)
-                    static_tmp = os.path.join(out_dir, f"._static_{svar}.npy.tmp")
-                    with open(static_tmp, "wb") as f:
-                        np.save(f, arr)
-                    os.replace(static_tmp, svar_cache)
                 except Exception as e:
                     logger.debug(f"Step {step:03d}: static {svar} parse failed: {e}")
-                    try:
-                        if 'static_tmp' in locals() and os.path.exists(static_tmp):
-                            os.unlink(static_tmp)
-                    except OSError:
-                        pass
 
     if ("lat" in locals() and lat_1d is not None) and ("lon" in locals() and lon_1d is not None):
         if "hsurf" in arrays:
@@ -1136,7 +1116,7 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
 
     # ── Inline precip rate computation ────────────────────────────────────────
     # De-accumulate precipitation and compute mm/h rates in the same pass,
-    # so we never need a separate post-processing read+rewrite of the .npz.
+    # so we never need a separate post-processing read+rewrite of the Zarr group.
     curr_acc = None
     if 'tot_prec' in arrays or any(k in arrays for k in ('rain_gsp', 'rain_con', 'snow_gsp', 'snow_con', 'grau_gsp')):
         shape = arrays.get('tot_prec', next(iter(arrays.values()))).shape
@@ -1206,35 +1186,20 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
     _precompute_symbol_native_fields(arrays, step=step, model=model, run=run)
 
     os.makedirs(out_dir, exist_ok=True)
-    try:
-        dynamic_arrays = {k: v for k, v in arrays.items() if k not in {"hsurf"}}
-        np.savez_compressed(out_tmp_path, lat=lat_1d, lon=lon_1d, **dynamic_arrays)
-        os.replace(out_tmp_path, out_path)
-    except Exception:
-        try:
-            if os.path.exists(out_tmp_path):
-                os.unlink(out_tmp_path)
-        except OSError:
-            pass
-        raise
-    if should_write_zarr():
-        try:
-            zarr_arrays = {"lat": lat_1d, "lon": lon_1d, **dynamic_arrays}
-            if write_zarr_group(
-                step_zarr_path(DATA_DIR, model, run, step),
-                zarr_arrays,
-                attrs={
-                    "run": str(run),
-                    "step": int(step),
-                    "model": str(model).replace("-", "_"),
-                    "coordinate_grid": "regular_lat_lon",
-                },
-            ):
-                logger.debug(f"Step {step:03d}: saved Zarr bundle")
-            elif not zarr_available():
-                logger.warning("Zarr write requested but zarr/numcodecs is not installed")
-        except Exception as exc:
-            logger.warning(f"Step {step:03d}: Zarr write failed: {exc}")
+    dynamic_arrays = {k: v for k, v in arrays.items() if k not in {"hsurf"}}
+    zarr_arrays = {"lat": lat_1d, "lon": lon_1d, **dynamic_arrays}
+    if not write_zarr_group(
+        out_path,
+        zarr_arrays,
+        attrs={
+            "run": str(run),
+            "step": int(step),
+            "model": str(model).replace("-", "_"),
+            "coordinate_grid": "regular_lat_lon",
+        },
+    ):
+        raise RuntimeError("Zarr write failed or is disabled")
+    logger.debug(f"Step {step:03d}: saved Zarr bundle")
     if wrote_static_bundle:
         logger.debug(f"Step {step:03d}: refreshed static grid bundle for {model}")
     logger.debug(f"Step {step:03d}: saved ({len(arrays)} vars, shape {arrays.get('ww', next(iter(arrays.values()))).shape})")
@@ -1254,9 +1219,8 @@ def check_new_data_available(run, model="icon-d2", config=None, profile_name="fu
 
     out_dir = os.path.join(DATA_DIR, model, run)
     if os.path.isdir(out_dir):
-        npz_files = [f for f in os.listdir(out_dir) if f.endswith('.npz')]
         expected_count = len(cfg["steps"])
-        has_local = len(npz_files) >= expected_count
+        has_local = len(step_numbers_from_dir(out_dir)) >= expected_count
     else:
         has_local = False
 
@@ -1313,23 +1277,23 @@ def check_variable_urls(run, model, config, profile_name="full"):
     return ok, fail, skipped
 
 
-def _load_precip_acc_from_step(run_dir: str, step: int) -> dict | None:
-    """Load raw precip accumulation arrays from an existing step .npz file.
+def _load_precip_acc_from_step(model: str, run: str, step: int) -> dict | None:
+    """Load raw precip accumulation arrays from an existing step Zarr group.
 
     Used to seed prev_acc when --fill-missing processes non-contiguous steps or
     when ingest resumes after a partial run.
-    Returns None if the file doesn't exist or can't be read.
+    Returns None if the group doesn't exist or can't be read.
     """
-    path = os.path.join(run_dir, f"{step:03d}.npz")
-    if not os.path.exists(path):
+    if not step_exists(DATA_DIR, model, run, step):
         return None
     try:
-        z = np.load(path)
-        if 'lat' not in z.files or 'lon' not in z.files:
+        keys = ["lat", "lon", "tot_prec", "rain_gsp", "rain_con", "snow_gsp", "snow_con", "grau_gsp"]
+        z = read_step_arrays(data_dir=DATA_DIR, model=model, run=run, step=step, keys=keys, logger=logger)
+        if 'lat' not in z or 'lon' not in z:
             return None
         shape = (len(z['lat']), len(z['lon']))
         zeros = np.zeros(shape, dtype=np.float32)
-        return {k: z[k] if k in z.files else zeros.copy()
+        return {k: z[k] if k in z else zeros.copy()
                 for k in ('tot_prec', 'rain_gsp', 'rain_con', 'snow_gsp', 'snow_con', 'grau_gsp')}
     except Exception:
         return None
@@ -1369,25 +1333,22 @@ def precompute_precip_rates_for_run(model: str, run: str):
     inline rate computation was added to ingest_step(). New ingests compute
     rates on the fly and do not need to call this function.
 
-    Rewrites each .npz with added fields:
+    Rewrites each Zarr step group with added fields:
       - tp_rate, rain_rate, snow_rate, hail_rate  (mm/h-equivalent)
     """
     run_dir = os.path.join(DATA_DIR, model, run)
     if not os.path.isdir(run_dir):
         return
 
-    npz_files = sorted([f for f in os.listdir(run_dir) if f.endswith('.npz')])
-    if not npz_files:
+    steps = step_numbers_from_dir(run_dir)
+    if not steps:
         return
 
     prev_acc = None
     prev_step_seen = None
 
-    for fname in npz_files:
-        step = int(fname[:-4])
-        path = os.path.join(run_dir, fname)
-        z = np.load(path)
-        arrays = {k: z[k] for k in z.files}
+    for step in steps:
+        arrays = read_step_arrays(data_dir=DATA_DIR, model=model, run=run, step=step, keys=None, logger=logger)
 
         lat = arrays.get('lat')
         lon = arrays.get('lon')
@@ -1428,9 +1389,16 @@ def precompute_precip_rates_for_run(model: str, run: str):
         arrays['snow_rate'] = snow_rate
         arrays['hail_rate'] = hail_rate
 
-        tmp = path + '.tmp.npz'
-        np.savez_compressed(tmp, **arrays)
-        os.replace(tmp, path)
+        write_zarr_group(
+            step_zarr_path(DATA_DIR, model, run, step),
+            arrays,
+            attrs={
+                "run": str(run),
+                "step": int(step),
+                "model": str(model).replace("-", "_"),
+                "coordinate_grid": "regular_lat_lon",
+            },
+        )
 
         prev_acc = {
             'tot_prec': tp,
@@ -1442,7 +1410,7 @@ def precompute_precip_rates_for_run(model: str, run: str):
         }
         prev_step_seen = step
 
-    logger.info(f"Precomputed precip rates for {model} run {run} ({len(npz_files)} steps)")
+    logger.info(f"Precomputed precip rates for {model} run {run} ({len(steps)} steps)")
 
 
 def cleanup_old_runs(model, keep_runs, current_run=None):
@@ -1513,17 +1481,26 @@ def build_d2_boundary_cache(run: str):
     if not os.path.isdir(run_dir):
         return
 
-    npz_files = sorted([f for f in os.listdir(run_dir) if f.endswith('.npz')])
-    if not npz_files:
+    steps = step_numbers_from_dir(run_dir)
+    if not steps:
         return
 
     src = None
-    for f in npz_files:
-        p = os.path.join(run_dir, f)
+    static_arrays = read_static_arrays(data_dir=DATA_DIR, model="icon-d2", logger=logger)
+    for step in steps:
         try:
-            z = np.load(p)
+            z = read_step_arrays(
+                data_dir=DATA_DIR,
+                model="icon-d2",
+                run=run,
+                step=step,
+                keys=["lat", "lon", "ww"],
+                logger=logger,
+            )
             if 'lat' in z and 'lon' in z and 'ww' in z:
-                src = z
+                src = dict(z)
+                if "hsurf" in static_arrays:
+                    src["hsurf"] = static_arrays["hsurf"]
                 break
         except Exception:
             continue
@@ -1541,9 +1518,9 @@ def build_d2_boundary_cache(run: str):
     # Avoid mh (mixing height = NaN at night/stable conditions) and ww (NaN with no weather
     # event) — both have meteorological NaN that pulls the border inward beyond domain edges.
     # Fall back to ww, then all-valid if hsurf is unavailable.
-    if 'hsurf' in src.files:
+    if 'hsurf' in src:
         valid = np.isfinite(src['hsurf'])
-    elif 'ww' in src.files:
+    elif 'ww' in src:
         valid = np.isfinite(src['ww'])
     else:
         valid = np.ones((len(lat), len(lon)), dtype=bool)
@@ -1602,7 +1579,7 @@ def main():
     parser.add_argument("--steps", type=str, default="short",
                         help="'short', 'all', or comma-separated list")
     parser.add_argument("--force", action="store_true",
-                        help="Re-download even if .npz exists")
+                        help="Re-download even if Zarr data exists")
     parser.add_argument("--fill-missing", action="store_true",
                         help="Ingest only steps not yet on disk for this run. Defaults to --steps all if --steps not set explicitly.")
     parser.add_argument("--check-only", action="store_true",
@@ -1617,6 +1594,13 @@ def main():
     model = args.model
     cfg = MODEL_CONFIG[model]
     profile_name = resolve_profile_name(config, model, args.profile)
+
+    if not zarr_available():
+        logger.error("zarr/numcodecs is required for Skyview ingest")
+        sys.exit(2)
+    if not should_write_zarr():
+        logger.error("SKYVIEW_WRITE_ZARR disables the only supported ingest storage format")
+        sys.exit(2)
 
     run = get_latest_run(model, config=config) if args.run == "latest" else args.run
 
@@ -1684,9 +1668,8 @@ def main():
 
     if args.fill_missing:
         existing = {
-            int(os.path.splitext(f)[0])
-            for f in (os.listdir(out_dir) if os.path.isdir(out_dir) else [])
-            if f.endswith(".npz") and os.path.splitext(f)[0].isdigit()
+            s
+            for s in (step_numbers_from_dir(out_dir) if os.path.isdir(out_dir) else [])
         }
         steps = sorted(s for s in steps if s not in existing)
         if not steps:
@@ -1723,7 +1706,7 @@ def main():
         expected_prev, _ = _precip_prev_step_and_dt(model, step)
         if prev_step_done != expected_prev:
             if expected_prev is not None:
-                disk_acc = _load_precip_acc_from_step(out_dir, expected_prev)
+                disk_acc = _load_precip_acc_from_step(model, run, expected_prev)
                 prev_acc = disk_acc
                 prev_step_done = expected_prev if disk_acc is not None else None
             else:
@@ -1731,15 +1714,11 @@ def main():
                 prev_step_done = None
 
         if args.force:
-            npz = os.path.join(out_dir, f"{step:03d}.npz")
-            if os.path.exists(npz):
-                os.unlink(npz)
             zarr_dir = step_zarr_path(DATA_DIR, model, run, step)
             if os.path.isdir(zarr_dir):
                 shutil.rmtree(zarr_dir)
 
-        step_npz = os.path.join(out_dir, f"{step:03d}.npz")
-        existed_before = os.path.exists(step_npz)
+        existed_before = step_exists(DATA_DIR, model, run, step)
 
         success, curr_acc = ingest_step(run, step, tmp_dir, out_dir, model, config,
                                         profile_name=profile_name,
@@ -1750,7 +1729,7 @@ def main():
                 prev_acc = curr_acc
                 prev_step_done = step
 
-            fresh_step = (not existed_before) and os.path.exists(step_npz)
+            fresh_step = (not existed_before) and step_exists(DATA_DIR, model, run, step)
             should_precompute = sp_enabled and ((not sp_fresh_only) or fresh_step)
             if should_precompute:
                 try:

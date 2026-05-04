@@ -15,13 +15,7 @@ except Exception:  # pragma: no cover - exercised only where zarr is absent
     Blosc = None
 
 
-DATA_LAYOUT_ENV = "SKYVIEW_DATA_LAYOUT"
 WRITE_ZARR_ENV = "SKYVIEW_WRITE_ZARR"
-
-
-def data_layout() -> str:
-    value = os.environ.get(DATA_LAYOUT_ENV, "auto").strip().lower()
-    return value if value in {"auto", "npz", "zarr"} else "auto"
 
 
 def should_write_zarr() -> bool:
@@ -36,20 +30,16 @@ def model_dir_name(model: str) -> str:
     return str(model).replace("_", "-")
 
 
-def step_npz_path(data_dir: str, model: str, run: str, step: int) -> str:
-    return os.path.join(data_dir, model_dir_name(model), str(run), f"{int(step):03d}.npz")
-
-
 def step_zarr_path(data_dir: str, model: str, run: str, step: int) -> str:
     return os.path.join(data_dir, model_dir_name(model), str(run), f"{int(step):03d}.zarr")
 
 
-def static_npz_path(data_dir: str, model: str) -> str:
-    return os.path.join(data_dir, model_dir_name(model), "grid", "static.npz")
-
-
 def static_zarr_path(data_dir: str, model: str) -> str:
     return os.path.join(data_dir, model_dir_name(model), "grid", "static.zarr")
+
+
+def step_exists(data_dir: str, model: str, run: str, step: int) -> bool:
+    return os.path.isdir(step_zarr_path(data_dir, model, run, step))
 
 
 def step_numbers_from_dir(run_path: str) -> list[int]:
@@ -58,9 +48,7 @@ def step_numbers_from_dir(run_path: str) -> list[int]:
         return []
     for name in os.listdir(run_path):
         stem = None
-        if name.endswith(".npz"):
-            stem = name[:-4]
-        elif name.endswith(".zarr") and not name.startswith("."):
+        if name.endswith(".zarr") and not name.startswith("."):
             stem = name[:-5]
         if stem and stem.isdigit():
             steps.add(int(stem))
@@ -72,12 +60,6 @@ def _selected_keys(available: Iterable[str], keys: Optional[Iterable[str]]) -> l
     if keys is None:
         return sorted(available_set)
     return [k for k in keys if k in available_set]
-
-
-def _read_npz(path: str, keys: Optional[Iterable[str]]) -> Dict[str, Any]:
-    with np.load(path) as npz:
-        selected = _selected_keys(npz.files, keys)
-        return {k: npz[k] for k in selected}
 
 
 def _read_zarr(path: str, keys: Optional[Iterable[str]]) -> Dict[str, Any]:
@@ -96,26 +78,15 @@ def _open_step_zarr_for_direct(
     step: int,
     logger,
 ):
-    layout = data_layout()
     path = step_zarr_path(data_dir, model, run, step)
-    if layout == "npz":
-        return None
     if not os.path.isdir(path):
-        if layout == "zarr":
-            raise FileNotFoundError(f"Zarr data not found: {path}")
-        return None
+        raise FileNotFoundError(f"Zarr data not found: {path}")
     if not zarr_available():
-        if layout == "zarr":
-            raise RuntimeError("zarr is not installed")
-        return None
+        raise RuntimeError("zarr is not installed")
     try:
         return zarr.open_group(path, mode="r")
-    except Exception as exc:
-        if layout == "zarr":
-            raise
-        if logger is not None:
-            logger.warning("Zarr direct read failed for %s, falling back to NPZ: %s", path, exc)
-        return None
+    except Exception:
+        raise
 
 
 def _valid_time(run: str, step: int) -> str:
@@ -137,23 +108,13 @@ def _read_static_point_value(
     logger,
 ):
     zarr_path = static_zarr_path(data_dir, model)
-    layout = data_layout()
-    if layout in {"auto", "zarr"} and os.path.isdir(zarr_path) and zarr_available():
-        try:
-            group = zarr.open_group(zarr_path, mode="r")
-            if key in group:
-                return group[key][i, j]
-        except Exception as exc:
-            if layout == "zarr":
-                raise
-            if logger is not None:
-                logger.warning("Static Zarr direct read failed for %s: %s", zarr_path, exc)
-
-    if layout == "zarr":
+    if not os.path.isdir(zarr_path):
         return None
-    arrays = read_static_arrays(data_dir=data_dir, model=model, logger=logger)
-    if key in arrays:
-        return arrays[key][i, j]
+    if not zarr_available():
+        raise RuntimeError("zarr is not installed")
+    group = zarr.open_group(zarr_path, mode="r")
+    if key in group:
+        return group[key][i, j]
     return None
 
 
@@ -251,32 +212,6 @@ def read_step_point_arrays(
     return out
 
 
-def _read_layout(
-    *,
-    npz_path: str,
-    zarr_path: str,
-    keys: Optional[Iterable[str]],
-    logger,
-) -> Dict[str, Any]:
-    layout = data_layout()
-    if layout in {"auto", "zarr"} and os.path.isdir(zarr_path):
-        try:
-            return _read_zarr(zarr_path, keys)
-        except Exception as exc:
-            if layout == "zarr":
-                raise
-            if logger is not None:
-                logger.warning("Zarr read failed for %s, falling back to NPZ: %s", zarr_path, exc)
-
-    if layout == "zarr":
-        raise FileNotFoundError(f"Zarr data not found: {zarr_path}")
-
-    if os.path.exists(npz_path):
-        return _read_npz(npz_path, keys)
-
-    raise FileNotFoundError(f"Data not found: {zarr_path if layout == 'zarr' else npz_path}")
-
-
 def read_step_arrays(
     *,
     data_dir: str,
@@ -286,20 +221,17 @@ def read_step_arrays(
     keys: Optional[Iterable[str]],
     logger=None,
 ) -> Dict[str, Any]:
-    return _read_layout(
-        npz_path=step_npz_path(data_dir, model, run, step),
-        zarr_path=step_zarr_path(data_dir, model, run, step),
-        keys=keys,
-        logger=logger,
-    )
+    zarr_path = step_zarr_path(data_dir, model, run, step)
+    if not os.path.isdir(zarr_path):
+        raise FileNotFoundError(f"Zarr data not found: {zarr_path}")
+    return _read_zarr(zarr_path, keys)
 
 
 def read_static_arrays(*, data_dir: str, model: str, logger=None) -> Dict[str, Any]:
-    npz_path = static_npz_path(data_dir, model)
     zarr_path = static_zarr_path(data_dir, model)
-    if not os.path.exists(npz_path) and not os.path.isdir(zarr_path):
+    if not os.path.isdir(zarr_path):
         return {}
-    return _read_layout(npz_path=npz_path, zarr_path=zarr_path, keys=None, logger=logger)
+    return _read_zarr(zarr_path, keys=None)
 
 
 def _zarr_compressor():
