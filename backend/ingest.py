@@ -1413,16 +1413,42 @@ def precompute_precip_rates_for_run(model: str, run: str):
     logger.info(f"Precomputed precip rates for {model} run {run} ({len(steps)} steps)")
 
 
+def _model_cache_key(model: str) -> str:
+    return str(model).replace("-", "_")
+
+
+def cleanup_old_run_caches(model: str, retained_runs: set[str]) -> None:
+    """Remove disk cache entries for runs no longer retained."""
+    cache_dir = os.path.join(DATA_DIR, "cache")
+    if not os.path.isdir(cache_dir):
+        return
+
+    model_key = _model_cache_key(model)
+    for kind in os.listdir(cache_dir):
+        model_cache_dir = os.path.join(cache_dir, kind, model_key)
+        if not os.path.isdir(model_cache_dir):
+            continue
+        for run in os.listdir(model_cache_dir):
+            if run in retained_runs:
+                continue
+            run_cache_dir = os.path.join(model_cache_dir, run)
+            if os.path.isdir(run_cache_dir):
+                logger.info(f"Cleaning up old cache: cache/{kind}/{model_key}/{run}")
+                shutil.rmtree(run_cache_dir, ignore_errors=True)
+
+
 def cleanup_old_runs(model, keep_runs, current_run=None):
-    """Remove old runs, keeping only `keep_runs` most recent."""
+    """Remove old runs and matching disk caches, keeping only `keep_runs` most recent."""
     model_dir = os.path.join(DATA_DIR, model)
     if not os.path.isdir(model_dir):
         return
     runs = sorted([d for d in os.listdir(model_dir) if len(d) == 10 and d.isdigit()], reverse=True)
+    retained_runs = set(runs[:keep_runs])
     for old_run in runs[keep_runs:]:
         old_path = os.path.join(model_dir, old_run)
         logger.info(f"Cleaning up old run: {model}/{old_run}")
         shutil.rmtree(old_path, ignore_errors=True)
+    cleanup_old_run_caches(model, retained_runs)
 
 
 def _merge_axis_aligned_segments(segments, eps=1e-9):
@@ -1663,8 +1689,6 @@ def main():
         sys.exit(0)
 
     out_dir = os.path.join(DATA_DIR, model, run)
-    tmp_dir = os.path.join(DATA_DIR, "tmp", f"{model}_{run}")
-    os.makedirs(tmp_dir, exist_ok=True)
 
     if args.fill_missing:
         existing = {
@@ -1720,7 +1744,7 @@ def main():
 
         existed_before = step_exists(DATA_DIR, model, run, step)
 
-        success, curr_acc = ingest_step(run, step, tmp_dir, out_dir, model, config,
+        success, curr_acc = ingest_step(run, step, None, out_dir, model, config,
                                         profile_name=profile_name,
                                         prev_acc=prev_acc, prev_step=prev_step_done)
         if success:
@@ -1764,9 +1788,6 @@ def main():
             build_d2_boundary_cache(run)
         except Exception as e:
             logger.warning(f"D2 boundary cache build failed: {e}")
-
-    # Cleanup tmp
-    subprocess.run(["rm", "-rf", tmp_dir], capture_output=True)
 
     # Cleanup old runs — keep only latest (configurable)
     keep = config.get("retention", {}).get("keep_runs", 1)

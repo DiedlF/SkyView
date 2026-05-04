@@ -14,6 +14,7 @@ from ingest import (  # noqa: E402
     _select_spatial_dataset,
     build_d2_boundary_cache,
     check_new_data_available,
+    cleanup_old_runs,
     load_grib_with_substeps,
 )
 from services import storage_io  # noqa: E402
@@ -161,6 +162,36 @@ def test_check_new_data_available_counts_zarr_steps(tmp_path, monkeypatch):
 
     assert available is True
     assert has_local is True
+
+
+def test_cleanup_old_runs_removes_matching_disk_cache_dirs(tmp_path, monkeypatch):
+    for run in ("2026042600", "2026042606", "2026042612"):
+        (tmp_path / "icon-d2" / run).mkdir(parents=True)
+
+    for kind in ("meteogram-point", "emagram-point", "nowcast-point"):
+        for run in ("2026042600", "2026042606", "2026042612"):
+            cache_dir = tmp_path / "cache" / kind / "icon_d2" / run
+            cache_dir.mkdir(parents=True)
+            (cache_dir / "entry.json").write_text("{}", encoding="utf-8")
+
+    other_model_cache = tmp_path / "cache" / "meteogram-point" / "icon_eu" / "2026042600"
+    other_model_cache.mkdir(parents=True)
+    (other_model_cache / "entry.json").write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr("ingest.DATA_DIR", str(tmp_path))
+
+    cleanup_old_runs("icon-d2", keep_runs=1)
+
+    assert (tmp_path / "icon-d2" / "2026042612").exists()
+    assert not (tmp_path / "icon-d2" / "2026042606").exists()
+    assert not (tmp_path / "icon-d2" / "2026042600").exists()
+
+    for kind in ("meteogram-point", "emagram-point", "nowcast-point"):
+        assert (tmp_path / "cache" / kind / "icon_d2" / "2026042612").exists()
+        assert not (tmp_path / "cache" / kind / "icon_d2" / "2026042606").exists()
+        assert not (tmp_path / "cache" / kind / "icon_d2" / "2026042600").exists()
+
+    assert other_model_cache.exists()
 
 
 def test_load_precip_acc_from_zarr_step(tmp_path, monkeypatch):

@@ -211,7 +211,7 @@ class RemoteProvider:
         path = self._disk_key_path(cache_key)
         if not path:
             return
-        tmp = f"{path}.tmp"
+        tmp = f"{path}.tmp.npz"
         to_save = {}
         for k, v in arrays.items():
             if isinstance(v, np.ndarray):
