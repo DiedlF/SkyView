@@ -6,116 +6,995 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <title>Skyview Admin</title>
   <style>
-    :root{--bg:#0f172a;--panel:#111827;--panel2:#0b1220;--line:#243041;--muted:#94a3b8;--text:#e2e8f0;--ok:#16a34a;--warn:#f59e0b;--crit:#ef4444;--info:#2563eb}
-    *{box-sizing:border-box} body{font-family:Inter,system-ui,sans-serif;margin:0;background:var(--bg);color:var(--text)}
-    .wrap{max-width:1500px;margin:0 auto;padding:20px} .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
-    .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px} .span-all{grid-column:1/-1}
-    h1,h2,h3{margin:0 0 8px} h2{font-size:18px} h3{font-size:14px;margin-top:12px} .muted{color:var(--muted);font-size:13px}
-    .toolbar,.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center} .toolbar{margin-bottom:8px}
-    button,input,select{background:var(--panel2);color:var(--text);border:1px solid #334155;border-radius:9px;padding:7px 9px} button{cursor:pointer;background:var(--info);border-color:var(--info);color:#fff}
-    table{width:100%;border-collapse:collapse;font-size:13px} td,th{padding:7px 5px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
-    pre{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px;max-height:320px;overflow:auto;font-size:12px}
-    .section-title{display:flex;justify-content:space-between;align-items:end;gap:12px;margin:22px 0 10px;padding-top:10px;border-top:1px solid #1e293b}
-    .pill,.tag{display:inline-block;padding:3px 8px;border-radius:999px;font-size:11px;border:1px solid #334155}.pill-ok{background:#113422;border-color:#166534}.pill-warn{background:#3b2f13;border-color:#a16207}.pill-crit{background:#3a1b1b;border-color:#b91c1c}.pill-info{background:#10223d;border-color:#2563eb}
-    .tag.new{background:#1e293b}.tag.triaged{background:#3b2f13}.tag.resolved{background:#113422}
-    .attention{padding:16px;border-radius:16px;border:1px solid var(--line);margin:14px 0 18px}.attention.ok{background:linear-gradient(135deg,#0c1d16,#111827)}.attention.warn{background:linear-gradient(135deg,#2c1f04,#111827)}.attention.crit{background:linear-gradient(135deg,#311212,#111827)}
-    .attention-grid,.kpi-grid,.health-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
-    .mini{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px}.mini .label{font-size:12px;color:var(--muted)} .mini .value{font-size:22px;font-weight:700;line-height:1.2}
-    .delta.up{color:#fca5a5}.delta.down{color:#86efac}.delta.flat{color:var(--muted)} .subtle{font-size:12px;color:var(--muted)}
-    .pipeline-card{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px}.timeline-track{margin-top:8px;height:8px;border-radius:999px;background:#1f2937;overflow:hidden}.timeline-fill{height:100%;background:linear-gradient(90deg,#2563eb,#38bdf8)}
-    .phase-line{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.phase{padding:5px 8px;border-radius:999px;border:1px solid #334155;font-size:12px}.phase.done{background:#113422;border-color:#166534}.phase.active{background:#10223d;border-color:#2563eb}.phase.todo{background:#1f2937}
-    .empty{padding:14px;border:1px dashed #334155;border-radius:10px;color:var(--muted);background:rgba(15,23,42,.35)} .split{display:grid;grid-template-columns:1.5fr 1fr;gap:14px} @media(max-width:1000px){.split{grid-template-columns:1fr}}
-    .error-item{border:1px solid var(--line);border-radius:10px;padding:10px;background:var(--panel2);margin-bottom:10px} .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-    .btn-secondary{background:#1e293b;border-color:#334155} .btn-small{padding:4px 8px;font-size:12px}
+    :root {
+      --bg: #0b1020;
+      --surface: #111827;
+      --surface-2: #0f172a;
+      --surface-3: #172033;
+      --line: #273244;
+      --line-soft: #1f2937;
+      --text: #e5e7eb;
+      --muted: #94a3b8;
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --crit: #ef4444;
+      --info: #38bdf8;
+      --focus: #60a5fa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .wrap { max-width: 1540px; margin: 0 auto; padding: 18px; }
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      margin-bottom: 14px;
+    }
+    h1, h2, h3 { margin: 0; line-height: 1.2; }
+    h1 { font-size: 24px; letter-spacing: 0; }
+    h2 { font-size: 16px; margin-bottom: 10px; }
+    h3 { font-size: 13px; color: var(--muted); margin: 14px 0 8px; }
+    button, input, select {
+      background: var(--surface-2);
+      border: 1px solid #334155;
+      border-radius: 8px;
+      color: var(--text);
+      min-height: 34px;
+      padding: 7px 10px;
+      font: inherit;
+    }
+    button { cursor: pointer; background: #1d4ed8; border-color: #2563eb; }
+    button.secondary { background: var(--surface-3); border-color: #334155; }
+    button.tab {
+      background: transparent;
+      border-color: transparent;
+      color: var(--muted);
+      border-radius: 6px;
+    }
+    button.tab.active { background: var(--surface-3); color: var(--text); border-color: var(--line); }
+    button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 2px;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td {
+      padding: 8px 7px;
+      border-bottom: 1px solid var(--line-soft);
+      text-align: left;
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-weight: 600; }
+    pre {
+      background: #0a1020;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: #cbd5e1;
+      font-size: 12px;
+      max-height: 360px;
+      overflow: auto;
+      padding: 10px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    details { border-top: 1px solid var(--line-soft); margin-top: 10px; padding-top: 10px; }
+    summary { cursor: pointer; color: var(--text); font-weight: 600; }
+    .muted { color: var(--muted); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    .toolbar, .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .toolbar { margin-bottom: 10px; }
+    .tabs {
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      gap: 4px;
+      margin-bottom: 14px;
+      overflow-x: auto;
+      padding-bottom: 8px;
+    }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    .grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 12px; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 13px;
+      min-width: 0;
+    }
+    .span-3 { grid-column: span 3; }
+    .span-4 { grid-column: span 4; }
+    .span-5 { grid-column: span 5; }
+    .span-6 { grid-column: span 6; }
+    .span-7 { grid-column: span 7; }
+    .span-8 { grid-column: span 8; }
+    .span-12 { grid-column: 1 / -1; }
+    .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+    .metric {
+      background: var(--surface-2);
+      border: 1px solid var(--line-soft);
+      border-radius: 6px;
+      min-height: 76px;
+      padding: 10px;
+    }
+    .metric .label { color: var(--muted); font-size: 12px; }
+    .metric .value { font-size: 20px; font-weight: 750; margin-top: 2px; overflow-wrap: anywhere; }
+    .metric .sub { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .attention {
+      border: 1px solid var(--line);
+      border-left-width: 5px;
+      border-radius: 8px;
+      padding: 13px;
+      margin-bottom: 14px;
+      background: var(--surface);
+    }
+    .attention.ok { border-left-color: var(--ok); }
+    .attention.warn { border-left-color: var(--warn); }
+    .attention.crit { border-left-color: var(--crit); }
+    .pill, .tag {
+      border: 1px solid #334155;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      line-height: 1;
+      padding: 5px 8px;
+      white-space: nowrap;
+    }
+    .pill-ok, .tag.resolved { background: #0f2b1d; border-color: #166534; color: #bbf7d0; }
+    .pill-warn, .tag.triaged { background: #302408; border-color: #a16207; color: #fde68a; }
+    .pill-crit, .tag.new { background: #331313; border-color: #b91c1c; color: #fecaca; }
+    .pill-info { background: #0b2742; border-color: #2563eb; color: #bfdbfe; }
+    .empty {
+      background: rgba(15, 23, 42, 0.55);
+      border: 1px dashed #334155;
+      border-radius: 8px;
+      color: var(--muted);
+      padding: 12px;
+    }
+    .issue {
+      background: var(--surface-2);
+      border: 1px solid var(--line-soft);
+      border-radius: 6px;
+      margin-bottom: 8px;
+      padding: 10px;
+    }
+    .compact th, .compact td { padding: 6px; }
+    .tight { margin: 0; padding-left: 18px; }
+    .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 0.55fr); gap: 12px; }
+    .status-line { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 8px; }
+    .scroll { overflow-x: auto; }
+    @media (max-width: 1100px) {
+      .span-3, .span-4, .span-5, .span-6, .span-7, .span-8 { grid-column: 1 / -1; }
+      .split { grid-template-columns: 1fr; }
+      header { display: block; }
+      header .toolbar { margin-top: 10px; }
+    }
   </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Skyview Admin / Status</h1>
-  <div class="toolbar">
-    <button id="refresh">Refresh</button>
-    <span class="muted">Last updated: <span id="lastUpdated">-</span></span>
-    <span class="muted">Auto refresh in <span id="refreshCountdown">120</span>s</span>
-  </div>
+  <header>
+    <div>
+      <h1>Skyview Admin</h1>
+      <div class="muted">Last updated: <span id="lastUpdated">-</span> | Auto refresh in <span id="refreshCountdown">120</span>s</div>
+    </div>
+    <div class="toolbar">
+      <button id="refresh">Refresh</button>
+      <button id="loadLogsTop" class="secondary">Load logs</button>
+    </div>
+  </header>
 
-  <section id="attentionBanner" class="attention warn"><div>Loading…</div></section>
+  <nav class="tabs" aria-label="Admin sections">
+    <button class="tab active" data-tab="overview">Overview</button>
+    <button class="tab" data-tab="ingest">Ingest</button>
+    <button class="tab" data-tab="reliability">Reliability</button>
+    <button class="tab" data-tab="performance">Performance</button>
+    <button class="tab" data-tab="storage">Storage</button>
+    <button class="tab" data-tab="diagnostics">Diagnostics</button>
+  </nav>
 
-  <div class="section-title"><div><h2>Operations</h2><div class="muted">Freshness, pipeline, users, incidents, endpoint health.</div></div></div>
-  <div class="grid">
-    <section class="card span-all"><h2>System health</h2><div class="health-row" id="healthRow">Loading…</div></section>
-    <section class="card span-all"><h2>Now (KPI)</h2><div class="kpi-grid" id="kpis">Loading…</div></section>
-    <section class="card"><h2>Pipeline status</h2><div id="pipeline">Loading…</div></section>
-    <section class="card"><h2>Users</h2><div id="usage">Loading…</div></section>
-    <section class="card"><h2>Storage</h2><div id="storage">Loading…</div></section>
-    <section class="card span-all"><h2>Endpoint traffic + errors overview</h2><div id="endpointOverview">Loading…</div></section>
-    <section class="card span-all"><h2>Recent errors</h2><div id="recentErrors">Loading…</div></section>
-    <section class="card span-all"><h2>Incidents / Feedback inbox</h2><div class="toolbar" id="feedbackSummary"></div><div class="toolbar"><select id="fbStatus"><option value="">all statuses</option><option>new</option><option>triaged</option><option>resolved</option></select><input id="fbSearch" placeholder="search feedback" style="min-width:260px"><button id="fbApply">Apply</button></div><div id="feedback">Loading…</div></section>
-  </div>
+  <section id="attentionBanner" class="attention warn">Loading...</section>
 
-  <div class="section-title"><div><h2>Engineering</h2><div class="muted">Diagnostics, cache semantics, integrity checks, perf breakdown, debug tooling.</div></div></div>
-  <div class="grid">
-    <section class="card span-all"><h2>Symbol diagnostics</h2><div id="symbolDiagnostics">Loading…</div></section>
-    <section class="card span-all"><h2>Data integrity</h2><div id="dataIntegrity">Loading…</div></section>
-    <section class="card span-all"><h2>Advanced metrics</h2><div id="overviewMetrics">Loading…</div></section>
-    <section class="card span-all"><h2>Meteogram debug</h2><div class="toolbar"><label style="font-size:13px">Lat <input id="mgLat" type="number" step="0.01" value="47.5" style="width:90px"></label><label style="font-size:13px">Lon <input id="mgLon" type="number" step="0.01" value="11.0" style="width:90px"></label><label style="font-size:13px">Model <select id="mgModel"><option value="icon_d2" selected>icon_d2</option></select></label><button id="mgQuery">Query</button></div><div id="mgResult"></div></section>
-    <section class="card span-all"><h2>Emagram debug</h2><div class="toolbar"><label style="font-size:13px">Lat <input id="emLat" type="number" step="0.01" value="47.5" style="width:90px"></label><label style="font-size:13px">Lon <input id="emLon" type="number" step="0.01" value="11.0" style="width:90px"></label><label style="font-size:13px">Time <input id="emTime" value="latest" style="width:110px"></label><label style="font-size:13px">Model <select id="emModel"><option value="icon_d2">icon_d2</option></select></label><button id="emQuery">Query</button></div><div id="emResult"></div></section>
-    <section class="card span-all"><h2>Logs</h2><div class="toolbar" id="logsSummary"></div><div class="toolbar"><select id="logSource"><option value="all">all sources</option><option value="backend">backend</option><option value="ingest">ingest</option><option value="stdout">stdout</option></select><select id="logLevel"><option value="all">all levels</option><option value="error">error</option><option value="warn">warn</option><option value="info">info</option><option value="debug">debug</option></select><input id="logFilter" placeholder="filter lines…" style="min-width:200px"><select id="logFile"><option value="all">all files</option></select><label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" id="logNewest" checked> newest first</label><button id="logApply">Apply</button></div><div id="logsArtifacts" style="margin-bottom:8px"></div><div id="logs">Loading…</div></section>
-  </div>
+  <main>
+    <section id="tab-overview" class="panel active">
+      <div class="grid">
+        <section class="card span-12"><h2>Current State</h2><div id="overviewMetrics" class="metric-grid">Loading...</div></section>
+        <section class="card span-7"><h2>Models</h2><div id="overviewModels">Loading...</div></section>
+        <section class="card span-5"><h2>Attention Queue</h2><div id="attentionQueue">Loading...</div></section>
+        <section class="card span-6"><h2>Traffic And Errors</h2><div id="overviewTraffic">Loading...</div></section>
+        <section class="card span-6"><h2>Users</h2><div id="usage">Loading...</div></section>
+      </div>
+    </section>
+
+    <section id="tab-ingest" class="panel">
+      <div class="grid">
+        <section class="card span-12"><h2>Ingest Runs</h2><div id="ingestModels">Loading...</div></section>
+        <section class="card span-6"><h2>Ingest Process</h2><div id="ingestProcess">Loading...</div></section>
+        <section class="card span-6"><h2>Data Integrity</h2><div id="dataIntegrity">Loading...</div></section>
+      </div>
+    </section>
+
+    <section id="tab-reliability" class="panel">
+      <div class="grid">
+        <section class="card span-12"><h2>Incidents</h2><div id="incidentQueue">Loading...</div></section>
+        <section class="card span-12">
+          <div class="status-line">
+            <h2>Feedback Inbox</h2>
+            <div id="feedbackSummary" class="toolbar"></div>
+          </div>
+          <div class="toolbar">
+            <select id="fbStatus">
+              <option value="">all statuses</option>
+              <option>new</option>
+              <option>triaged</option>
+              <option>resolved</option>
+            </select>
+            <input id="fbSearch" placeholder="search feedback" style="min-width:260px">
+            <button id="fbApply">Apply</button>
+          </div>
+          <div id="feedback">Loading...</div>
+        </section>
+      </div>
+    </section>
+
+    <section id="tab-performance" class="panel">
+      <div class="grid">
+        <section class="card span-12"><h2>Performance Summary</h2><div id="performanceSummary" class="metric-grid">Loading...</div></section>
+        <section class="card span-8"><h2>Endpoint Latency</h2><div id="endpointLatency">Loading...</div></section>
+        <section class="card span-4"><h2>Cache Efficiency</h2><div id="cacheEfficiency">Loading...</div></section>
+        <section class="card span-12"><h2>Endpoint Traffic And Errors</h2><div id="endpointTraffic">Loading...</div></section>
+      </div>
+    </section>
+
+    <section id="tab-storage" class="panel">
+      <div class="grid">
+        <section class="card span-12"><h2>Storage Summary</h2><div id="storageSummary" class="metric-grid">Loading...</div></section>
+        <section class="card span-6"><h2>Forecast Data</h2><div id="forecastStorage">Loading...</div></section>
+        <section class="card span-6"><h2>Disk Caches</h2><div id="diskCacheStorage">Loading...</div></section>
+        <section class="card span-12"><h2>Storage Details</h2><div id="storageDetails">Loading...</div></section>
+      </div>
+    </section>
+
+    <section id="tab-diagnostics" class="panel">
+      <div class="grid">
+        <section class="card span-7"><h2>Symbol Diagnostics</h2><div id="symbolDiagnostics">Loading...</div></section>
+        <section class="card span-5"><h2>Server Health</h2><div id="serverHealth">Loading...</div></section>
+        <section class="card span-12">
+          <details>
+            <summary>Meteogram debug</summary>
+            <div class="toolbar" style="margin-top:10px">
+              <label>Lat <input id="mgLat" type="number" step="0.01" value="47.5" style="width:90px"></label>
+              <label>Lon <input id="mgLon" type="number" step="0.01" value="11.0" style="width:90px"></label>
+              <label>Model <select id="mgModel"><option value="icon_d2" selected>icon_d2</option></select></label>
+              <button id="mgQuery">Query</button>
+            </div>
+            <div id="mgResult"></div>
+          </details>
+          <details>
+            <summary>Emagram debug</summary>
+            <div class="toolbar" style="margin-top:10px">
+              <label>Lat <input id="emLat" type="number" step="0.01" value="47.5" style="width:90px"></label>
+              <label>Lon <input id="emLon" type="number" step="0.01" value="11.0" style="width:90px"></label>
+              <label>Time <input id="emTime" value="latest" style="width:110px"></label>
+              <label>Model <select id="emModel"><option value="icon_d2">icon_d2</option></select></label>
+              <button id="emQuery">Query</button>
+            </div>
+            <div id="emResult"></div>
+          </details>
+        </section>
+        <section class="card span-12">
+          <div class="status-line">
+            <h2>Logs</h2>
+            <button id="loadLogs" class="secondary">Load logs</button>
+          </div>
+          <div class="toolbar" id="logsSummary"></div>
+          <div class="toolbar">
+            <select id="logSource">
+              <option value="all">all sources</option>
+              <option value="backend">backend</option>
+              <option value="ingest">ingest</option>
+              <option value="stdout">stdout</option>
+            </select>
+            <select id="logLevel">
+              <option value="all">all levels</option>
+              <option value="error">error</option>
+              <option value="warn">warn</option>
+              <option value="info">info</option>
+              <option value="debug">debug</option>
+            </select>
+            <input id="logFilter" placeholder="filter lines" style="min-width:220px">
+            <select id="logFile"><option value="all">all files</option></select>
+            <label class="row"><input type="checkbox" id="logNewest" checked> newest first</label>
+            <button id="logApply">Apply</button>
+          </div>
+          <div id="logsArtifacts"></div>
+          <div id="logs" class="empty">Logs are loaded on demand.</div>
+        </section>
+      </div>
+    </section>
+  </main>
 </div>
+
 <script>
-const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-const fmt=n=>!Number.isFinite(Number(n))?'—':(()=>{n=Number(n);const u=['B','KB','MB','GB','TB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return n.toFixed(i?1:0)+' '+u[i]})();
-const cleanTs=v=>String(v??'').replace(/\.\d+(?=Z|$)/g,'');
-const tidy=v=>Number.isFinite(v)?Math.round(v):(typeof v==='string'?cleanTs(v):v);
-const j=async(url,opt)=>{const r=await fetch(url,opt); if(!r.ok) throw new Error(url+': '+r.status); return r.json();};
-const toNum=v=>Number.isFinite(Number(v))?Number(v):null;
-const minsSince=iso=>{try{return (Date.now()-new Date(iso).getTime())/60000;}catch{return null;}};
-const yesNo=v=>v===true?'yes':v===false?'no':'—';
-const pct=v=>Number.isFinite(Number(v))?(Number(v)*100).toFixed(1)+'%':'—';
-const numOr=v=>Number.isFinite(Number(v))?String(Math.round(Number(v))):'—';
-const ageMin=v=>Number.isFinite(Number(v))?`${Number(v).toFixed(1)} min`:'No completed run yet';
-const clsForState=s=>s==='OK'?'pill-ok':s==='Warning'?'pill-warn':s==='Critical'?'pill-crit':'pill-info';
-const state={fbStatus:'',fbSearch:'',logLevel:'all',logSource:'all',logFilter:'',logFile:'all',logNewest:true};
-let _logsCache=[],_statusCache=null,_storageCache=null,_feedbackLast=[],_overviewCache=null,_prevKpi={},_refreshEvery=120,_refreshLeft=_refreshEvery,_lastDebug={meteogram:null,emagram:null};
-function kvTable(rows){return '<table>'+rows.map(([k,v])=>`<tr><th>${esc(k)}</th><td>${(v&&typeof v==='object'&&v.html)?v.html:esc(tidy(v??'—'))}</td></tr>`).join('')+'</table>'}
-function badgeState(s){return `<span class="pill ${clsForState(s)}">${esc(s)}</span>`}
-function deltaHtml(v,invert=false){if(!Number.isFinite(v))return '<span class="delta flat">insufficient history</span>'; const sign=v>0?'+':''; const cls=Math.abs(v)<0.005?'flat':((v>0)!==invert?'up':'down'); return `<span class="delta ${cls}">${sign}${(v*100).toFixed(1)}%</span>`;}
-function kpiDelta(key,val,invert=false){const prev=_prevKpi[key];_prevKpi[key]=val;if(!Number.isFinite(prev)||!Number.isFinite(val)) return '<span class="delta flat">—</span>'; const d=val-prev; if(Math.abs(d)<0.001) return '<span class="delta flat">steady</span>'; const cls=((d>0)!==invert)?'up':'down'; const sign=d>0?'+':''; return `<span class="delta ${cls}">${sign}${d.toFixed(1)}</span>`;}
-function empty(msg){return `<div class="empty">${esc(msg)}</div>`}
-function phase(state,label){return `<span class="phase ${state}">${esc(label)}</span>`}
-function applyUrlState(){const p=new URLSearchParams(location.search); for(const k of ['fbStatus','fbSearch','logLevel','logSource','logFilter','logFile']) if(p.has(k)) state[k]=p.get(k)||state[k]; if(p.has('logNewest')) state.logNewest=p.get('logNewest')==='1'; ['fbStatus','fbSearch','logLevel','logSource','logFilter'].forEach(id=>document.getElementById(id).value=state[id]); document.getElementById('logNewest').checked=state.logNewest;}
-function persistUrlState(){const p=new URLSearchParams(); Object.entries(state).forEach(([k,v])=>{if(v!==''&&v!=='all'&&!(k==='logNewest'&&v===true)) p.set(k,String(v));}); if(state.logNewest===false) p.set('logNewest','0'); history.replaceState({},'',`${location.pathname}${p.toString()?'?'+p.toString():''}`)}
-function healthEval(s,storage,overview){const fresh=toNum(s?.ingest?.freshnessMinutes); const p95=toNum(s?.perf?.overlayTilePhases?.recentWindow?.p95?.totalMs); const lockAge=toNum(storage?.ingest?.lock?.ageSeconds); const running=!!storage?.ingest?.isRunning; const recentErrors=(overview?.reliability?.recentErrors||[]); const active=recentErrors.filter(x=>x.status==='active').length; const ingest=(!running&&lockAge&&lockAge>1800)?['Critical',`stale lock ${Math.round(lockAge/60)}m`] : [running?'Warning':'OK', running?'ingest running':'idle']; const freshness=fresh==null?['Warning','freshness unknown'] : fresh>180?['Warning',`${fresh.toFixed(1)} min since full ingest`]:['OK',`${fresh.toFixed(1)} min since full ingest`]; const perf=p95==null?['Warning','no recent tile samples'] : p95>800?['Warning',`${Math.round(p95)} ms tile p95`]:['OK',`${Math.round(p95)} ms tile p95`]; const incidents=active?['Critical',`${active} active error groups`]:[(_feedbackLast||[]).some(x=>(x.status||'new')==='new')?'Warning':'OK', active?`${active} active errors`:'no active error burst']; return {ingest,freshness,perf,incidents}}
-function renderAttention(s,storage,overview){const h=healthEval(s,storage,overview); const items=[]; const push=(level,title,detail)=>items.push({level,title,detail}); if(h.ingest[0]==='Critical') push('Critical','Ingest lock looks stale',h.ingest[1]); if(h.freshness[0]!=='OK') push('Warning','Data freshness degraded',h.freshness[1]); if(h.perf[0]!=='OK') push('Warning','Tile latency elevated',h.perf[1]); const recent=(overview?.reliability?.recentErrors||[]); const active=recent.filter(x=>x.status==='active'); if(active.length) push('Critical','Active error groups detected',`${active.length} groups with hits in the last 10 minutes`); const integrityIssues=(overview?.engineering?.dataIntegrity?.issues||[]); if(integrityIssues.length) push('Warning','Data integrity issues present',integrityIssues[0]); const sev=items.some(x=>x.level==='Critical')?'crit':items.length?'warn':'ok'; const headline=sev==='crit'?'Needs attention':sev==='warn'?'Watch list':'Healthy right now'; document.getElementById('attentionBanner').className=`attention ${sev}`; document.getElementById('attentionBanner').innerHTML=`<div class="row" style="justify-content:space-between;margin-bottom:8px"><div><div class="muted">Attention summary</div><div style="font-size:26px;font-weight:800">${esc(headline)}</div></div><div>${badgeState(sev==='crit'?'Critical':sev==='warn'?'Warning':'OK')}</div></div><div class="attention-grid">${items.length?items.map(x=>`<div class="mini"><div class="label">${esc(x.title)}</div><div class="value" style="font-size:16px">${esc(x.level)}</div><div class="subtle">${esc(x.detail)}</div></div>`).join(''):`<div class="mini"><div class="label">Summary</div><div class="value" style="font-size:16px">All major runtime checks are within expected bounds.</div><div class="subtle">No active error bursts, stale ingest lock, or obvious integrity gaps.</div></div>`}</div>`}
-function renderHealth(s,storage,overview){const h=healthEval(s,storage,overview); const map=[['Ingest',h.ingest],['Data freshness',h.freshness],['Tile performance',h.perf],['Incidents',h.incidents]]; document.getElementById('healthRow').innerHTML=map.map(([label,[stateTxt,detail]])=>`<div class="mini"><div class="label">${esc(label)}</div><div class="value" style="font-size:18px">${esc(stateTxt)}</div><div class="subtle">${esc(detail)}</div></div>`).join('')}
-function renderKpis(s,storage,overview){const fresh=toNum(s?.ingest?.freshnessMinutes), p95=toNum(s?.perf?.overlayTilePhases?.recentWindow?.p95?.totalMs), p50=toNum(s?.perf?.overlayTilePhases?.recentWindow?.p50?.totalMs), hitRate=toNum(s?.cache?.tile?.hitRate), d2Fresh=toNum(storage?.models?.icon_d2?.freshnessMinutesSinceFullIngest), euFresh=toNum(storage?.models?.icon_eu?.freshnessMinutesSinceFullIngest), deskFill=toNum(s?.cache?.tile?.desktopFillRatio), mobFill=toNum(s?.cache?.tile?.mobileFillRatio), trends=overview?.performance?.kpiTrends||{}; const cards=[['Freshness',fresh==null?'No completed run yet':`${fresh.toFixed(1)} min`,'freshness',fresh,true,null],['Tile p95',p95==null?'No recent tile samples':`${Math.round(p95)} ms`,'p95',p95,true,trends.overlayTotalMsDelta],['Tile p50',p50==null?'No recent tile samples':`${Math.round(p50)} ms`,'p50',p50,true,null],['Cache hit rate',hitRate==null?'No cache traffic yet':`${(hitRate*100).toFixed(1)}%`,'hitRate',hitRate*100,false,null],['Tile fill desktop',deskFill==null?'No cache state':`${(deskFill*100).toFixed(1)}%`,'deskFill',deskFill*100,false,null],['Tile fill mobile',mobFill==null?'No cache state':`${(mobFill*100).toFixed(1)}%`,'mobFill',mobFill*100,false,null],['D2 full ingest age',ageMin(d2Fresh),'d2Fresh',d2Fresh,true,null],['EU full ingest age',ageMin(euFresh),'euFresh',euFresh,true,null]]; document.getElementById('kpis').innerHTML=cards.map(([l,v,k,n,invert,trend])=>`<div class="mini"><div class="label">${esc(l)}</div><div class="value">${esc(v)}</div>${kpiDelta(k,n,invert)} ${trend!=null?`<span class="subtle">window trend ${deltaHtml(trend,invert)}</span>`:''}</div>`).join('')}
-function modelBadge(m,expected){const steps=toNum(m?.latestRunFullyIngestedSteps); const fresh=toNum(m?.freshnessMinutesSinceFullIngest); let state='Warning', text='No full ingest'; if(Number.isFinite(steps)&&steps>=expected) state=(fresh!=null&&fresh>180)?'Warning':'OK', text=`${steps}/${expected} steps`; else if(Number.isFinite(steps)&&steps>0) state='Warning', text=`${steps}/${expected} steps`; else if(m?.latestRun) state='Critical', text='run detected, no completed ingest'; else state='Critical', text='no run'; return [state,text]}
-function renderPipeline(storage){const modelRow=(name,m,stepsExpected)=>{const steps=toNum(m?.latestRunFullyIngestedSteps); const pct=Number.isFinite(steps)?Math.min(100,(steps/stepsExpected)*100):0; const [stateTxt,badgeTxt]=modelBadge(m,stepsExpected); const phases=[m?.latestRunStartAt?phase('done','run known'):phase('todo','run known'),m?.latestRunAvailableAt?phase('done','timeline visible'):phase('todo','timeline visible'),m?.latestRunFirstIngestedAt?phase('done','first step ingested'):phase('todo','first step ingested'),m?.latestRunFullyAvailableOnDwdAt?phase('done','DWD full run visible'):phase('todo','DWD full run visible'),m?.latestRunFullyIngestedAt?phase('done','full ingest done'):m?.ingestRunningMinutes?phase('active','ingest running'):phase('todo','full ingest done')].join(''); return `<div class="pipeline-card"><div class="row" style="justify-content:space-between"><div><strong>${esc(name)}</strong><div class="subtle">${esc(m?.latestRun||'No run detected')}</div></div><div>${badgeState(stateTxt)} <span class="subtle">${esc(badgeTxt)}</span></div></div>${kvTable([['Timeline visible at',m?.latestRunAvailableAt||'—'],['DWD full run visible at',m?.latestRunFullyAvailableOnDwdAt||'—'],['First step ingested',m?.latestRunFirstIngestedAt||'—'],['Full ingest completed',m?.latestRunFullyIngestedAt||'—'],['Model calc duration',Number.isFinite(toNum(m?.modelCalculationMinutes))?`${toNum(m.modelCalculationMinutes).toFixed(1)} min`:'No DWD timing sample'],['Ingest duration',Number.isFinite(toNum(m?.ingestDurationMinutes))?`${toNum(m.ingestDurationMinutes).toFixed(1)} min`:m?.ingestRunningMinutes?`running for ${toNum(m.ingestRunningMinutes).toFixed(1)} min`:'No completed ingest duration']])}<div class="subtle" style="margin-top:8px">Step completion: ${Number.isFinite(steps)?`${steps}/${stepsExpected}`:'No full ingest yet'}</div><div class="timeline-track"><div class="timeline-fill" style="width:${pct.toFixed(1)}%"></div></div><div class="phase-line">${phases}</div></div>`}; const d2=storage?.models?.icon_d2||{}, eu=storage?.models?.icon_eu||{}; document.getElementById('pipeline').innerHTML=`<div style="display:grid;gap:10px">${modelRow('ICON-D2',d2,48)}${modelRow('ICON-EU',eu,92)}</div>`}
-function renderStorage(storage){const d2=storage?.models?.icon_d2||{}, eu=storage?.models?.icon_eu||{}, tmp=storage?.tmp||{}, ingest=storage?.ingest||{}; let html=kvTable([['Total data size',fmt(storage?.totalBytes)],['ICON-D2 size',fmt(d2.totalBytes)],['ICON-EU size',fmt(eu.totalBytes)],['Ingest running',yesNo(ingest.isRunning)],['Ingest lock', ingest.lock?.exists ? `yes (${ingest.lock?.ageSeconds}s old)` : 'no'],['tmp entries',tmp.count||0]]); if((tmp.entries||[]).length){html+='<h3>tmp scratch area</h3><table><tr><th>Name</th><th>Type</th><th>Size</th></tr>'+(tmp.entries||[]).map(e=>`<tr><td>${esc(e.name)}</td><td>${esc(e.isDir?'dir':'file')}</td><td>${fmt(e.bytes)}</td></tr>`).join('')+'</table>'} else html+='<div class="subtle" style="margin-top:8px">No tmp artifacts right now.</div>'; document.getElementById('storage').innerHTML=html}
-function renderUsage(storage,overview){const u=storage?.usage||{}, m=storage?.markers||{}, t=overview?.performance?.kpiTrends||{}; document.getElementById('usage').innerHTML=kvTable([['Stored markers',m.totalMarkers??'—'],['Distinct marker clients',m.distinctClientIds??'—'],['Markers active last 24h',m.activeLast24h??'—'],['Markers active last 7d',m.activeLast7d??'—'],['Visits last 30d',`${u.totalVisits??0} ${t.visitsDelta!=null?`(${(t.visitsDelta>0?'+':'')+(t.visitsDelta*100).toFixed(1)}%)`:''}`],['Estimated unique last 30d',`${u.estimatedUniqueVisitors??0} ${t.uniqueVisitorsDelta!=null?`(${(t.uniqueVisitorsDelta>0?'+':'')+(t.uniqueVisitorsDelta*100).toFixed(1)}%)`:''}`],['Usage stats updated',u.updatedAt||'—']])}
-function renderEndpointOverview(data){const rows=(data?.reliability?.endpointTrafficErrors||[]); if(!rows.length){document.getElementById('endpointOverview').innerHTML=empty('No endpoint traffic captured in this process yet.'); return;} document.getElementById('endpointOverview').innerHTML='<table><tr><th>Path</th><th>Requests</th><th>4xx</th><th>5xx</th><th>Total errors</th><th>Error rate</th><th>Last seen</th></tr>'+rows.map(r=>`<tr><td class="mono">${esc(r.path)}</td><td>${esc(r.requests)}</td><td>${esc(r.errors4xx)}</td><td>${esc(r.errors5xx)}</td><td>${esc(r.errorTotal)}</td><td>${esc(r.errorRate==null?'—':(r.errorRate*100).toFixed(1)+'%')}</td><td>${esc(r.lastSeen||'—')}</td></tr>`).join('')+'</table><div class="subtle" style="margin-top:8px">Sorted by traffic first, then error volume, so hot endpoints stay visible even when they are mostly healthy.</div>'}
-function renderRecentErrors(data){const rows=(data?.reliability?.recentErrors||[]); if(!rows.length){document.getElementById('recentErrors').innerHTML=empty('No recent error groups found in the available logs.'); return;} document.getElementById('recentErrors').innerHTML=rows.map(r=>`<div class="error-item"><div class="row" style="justify-content:space-between"><div><strong>${badgeState(r.status==='active'?'Critical':r.status==='recent'?'Warning':'Info')}</strong> <span class="mono">${esc(r.fingerprint)}</span></div><div class="subtle">sources: ${esc((r.sources||[]).join(', ')||'—')}</div></div><div class="row" style="margin:6px 0 8px">${[['10m',r.count10m],['1h',r.count1h],['24h',r.count24h],['all',r.count]].map(([l,v])=>`<span class="pill pill-info">${esc(l)}: ${esc(v??0)}</span>`).join(' ')}</div>${kvTable([['Latest seen',r.latestSeen||'unknown'],['First seen',r.firstSeen||'unknown'],['Classification',r.status],['Sample',r.sample||'—']])}</div>`).join('')}
-function renderSymbolDiagnostics(data){const d=data?.engineering?.symbolDiagnostics||{}; const cache=d.cache||{}; const sy=cache.symbols||{}, lz=cache.lowZoom||{}; let html='<div class="split"><div>'; html+=kvTable([['Latest symbol model',d.latestModel||'—'],['Latest run',d.latestRun||'—'],['Symbol cache items',sy.items??'—'],['Symbol cache fill',pct(sy.fillRatio)],['Symbol cache hit rate',pct(sy.hitRate)],['Low-zoom cache hit rate',pct(lz.hitRate)],['Low-zoom cache max zoom',lz.maxZoom??'—'],['Blended symbol responses',d.blendCounters?.blended??0]]); if((d.precomputeByZoom||[]).length){html+='<h3>Precompute completeness by zoom</h3><table><tr><th>Zoom</th><th>Files</th><th>Steps</th><th>Binned files</th><th>Sample symbols</th><th>Latest update</th></tr>'+(d.precomputeByZoom||[]).map(r=>`<tr><td>${esc(r.zoom)}</td><td>${esc(r.files)}</td><td>${esc(r.stepCount)}</td><td>${esc(r.bins)}</td><td>${esc(r.sampleCount??'—')}</td><td>${esc(r.latestUpdatedAt||'—')}</td></tr>`).join('')+'</table>'} else html+='<h3>Precompute completeness by zoom</h3>'+empty('No symbol precompute files found for the latest run.'); html+='</div><div>'; if((d.topSymbolClasses||[]).length){html+='<h3>Top symbol classes</h3><table><tr><th>Class</th><th>Count</th></tr>'+(d.topSymbolClasses||[]).map(r=>`<tr><td>${esc(r.symbolClass)}</td><td>${esc(r.count)}</td></tr>`).join('')+'</table>'} else html+='<h3>Top symbol classes</h3>'+empty('No sampled symbol-class payloads available yet.'); html+='<h3>Notes</h3>'+((d.notes||[]).length?`<ul>${d.notes.map(x=>`<li class="muted">${esc(x)}</li>`).join('')}</ul>`:empty('No additional symbol notes.')); html+='</div></div>'; document.getElementById('symbolDiagnostics').innerHTML=html}
-function renderDataIntegrity(data){const d=data?.engineering?.dataIntegrity||{}; let html=''; if((d.models||[]).length){html+='<table><tr><th>Model</th><th>Latest run</th><th>Expected steps</th><th>Actual steps</th><th>Missing</th><th>Coverage</th><th>Freshness</th><th>Full ingest</th></tr>'+(d.models||[]).map(r=>`<tr><td>${esc(r.model)}</td><td>${esc(r.latestRun||'—')}</td><td>${esc(r.expectedSteps)}</td><td>${esc(r.actualSteps??'—')}</td><td>${esc(r.missingSteps??'—')}</td><td>${esc(r.coverage==null?'—':(r.coverage*100).toFixed(1)+'%')}</td><td>${esc(r.freshnessMinutesSinceFullIngest==null?'—':r.freshnessMinutesSinceFullIngest.toFixed(1)+' min')}</td><td>${esc(r.latestRunFullyIngestedAt||'—')}</td></tr>`).join('')+'</table>'} else html+=empty('No model integrity data available.'); html+='<div class="grid" style="margin-top:10px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px">'; html+=`<div class="mini"><div class="label">HBAS-related recent error groups</div><div class="value">${esc(d.hbasRelatedErrorGroups??0)}</div><div class="subtle">Derived from grouped recent logs.</div></div>`; html+=`<div class="mini"><div class="label">Key variable availability</div><div class="subtle">${esc(Object.entries(d.keyVariableAvailability||{}).map(([k,v])=>`${k}: ${v}`).join(', ')||'No variable-level integrity counters yet.')}</div></div>`; html+=`<div class="mini"><div class="label">NaN fractions</div><div class="subtle">${(d.nanFractions||[]).length?'Available in backend payload':'Not exposed yet by ingest/runtime.'}</div></div>`; html+='</div>'; html+='<h3>Integrity issues</h3>'+((d.issues||[]).length?`<ul>${d.issues.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:empty('No obvious step-coverage integrity issues detected.')); html+='<h3>Notes</h3>'+((d.notes||[]).length?`<ul>${d.notes.map(x=>`<li class="muted">${esc(x)}</li>`).join('')}</ul>`:empty('No extra integrity notes.')); document.getElementById('dataIntegrity').innerHTML=html}
-function renderOverviewMetrics(data){const rel=data?.reliability||{}, perf=data?.performance||{}, cap=data?.capacity||{}, prod=data?.product||{}, sh=data?.serverHealth||{}; const ep=(perf.endpointLatency||[]).slice(0,10), layers=(perf.cacheEfficiencyByLayer||[]).slice(0,8), features=(prod.featureUsageSplit||[]).slice(0,8); let html='<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px">'; html+=`<div>${kvTable([['HTTP 4xx', rel?.globalErrors?.['4xx']],['HTTP 5xx', rel?.globalErrors?.['5xx']],['Ingest failure streak', rel?.ingestFailureStreak],['EU resolve attempts', rel?.fallback?.euResolveAttempts],['EU resolve success', rel?.fallback?.euResolveSuccess],['Symbols blended', rel?.fallback?.symbolsBlended],['Wind blended', rel?.fallback?.windBlended],['Overlay tile fallback', rel?.fallback?.overlayTileFallback]])}</div>`; html+=`<div>${kvTable([['CPU %', sh.cpuPercent??'No sample yet'],['Memory %', sh.memoryPercent??'No sample yet'],['Memory used', fmt(sh.memoryUsedBytes)],['Memory total', fmt(sh.memoryTotalBytes)],['Load 1m', sh.loadAvg1m??'—'],['Load 5m', sh.loadAvg5m??'—'],['Uptime (s)', sh.uptimeSeconds??'—']])}</div>`; html+=`<div>${kvTable([['Total bytes', fmt(cap.totalBytes)],['Estimated tile cache', fmt(cap.estTileBytes)],['Disk growth / day', cap.diskGrowthBytesPerDay==null?'Insufficient history':fmt(cap.diskGrowthBytesPerDay)],['Cache growth / day', cap.cacheGrowthBytesPerDay==null?'Insufficient history':fmt(cap.cacheGrowthBytesPerDay)],['Capacity samples', cap.sampleCount]])}</div>`; html+='</div>'; if(ep.length){html+='<h3>Endpoint latency</h3><table><tr><th>Path</th><th>Req</th><th>p50</th><th>p95</th><th>p99</th><th>>1s</th><th>>2s</th></tr>'+ep.map(r=>`<tr><td class="mono">${esc(r.path)}</td><td>${esc(r.requests)}</td><td>${esc(r.p50Ms==null?'—':Math.round(r.p50Ms)+' ms')}</td><td>${esc(r.p95Ms==null?'—':Math.round(r.p95Ms)+' ms')}</td><td>${esc(r.p99Ms==null?'—':Math.round(r.p99Ms)+' ms')}</td><td>${esc(r.slowOver1s)}</td><td>${esc(r.slowOver2s)}</td></tr>`).join('')+'</table>'} else html+='<h3>Endpoint latency</h3>'+empty('No endpoint latency samples yet.'); if(layers.length){html+='<h3>Cache efficiency by layer</h3><table><tr><th>Layer</th><th>Req</th><th>Hit rate</th><th>p95</th></tr>'+layers.map(r=>`<tr><td>${esc(r.layer)}</td><td>${esc(r.requests)}</td><td>${esc(r.hitRate==null?'—':(r.hitRate*100).toFixed(1)+'%')}</td><td>${esc(r.p95Ms==null?'—':Math.round(r.p95Ms)+' ms')}</td></tr>`).join('')+'</table>'} html+=`<h3>Overlay tile phase p95</h3>${kvTable([['Load', perf?.overlayPhaseP95?.loadMs==null?'No samples':`${Math.round(perf.overlayPhaseP95.loadMs)} ms`],['Source', perf?.overlayPhaseP95?.sourceMs==null?'No samples':`${Math.round(perf.overlayPhaseP95.sourceMs)} ms`],['Colorize', perf?.overlayPhaseP95?.colorizeMs==null?'No samples':`${Math.round(perf.overlayPhaseP95.colorizeMs)} ms`],['Encode', perf?.overlayPhaseP95?.encodeMs==null?'No samples':`${Math.round(perf.overlayPhaseP95.encodeMs)} ms`],['Total', perf?.overlayPhaseP95?.totalMs==null?'No samples':`${Math.round(perf.overlayPhaseP95.totalMs)} ms`]])}`; if(features.length){html+='<h3>Feature usage split</h3><table><tr><th>Feature</th><th>Count</th><th>Share</th></tr>'+features.map(r=>`<tr><td>${esc(r.feature)}</td><td>${esc(r.count)}</td><td>${esc(r.share==null?'—':(r.share*100).toFixed(1)+'%')}</td></tr>`).join('')+'</table>'} document.getElementById('overviewMetrics').innerHTML=html}
-async function loadOverview(){const d=await j('/api/admin/overview_metrics'); _overviewCache=d; renderEndpointOverview(d); renderRecentErrors(d); renderSymbolDiagnostics(d); renderDataIntegrity(d); renderOverviewMetrics(d)}
-async function setStatus(id,status){await j(`/api/feedback/${id}`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({status})}); await loadFeedback()}
-function renderFeedbackSummary(fb){const by=s=>fb.filter(x=>(x.status||'new')===s), nw=by('new'), tr=by('triaged'), rs=by('resolved'); const ages=nw.map(x=>minsSince(x.timestamp)).filter(Number.isFinite); const avgAge=ages.length?(ages.reduce((a,b)=>a+b,0)/ages.length).toFixed(1):'—'; document.getElementById('feedbackSummary').innerHTML=`${badgeState(nw.length? 'Warning':'OK')} <span class="muted">new: ${nw.length}</span> <span class="muted">triaged: ${tr.length}</span> <span class="muted">resolved: ${rs.length}</span> <span class="muted">avg new age: ${avgAge} min</span>`}
-async function loadFeedback(){const p=new URLSearchParams({limit:'200'}); if(state.fbStatus) p.set('status',state.fbStatus); if(state.fbSearch) p.set('q',state.fbSearch); const r=await j('/api/feedback?'+p.toString()); const fb=r.feedback||[]; _feedbackLast=fb; renderFeedbackSummary(fb); document.getElementById('feedback').innerHTML = fb.length? '<table><tr><th>Time</th><th>Type</th><th>Status</th><th>Message</th><th>Actions</th></tr>' + fb.map(f=>`<tr><td>${esc(f.timestamp)}</td><td>${esc(f.type)}</td><td><span class="tag ${esc(f.status||'new')}">${esc(f.status||'new')}</span></td><td>${esc(f.message)}</td><td><button onclick="setStatus(${Number(f.id)},'new')">new</button> <button onclick="setStatus(${Number(f.id)},'triaged')">triaged</button> <button onclick="setStatus(${Number(f.id)},'resolved')">resolved</button></td></tr>`).join('') + '</table>': empty('No feedback in the selected filter.')}
-const SOURCE_LABEL={'backend':'⚙️ Backend','ingest':'📥 Ingest','stdout':'📄 stdout'}; const SOURCE_COLOR={'backend':'#2563eb','ingest':'#d97706','stdout':'#475569'};
-function renderLogsSummary(logs){let error=0,warn=0; let latestEx='—'; const freq={}; const all=(logs||[]).flatMap(l=>l.tail||[]); for(const ln of all){const lo=ln.toLowerCase(); if(/error|exception|traceback|critical/.test(lo)){error++; latestEx=ln; freq[ln]=(freq[ln]||0)+1;} else if(/warn|warning/.test(lo)) warn++;} const top=Object.entries(freq).sort((a,b)=>b[1]-a[1])[0]; document.getElementById('logsSummary').innerHTML=`${badgeState(error? 'Warning':'OK')} <span class="muted">errors: ${error}</span> <span class="muted">warnings: ${warn}</span> <span class="muted">top repeat: ${esc(top?`${top[0].slice(0,90)} (${top[1]}x)`:'—')}</span> <span class="muted">latest exception: ${esc(latestEx==='—'?'—':latestEx.slice(0,90))}</span>`}
-function renderLogs(){const needle=(state.logFilter||'').toLowerCase(), fileFilter=state.logFile, newestFirst=state.logNewest; let logs=fileFilter==='all'?_logsCache:_logsCache.filter(l=>l.file===fileFilter); if(!logs.length){document.getElementById('logs').innerHTML=empty('No logs for the selected filter.');return;} const groups={}; for(const l of logs){const s=l.source||'backend'; (groups[s]||(groups[s]=[])).push(l);} let html=''; for(const src of ['backend','ingest','stdout']){const grp=groups[src]; if(!grp||!grp.length) continue; const color=SOURCE_COLOR[src]||'#475569'; const label=SOURCE_LABEL[src]||src; html+=`<div style="border-left:3px solid ${color};padding-left:10px;margin-bottom:18px"><h3 style="margin:0 0 8px;color:${color}">${label}</h3>`; for(const l of grp){let lines=[...(l.tail||[])]; if(newestFirst) lines=lines.reverse(); const total=lines.length; if(needle) lines=lines.filter(ln=>ln.toLowerCase().includes(needle)); const shown=lines.length; html+=`<details open><summary style="cursor:pointer;font-size:13px;margin-bottom:4px">${esc(l.file)} <span class="muted">${fmt(l.sizeBytes)} · ${shown}${needle?` of ${total}`:''} lines</span></summary><pre>${esc(lines.join('\n')||'(empty)')}</pre></details>`;} html+='</div>';} document.getElementById('logs').innerHTML=html}
-async function loadLogs(){const params=new URLSearchParams({limit:'5000',level:state.logLevel,source:state.logSource}); const r=await j('/api/admin/logs?'+params.toString()); const arts=r.artifacts||{}; _logsCache=r.logs||[]; const sel=document.getElementById('logFile'); const prev=state.logFile||sel.value; sel.innerHTML='<option value="all">all files</option>'+_logsCache.map(l=>`<option value="${esc(l.file)}">${esc(l.file)}</option>`).join(''); state.logFile=_logsCache.some(l=>l.file===prev)?prev:'all'; sel.value=state.logFile; const ai=(arts.ingest||[]).map(x=>`<span title="${esc(x.path)}">${esc(x.name)} (${fmt(x.sizeBytes)})</span>`).join(', ')||'<span class="muted">none</span>'; document.getElementById('logsArtifacts').innerHTML=`<span class="muted" style="font-size:12px">Ingest artifacts: ${ai}</span>`; renderLogsSummary(_logsCache); renderLogs()}
-async function loadCore(){const [status,storage]=await Promise.all([j('/api/status'),j('/api/admin/storage')]); _statusCache=status; _storageCache=storage; renderAttention(status,storage,_overviewCache); renderHealth(status,storage,_overviewCache); renderKpis(status,storage,_overviewCache); renderPipeline(storage); renderStorage(storage); renderUsage(storage,_overviewCache)}
-async function loadAll(){await Promise.all([loadOverview(), loadFeedback(), loadLogs()]); await loadCore(); document.getElementById('lastUpdated').textContent = new Date().toLocaleString(); _refreshLeft=_refreshEvery}
-async function copyText(text){try{await navigator.clipboard.writeText(text); return true;}catch{return false;}}
-function debugShell(title,url,data){const pretty=JSON.stringify(data,null,2); return `<div class="toolbar"><button class="btn-secondary btn-small" onclick="copyDebug(${JSON.stringify(url)})">Copy request URL</button><button class="btn-secondary btn-small" onclick="copyDebug(${JSON.stringify(pretty)})">Copy raw response</button></div><details open><summary style="cursor:pointer;font-size:13px">${esc(title)}</summary><div class="subtle" style="margin:6px 0">Request: <span class="mono">${esc(url)}</span></div><pre>${esc(pretty)}</pre></details>`}
-async function queryEmagram(){const lat=parseFloat(document.getElementById('emLat').value), lon=parseFloat(document.getElementById('emLon').value), time=document.getElementById('emTime').value.trim()||'latest', model=document.getElementById('emModel').value; const out=document.getElementById('emResult'); out.innerHTML='<div class="muted">Loading…</div>'; try{const p=new URLSearchParams({lat,lon,time,model}), url='/api/emagram_point?'+p.toString(), data=await j(url); _lastDebug.emagram={url,data}; const pt=data.point||{}; let html=kvTable([['Model',data.model],['Run',data.run||'—'],['Step',data.step??'—'],['Valid time',data.validTime||'—'],['Requested point',`${pt.requestedLat}, ${pt.requestedLon}`],['Nearest grid point',`${pt.gridLat}, ${pt.gridLon} (i=${pt.i}, j=${pt.j})`],['Levels returned',data.count??0]]); if((data.levels||[]).length){html+='<h3>Levels sample</h3><table><tr><th>hPa</th><th>Alt (m)</th><th>Temp (°C)</th><th>Dew (°C)</th><th>RH (%)</th><th>Wind (kt)</th><th>Dir (°)</th></tr>'; for(const l of data.levels) html+=`<tr><td>${esc(l.pressureHpa)}</td><td>${esc(l.altitudeM??'—')}</td><td>${esc(l.temperatureC??'—')}</td><td>${esc(l.dewpointC??'—')}</td><td>${esc(l.relativeHumidityPct??'—')}</td><td>${esc(l.windSpeedKt??'—')}</td><td>${esc(l.windDirDeg??'—')}</td></tr>`; html+='</table>'} else html+=empty('No profile levels returned.'); html+=debugShell('Raw JSON / debug helpers',url,data); out.innerHTML=html}catch(e){out.innerHTML=`<div style="color:#f87171">${esc(e.message)}</div>`}}
-async function queryMeteogram(){const lat=parseFloat(document.getElementById('mgLat').value), lon=parseFloat(document.getElementById('mgLon').value), model=document.getElementById('mgModel').value; const out=document.getElementById('mgResult'); out.innerHTML='<div class="muted">Loading…</div>'; try{const p=new URLSearchParams({lat,lon}); if(model) p.set('model',model); const url='/api/meteogram_point?'+p.toString(), data=await j(url); _lastDebug.meteogram={url,data}; const pt=data.point||{}, series=data.series||[], first=series[0]||{}, last=series[series.length-1]||{}, models=[...new Set(series.map(x=>x.model).filter(Boolean))].join(', '); let html=kvTable([['Requested point',`${pt.requestedLat}, ${pt.requestedLon}`],['Nearest grid point',`${pt.gridLat}, ${pt.gridLon} (i=${pt.i}, j=${pt.j})`],['Points returned',data.count??0],['Models seen',models||'—'],['From',first.validTime||'—'],['To',last.validTime||'—']]); if(series.length){const sample=series.slice(0,12); html+='<h3>Series sample</h3><table><tr><th>Valid</th><th>Model</th><th>Wind kt</th><th>Dir°</th><th>Gust kt</th><th>Cloud %</th><th>Precip</th><th>SnowDepth m</th><th>CAPE</th><th>LPI</th></tr>'; for(const r of sample) html+=`<tr><td>${esc(r.validTime)}</td><td>${esc(r.model)}</td><td>${esc(r.wind10mKt??'—')}</td><td>${esc(r.windDir10mDeg??'—')}</td><td>${esc(r.gust10mKt??'—')}</td><td>${esc(r.cloudTotalPct??'—')}</td><td>${esc(r.precipTotal??'—')}</td><td>${esc(r.snowDepthM??'—')}</td><td>${esc(r.capeMl??'—')}</td><td>${esc(r.lpi??'—')}</td></tr>`; html+='</table>'; if(series.length>sample.length) html+=`<div class="subtle">Showing first ${sample.length} of ${series.length} rows.</div>`} else html+=empty('No meteogram series returned.'); html+=debugShell('Raw JSON / debug helpers',url,data); out.innerHTML=html}catch(e){out.innerHTML=`<div style="color:#f87171">${esc(e.message)}</div>`}}
-window.copyDebug=txt=>copyText(txt).then(ok=>{if(ok) alert('Copied.'); else alert('Clipboard copy failed.');});
-document.getElementById('refresh').onclick=()=>loadAll().catch(e=>alert(e.message)); document.getElementById('fbApply').onclick=()=>{state.fbStatus=document.getElementById('fbStatus').value;state.fbSearch=document.getElementById('fbSearch').value.trim();persistUrlState();loadFeedback().catch(e=>alert(e.message));}; document.getElementById('logApply').onclick=()=>{state.logLevel=document.getElementById('logLevel').value;state.logSource=document.getElementById('logSource').value;state.logFilter=document.getElementById('logFilter').value.trim();state.logFile=document.getElementById('logFile').value;state.logNewest=document.getElementById('logNewest').checked;persistUrlState();loadLogs().catch(e=>alert(e.message));};
-document.getElementById('logFilter').addEventListener('input',()=>{state.logFilter=document.getElementById('logFilter').value.trim();persistUrlState();if(_logsCache.length) renderLogs();}); document.getElementById('logFile').addEventListener('change',()=>{state.logFile=document.getElementById('logFile').value;persistUrlState();if(_logsCache.length) renderLogs();}); document.getElementById('logNewest').addEventListener('change',()=>{state.logNewest=document.getElementById('logNewest').checked;persistUrlState();if(_logsCache.length) renderLogs();}); document.getElementById('logSource').addEventListener('change',()=>{state.logSource=document.getElementById('logSource').value;persistUrlState();loadLogs().catch(e=>alert(e.message));});
-document.getElementById('emQuery').onclick=()=>queryEmagram(); document.getElementById('mgQuery').onclick=()=>queryMeteogram(); window.setStatus=(id,s)=>setStatus(id,s).catch(e=>alert(e.message)); applyUrlState(); loadAll().catch(e=>{document.body.insertAdjacentHTML('beforeend','<pre>'+esc(e.message)+'</pre>');}); window.setInterval(()=>{_refreshLeft=Math.max(0,_refreshLeft-1);document.getElementById('refreshCountdown').textContent=String(_refreshLeft);},1000); window.setInterval(()=>{loadAll().catch(()=>{});},_refreshEvery*1000);
+const esc = value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const num = value => Number.isFinite(Number(value)) ? Number(value) : null;
+const fmtBytes = value => {
+  let n = num(value);
+  if (n == null) return '-';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  while (Math.abs(n) >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i += 1;
+  }
+  return `${n.toFixed(i ? 1 : 0)} ${units[i]}`;
+};
+const fmtMs = value => num(value) == null ? '-' : `${Math.round(num(value))} ms`;
+const fmtMin = value => num(value) == null ? '-' : `${num(value).toFixed(1)} min`;
+const fmtPct = value => num(value) == null ? '-' : `${(num(value) * 100).toFixed(1)}%`;
+const cleanTime = value => value ? String(value).replace(/\.\d+(?=Z|$)/g, '') : '-';
+const yesNo = value => value === true ? 'yes' : value === false ? 'no' : '-';
+const minutesSince = iso => {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  return Number.isFinite(t) ? (Date.now() - t) / 60000 : null;
+};
+const j = async (url, options) => {
+  const response = await fetch(url, options);
+  if (!response.ok) throw new Error(`${url}: ${response.status}`);
+  return response.json();
+};
+
+const state = {
+  tab: 'overview',
+  fbStatus: '',
+  fbSearch: '',
+  logLevel: 'all',
+  logSource: 'all',
+  logFilter: '',
+  logFile: 'all',
+  logNewest: true,
+};
+const data = {
+  status: null,
+  storage: null,
+  overview: null,
+  feedback: [],
+  logs: [],
+  logsLoaded: false,
+};
+const refreshEvery = 120;
+let refreshLeft = refreshEvery;
+
+function clsForState(value) {
+  return value === 'OK' ? 'pill-ok' : value === 'Warning' ? 'pill-warn' : value === 'Critical' ? 'pill-crit' : 'pill-info';
+}
+function badge(value) {
+  return `<span class="pill ${clsForState(value)}">${esc(value)}</span>`;
+}
+function tag(value) {
+  return `<span class="tag ${esc(value || 'new')}">${esc(value || 'new')}</span>`;
+}
+function empty(message) {
+  return `<div class="empty">${esc(message)}</div>`;
+}
+function metric(label, value, sub = '') {
+  return `<div class="metric"><div class="label">${esc(label)}</div><div class="value">${esc(value ?? '-')}</div>${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</div>`;
+}
+function table(headers, rows, className = '') {
+  if (!rows.length) return empty('No rows available.');
+  return `<div class="scroll"><table class="${className}"><thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
+}
+function modelName(key) {
+  return key === 'icon_d2' ? 'ICON-D2' : key === 'icon_eu' ? 'ICON-EU' : key;
+}
+function modelExpected(key) {
+  return key === 'icon_eu' ? 92 : 48;
+}
+function modelState(model, expected) {
+  const steps = num(model?.latestRunFullyIngestedSteps);
+  const fresh = num(model?.freshnessMinutesSinceFullIngest);
+  if (!model?.latestRun) return ['Critical', 'no run'];
+  if (steps == null || steps <= 0) return ['Critical', 'no completed ingest'];
+  if (steps < expected) return ['Warning', `${steps}/${expected} steps`];
+  if (fresh != null && fresh > 180) return ['Warning', `${fresh.toFixed(1)} min old`];
+  return ['OK', `${steps}/${expected} steps`];
+}
+function feedbackCounts() {
+  const rows = data.feedback || [];
+  return {
+    new: rows.filter(x => (x.status || 'new') === 'new').length,
+    triaged: rows.filter(x => (x.status || 'new') === 'triaged').length,
+    resolved: rows.filter(x => (x.status || 'new') === 'resolved').length,
+  };
+}
+function healthEval() {
+  const status = data.status || {};
+  const storage = data.storage || {};
+  const overview = data.overview || {};
+  const fresh = num(status?.ingest?.freshnessMinutes);
+  const p95 = num(status?.perf?.overlayTilePhases?.recentWindow?.p95?.totalMs);
+  const lockAge = num(storage?.ingest?.lock?.ageSeconds);
+  const running = !!storage?.ingest?.isRunning;
+  const activeErrors = (overview?.reliability?.recentErrors || []).filter(x => x.status === 'active').length;
+  const feedback = feedbackCounts();
+  const issues = [];
+  if (!running && lockAge && lockAge > 1800) issues.push({level: 'Critical', title: 'Stale ingest lock', detail: `${Math.round(lockAge / 60)} min old`});
+  if (fresh == null) issues.push({level: 'Warning', title: 'Freshness unknown', detail: 'No completed full ingest timestamp'});
+  else if (fresh > 180) issues.push({level: 'Warning', title: 'Data freshness degraded', detail: `${fresh.toFixed(1)} min since full ingest`});
+  if (p95 == null) issues.push({level: 'Warning', title: 'No tile latency samples', detail: 'No recent overlay tile telemetry'});
+  else if (p95 > 800) issues.push({level: 'Warning', title: 'Tile latency elevated', detail: `${Math.round(p95)} ms p95`});
+  if (activeErrors) issues.push({level: 'Critical', title: 'Active error groups', detail: `${activeErrors} groups active in logs`});
+  if (feedback.new) issues.push({level: 'Warning', title: 'New feedback', detail: `${feedback.new} inbox item(s)`});
+  for (const item of overview?.engineering?.dataIntegrity?.issues || []) {
+    issues.push({level: 'Warning', title: 'Data integrity', detail: item});
+  }
+  return {issues, severity: issues.some(x => x.level === 'Critical') ? 'crit' : issues.length ? 'warn' : 'ok'};
+}
+
+function renderAttention() {
+  const h = healthEval();
+  const title = h.severity === 'crit' ? 'Needs attention' : h.severity === 'warn' ? 'Watch list' : 'Healthy right now';
+  const status = h.severity === 'crit' ? 'Critical' : h.severity === 'warn' ? 'Warning' : 'OK';
+  const items = h.issues.slice(0, 5);
+  document.getElementById('attentionBanner').className = `attention ${h.severity}`;
+  document.getElementById('attentionBanner').innerHTML = `
+    <div class="status-line">
+      <div><strong>${esc(title)}</strong><div class="muted">${items.length ? esc(items[0].detail) : 'No active error bursts, stale ingest lock, or obvious integrity gaps.'}</div></div>
+      ${badge(status)}
+    </div>
+  `;
+  document.getElementById('attentionQueue').innerHTML = items.length
+    ? items.map(x => `<div class="issue">${badge(x.level)} <strong>${esc(x.title)}</strong><div class="muted" style="margin-top:5px">${esc(x.detail)}</div></div>`).join('')
+    : empty('No operator action suggested right now.');
+}
+
+function renderOverview() {
+  const status = data.status || {};
+  const storage = data.storage || {};
+  const overview = data.overview || {};
+  const perf = status?.perf?.overlayTilePhases?.recentWindow || {};
+  const feedback = feedbackCounts();
+  const activeErrors = (overview?.reliability?.recentErrors || []).filter(x => x.status === 'active').length;
+  document.getElementById('overviewMetrics').innerHTML = [
+    metric('Full ingest age', fmtMin(status?.ingest?.freshnessMinutes), cleanTime(status?.ingest?.latestFullIngestedAt)),
+    metric('Tile p95', fmtMs(perf?.p95?.totalMs), `${perf.size || 0}/${perf.maxSize || 0} samples`),
+    metric('Tile cache hit', fmtPct(status?.cache?.tile?.hitRate), `${status?.cache?.tile?.desktopItems || 0} desktop, ${status?.cache?.tile?.mobileItems || 0} mobile`),
+    metric('Active errors', activeErrors, `${overview?.reliability?.globalErrors?.['5xx'] || 0} HTTP 5xx total`),
+    metric('New feedback', feedback.new, `${feedback.triaged} triaged, ${feedback.resolved} resolved`),
+    metric('Runtime data', fmtBytes(storage?.totalBytes), `cache ${fmtBytes(storage?.cache?.totalBytes)}`),
+    metric('30d visits', overview?.product?.usage30dVisits ?? '-', `${overview?.product?.usage30dUnique ?? '-'} unique`),
+    metric('Server memory', num(overview?.serverHealth?.memoryPercent) == null ? '-' : `${num(overview.serverHealth.memoryPercent).toFixed(1)}%`, fmtBytes(overview?.serverHealth?.memoryUsedBytes)),
+  ].join('');
+  renderModelTable('overviewModels', true);
+  renderTrafficOverview();
+  renderUsage();
+}
+
+function renderModelTable(targetId, includeDetails) {
+  const storage = data.storage || {};
+  const rows = ['icon_d2', 'icon_eu'].map(key => {
+    const model = storage?.models?.[key] || {};
+    const expected = modelExpected(key);
+    const [state, detail] = modelState(model, expected);
+    const steps = num(model.latestRunFullyIngestedSteps);
+    return `<tr>
+      <td>${esc(modelName(key))}</td>
+      <td class="mono">${esc(model.latestRun || '-')}</td>
+      <td>${badge(state)} <span class="muted">${esc(detail)}</span></td>
+      <td>${steps == null ? '-' : `${steps}/${expected}`}</td>
+      <td>${fmtMin(model.freshnessMinutesSinceFullIngest)}</td>
+      <td>${fmtMin(model.modelCalculationMinutes)}</td>
+      <td>${fmtMin(model.ingestDurationMinutes)}</td>
+      <td>${cleanTime(model.latestRunFullyIngestedAt)}</td>
+    </tr>`;
+  });
+  let html = table(['Model', 'Run', 'State', 'Steps', 'Age', 'DWD calc', 'Ingest', 'Full ingest'], rows, 'compact');
+  if (includeDetails) {
+    html += '<details><summary>Run storage details</summary>' + renderRunTables() + '</details>';
+  }
+  document.getElementById(targetId).innerHTML = html;
+}
+
+function renderRunTables() {
+  const storage = data.storage || {};
+  return ['icon_d2', 'icon_eu'].map(key => {
+    const runs = storage?.models?.[key]?.runs || [];
+    const rows = runs.slice(0, 5).map(r => `<tr><td class="mono">${esc(r.run)}</td><td>${esc(r.steps ?? '-')}</td><td>${fmtBytes(r.bytes)}</td><td>${cleanTime(r.latestStorageUpdatedAt)}</td></tr>`);
+    return `<h3>${esc(modelName(key))}</h3>${table(['Run', 'Steps', 'Size', 'Updated'], rows, 'compact')}`;
+  }).join('');
+}
+
+function renderIngest() {
+  renderModelTable('ingestModels', true);
+  const ingest = data.storage?.ingest || {};
+  const lock = ingest.lock || {};
+  const procRows = (ingest.runningProcesses || []).map(p => `<tr><td class="mono">${esc(p)}</td></tr>`);
+  document.getElementById('ingestProcess').innerHTML = `
+    ${table(['Metric', 'Value'], [
+      `<tr><td>Running</td><td>${esc(yesNo(ingest.isRunning))}</td></tr>`,
+      `<tr><td>Lock</td><td>${lock.exists ? `yes, ${esc(lock.ageSeconds)}s old` : 'no'}</td></tr>`,
+      `<tr><td>Lock path</td><td class="mono">${esc(lock.path || '-')}</td></tr>`,
+    ], 'compact')}
+    <h3>Processes</h3>${procRows.length ? table(['Command'], procRows, 'compact') : empty('No ingest processes detected.')}
+  `;
+  renderDataIntegrity();
+}
+
+function renderDataIntegrity() {
+  const integrity = data.overview?.engineering?.dataIntegrity || {};
+  const rows = (integrity.models || []).map(r => `<tr>
+    <td>${esc(modelName(r.model))}</td>
+    <td class="mono">${esc(r.latestRun || '-')}</td>
+    <td>${esc(r.actualSteps ?? '-')} / ${esc(r.expectedSteps ?? '-')}</td>
+    <td>${esc(r.missingSteps ?? '-')}</td>
+    <td>${fmtPct(r.coverage)}</td>
+    <td>${fmtMin(r.freshnessMinutesSinceFullIngest)}</td>
+  </tr>`);
+  const issues = integrity.issues || [];
+  document.getElementById('dataIntegrity').innerHTML = `
+    ${table(['Model', 'Run', 'Steps', 'Missing', 'Coverage', 'Age'], rows, 'compact')}
+    <h3>Issues</h3>${issues.length ? `<ul class="tight">${issues.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : empty('No obvious step coverage issues.')}
+    <h3>Notes</h3>${(integrity.notes || []).length ? `<ul class="tight">${integrity.notes.map(x => `<li class="muted">${esc(x)}</li>`).join('')}</ul>` : empty('No additional notes.')}
+  `;
+}
+
+function renderTrafficOverview() {
+  const rows = (data.overview?.reliability?.endpointTrafficErrors || []).slice(0, 8).map(r => `<tr>
+    <td class="mono">${esc(r.path)}</td>
+    <td>${esc(r.requests)}</td>
+    <td>${esc(r.errors5xx)}</td>
+    <td>${esc(r.errors4xx)}</td>
+    <td>${fmtPct(r.errorRate)}</td>
+  </tr>`);
+  document.getElementById('overviewTraffic').innerHTML = table(['Path', 'Req', '5xx', '4xx', 'Error rate'], rows, 'compact');
+}
+
+function renderUsage() {
+  const storage = data.storage || {};
+  const overview = data.overview || {};
+  const usage = storage.usage || {};
+  const markers = storage.markers || {};
+  document.getElementById('usage').innerHTML = table(['Metric', 'Value'], [
+    `<tr><td>Visits 30d</td><td>${esc(usage.totalVisits ?? overview?.product?.usage30dVisits ?? '-')}</td></tr>`,
+    `<tr><td>Estimated unique 30d</td><td>${esc(usage.estimatedUniqueVisitors ?? overview?.product?.usage30dUnique ?? '-')}</td></tr>`,
+    `<tr><td>Markers stored</td><td>${esc(markers.totalMarkers ?? '-')}</td></tr>`,
+    `<tr><td>Markers active 24h</td><td>${esc(markers.activeLast24h ?? '-')}</td></tr>`,
+    `<tr><td>Usage updated</td><td>${cleanTime(usage.updatedAt)}</td></tr>`,
+  ], 'compact');
+}
+
+function renderReliability() {
+  const overview = data.overview || {};
+  const errors = overview?.reliability?.recentErrors || [];
+  const feedback = feedbackCounts();
+  const incidentRows = [];
+  for (const r of errors.slice(0, 10)) {
+    const level = r.status === 'active' ? 'Critical' : r.status === 'recent' ? 'Warning' : 'Info';
+    incidentRows.push(`<tr>
+      <td>${badge(level)}</td>
+      <td class="mono">${esc(r.fingerprint)}</td>
+      <td>${esc(r.count10m ?? 0)} / ${esc(r.count1h ?? 0)} / ${esc(r.count24h ?? 0)}</td>
+      <td>${cleanTime(r.latestSeen)}</td>
+      <td>${esc(r.sample || '-')}</td>
+    </tr>`);
+  }
+  if (feedback.new) {
+    incidentRows.unshift(`<tr><td>${badge('Warning')}</td><td>New feedback</td><td>${feedback.new}</td><td>-</td><td>${feedback.new} item(s) waiting in the inbox</td></tr>`);
+  }
+  document.getElementById('incidentQueue').innerHTML = incidentRows.length
+    ? table(['State', 'Issue', '10m / 1h / 24h', 'Latest', 'Sample'], incidentRows, 'compact')
+    : empty('No active incidents.');
+  renderFeedback();
+}
+
+function renderFeedbackSummary() {
+  const counts = feedbackCounts();
+  const ages = (data.feedback || []).filter(x => (x.status || 'new') === 'new').map(x => minutesSince(x.timestamp)).filter(Number.isFinite);
+  const avgAge = ages.length ? `${(ages.reduce((a, b) => a + b, 0) / ages.length).toFixed(1)} min` : '-';
+  document.getElementById('feedbackSummary').innerHTML = `${badge(counts.new ? 'Warning' : 'OK')} <span class="muted">new ${counts.new}</span> <span class="muted">triaged ${counts.triaged}</span> <span class="muted">resolved ${counts.resolved}</span> <span class="muted">avg new age ${avgAge}</span>`;
+}
+function renderFeedback() {
+  renderFeedbackSummary();
+  const rows = (data.feedback || []).map(f => `<tr>
+    <td>${cleanTime(f.timestamp)}</td>
+    <td>${esc(f.type || '-')}</td>
+    <td>${tag(f.status || 'new')}</td>
+    <td>${esc(f.message || '-')}</td>
+    <td class="toolbar">
+      <button class="secondary" onclick="setStatus(${Number(f.id)}, 'new')">new</button>
+      <button class="secondary" onclick="setStatus(${Number(f.id)}, 'triaged')">triaged</button>
+      <button class="secondary" onclick="setStatus(${Number(f.id)}, 'resolved')">resolved</button>
+    </td>
+  </tr>`);
+  document.getElementById('feedback').innerHTML = table(['Time', 'Type', 'Status', 'Message', 'Actions'], rows, 'compact');
+}
+
+function renderPerformance() {
+  const status = data.status || {};
+  const overview = data.overview || {};
+  const perf = status?.perf?.overlayTilePhases?.recentWindow || {};
+  const cache = status?.cache?.tile || {};
+  document.getElementById('performanceSummary').innerHTML = [
+    metric('Tile p50', fmtMs(perf?.p50?.totalMs), `${perf.size || 0} recent samples`),
+    metric('Tile p95', fmtMs(perf?.p95?.totalMs), `${perf.maxSize || 0} sample window`),
+    metric('Load p95', fmtMs(perf?.p95?.loadMs), 'zarr/data load'),
+    metric('Encode p95', fmtMs(perf?.p95?.encodeMs), 'png encode'),
+    metric('Tile hit rate', fmtPct(cache.hitRate), `${cache.metrics?.hits || 0} hits`),
+    metric('Computed fields', status?.cache?.computedField?.items ?? '-', 'process memory'),
+  ].join('');
+
+  const latencyRows = (overview?.performance?.endpointLatency || []).slice(0, 20).map(r => `<tr>
+    <td class="mono">${esc(r.path)}</td>
+    <td>${esc(r.requests)}</td>
+    <td>${fmtMs(r.p50Ms)}</td>
+    <td>${fmtMs(r.p95Ms)}</td>
+    <td>${fmtMs(r.p99Ms)}</td>
+    <td>${esc(r.slowOver1s)}</td>
+    <td>${esc(r.slowOver2s)}</td>
+  </tr>`);
+  document.getElementById('endpointLatency').innerHTML = table(['Path', 'Req', 'p50', 'p95', 'p99', '>1s', '>2s'], latencyRows, 'compact');
+
+  const layerRows = (overview?.performance?.cacheEfficiencyByLayer || []).slice(0, 12).map(r => `<tr>
+    <td>${esc(r.layer)}</td>
+    <td>${esc(r.requests)}</td>
+    <td>${fmtPct(r.hitRate)}</td>
+    <td>${fmtMs(r.p95Ms)}</td>
+  </tr>`);
+  document.getElementById('cacheEfficiency').innerHTML = `
+    ${table(['Layer', 'Req', 'Hit', 'p95'], layerRows, 'compact')}
+    <h3>Tile cache</h3>
+    ${table(['Pool', 'Items', 'Fill'], [
+      `<tr><td>Desktop</td><td>${esc(cache.desktopItems ?? '-')} / ${esc(cache.desktopMax ?? '-')}</td><td>${fmtPct(cache.desktopFillRatio)}</td></tr>`,
+      `<tr><td>Mobile</td><td>${esc(cache.mobileItems ?? '-')} / ${esc(cache.mobileMax ?? '-')}</td><td>${fmtPct(cache.mobileFillRatio)}</td></tr>`,
+    ], 'compact')}
+  `;
+
+  const trafficRows = (overview?.reliability?.endpointTrafficErrors || []).map(r => `<tr>
+    <td class="mono">${esc(r.path)}</td>
+    <td>${esc(r.requests)}</td>
+    <td>${esc(r.errors5xx)}</td>
+    <td>${esc(r.errors4xx)}</td>
+    <td>${fmtPct(r.errorRate)}</td>
+    <td>${cleanTime(r.lastSeen)}</td>
+  </tr>`);
+  document.getElementById('endpointTraffic').innerHTML = table(['Path', 'Req', '5xx', '4xx', 'Error rate', 'Last seen'], trafficRows, 'compact');
+}
+
+function renderStorage() {
+  const storage = data.storage || {};
+  const cache = storage.cache || {};
+  const d2 = storage.models?.icon_d2 || {};
+  const eu = storage.models?.icon_eu || {};
+  const totalWithCache = (num(storage.totalBytes) || 0) + (num(cache.totalBytes) || 0);
+  document.getElementById('storageSummary').innerHTML = [
+    metric('Forecast data', fmtBytes(storage.totalBytes), `D2 ${fmtBytes(d2.totalBytes)}, EU ${fmtBytes(eu.totalBytes)}`),
+    metric('Disk cache', fmtBytes(cache.totalBytes), `${(cache.kinds || []).length} cache kinds`),
+    metric('Combined runtime', fmtBytes(totalWithCache), 'forecast data plus disk cache'),
+    metric('In-memory tile cache', fmtBytes(data.status?.cache?.server?.estTileBytes), 'estimated png bytes'),
+    metric('Disk growth/day', fmtBytes(data.overview?.capacity?.diskGrowthBytesPerDay), `${data.overview?.capacity?.sampleCount || 0} samples`),
+    metric('Cache growth/day', fmtBytes(data.overview?.capacity?.cacheGrowthBytesPerDay), 'in-memory tile estimate'),
+  ].join('');
+
+  document.getElementById('forecastStorage').innerHTML = table(['Model', 'Path', 'Size', 'Runs'], [
+    `<tr><td>ICON-D2</td><td class="mono">${esc(d2.path || '-')}</td><td>${fmtBytes(d2.totalBytes)}</td><td>${esc((d2.runs || []).length)}</td></tr>`,
+    `<tr><td>ICON-EU</td><td class="mono">${esc(eu.path || '-')}</td><td>${fmtBytes(eu.totalBytes)}</td><td>${esc((eu.runs || []).length)}</td></tr>`,
+  ], 'compact');
+
+  const cacheRows = [];
+  for (const kind of cache.kinds || []) {
+    for (const model of kind.models || []) {
+      const runs = model.runs || [];
+      const files = runs.reduce((sum, r) => sum + (Number(r.files) || 0), 0);
+      cacheRows.push(`<tr><td>${esc(kind.kind)}</td><td>${esc(model.model)}</td><td>${fmtBytes(model.bytes)}</td><td>${esc(runs.length)}</td><td>${esc(files)}</td></tr>`);
+    }
+  }
+  document.getElementById('diskCacheStorage').innerHTML = cacheRows.length
+    ? table(['Kind', 'Model', 'Size', 'Runs', 'Files'], cacheRows, 'compact')
+    : empty('No disk cache directory found.');
+
+  const tmp = storage.tmp || {};
+  document.getElementById('storageDetails').innerHTML = `
+    <div class="split">
+      <div>${renderRunTables()}</div>
+      <div>
+        <h3>Static grid</h3>
+        ${table(['Metric', 'Value'], Object.entries(storage.staticGrid || {}).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(typeof v === 'object' ? JSON.stringify(v) : v ?? '-')}</td></tr>`), 'compact')}
+        <h3>Legacy tmp artifacts</h3>
+        ${(tmp.entries || []).length ? table(['Name', 'Type', 'Size'], tmp.entries.map(e => `<tr><td>${esc(e.name)}</td><td>${esc(e.isDir ? 'dir' : 'file')}</td><td>${fmtBytes(e.bytes)}</td></tr>`), 'compact') : empty('No tmp artifacts.')}
+      </div>
+    </div>
+  `;
+}
+
+function renderSymbolDiagnostics() {
+  const d = data.overview?.engineering?.symbolDiagnostics || {};
+  const sy = d.cache?.symbols || {};
+  const lz = d.cache?.lowZoom || {};
+  const preRows = (d.precomputeByZoom || []).map(r => `<tr><td>${esc(r.zoom)}</td><td>${esc(r.files)}</td><td>${esc(r.stepCount)}</td><td>${esc(r.bins)}</td><td>${esc(r.sampleCount ?? '-')}</td><td>${cleanTime(r.latestUpdatedAt)}</td></tr>`);
+  const classRows = (d.topSymbolClasses || []).map(r => `<tr><td>${esc(r.symbolClass)}</td><td>${esc(r.count)}</td></tr>`);
+  document.getElementById('symbolDiagnostics').innerHTML = `
+    ${table(['Metric', 'Value'], [
+      `<tr><td>Latest model</td><td>${esc(d.latestModel || '-')}</td></tr>`,
+      `<tr><td>Latest run</td><td class="mono">${esc(d.latestRun || '-')}</td></tr>`,
+      `<tr><td>Symbol cache hit</td><td>${fmtPct(sy.hitRate)}</td></tr>`,
+      `<tr><td>Low zoom hit</td><td>${fmtPct(lz.hitRate)}</td></tr>`,
+      `<tr><td>Blended responses</td><td>${esc(d.blendCounters?.blended ?? 0)}</td></tr>`,
+    ], 'compact')}
+    <h3>Precompute by zoom</h3>${table(['Zoom', 'Files', 'Steps', 'Bins', 'Sample', 'Updated'], preRows, 'compact')}
+    <h3>Top symbol classes</h3>${classRows.length ? table(['Class', 'Count'], classRows, 'compact') : empty('No sampled symbol classes.')}
+  `;
+}
+
+function renderServerHealth() {
+  const sh = data.overview?.serverHealth || {};
+  document.getElementById('serverHealth').innerHTML = table(['Metric', 'Value'], [
+    `<tr><td>CPU</td><td>${num(sh.cpuPercent) == null ? '-' : `${num(sh.cpuPercent).toFixed(1)}%`}</td></tr>`,
+    `<tr><td>Memory</td><td>${num(sh.memoryPercent) == null ? '-' : `${num(sh.memoryPercent).toFixed(1)}%`}</td></tr>`,
+    `<tr><td>Memory used</td><td>${fmtBytes(sh.memoryUsedBytes)}</td></tr>`,
+    `<tr><td>Memory total</td><td>${fmtBytes(sh.memoryTotalBytes)}</td></tr>`,
+    `<tr><td>Load 1m</td><td>${esc(sh.loadAvg1m ?? '-')}</td></tr>`,
+    `<tr><td>Uptime</td><td>${esc(sh.uptimeSeconds ?? '-')}s</td></tr>`,
+  ], 'compact');
+}
+
+function renderAll() {
+  renderAttention();
+  renderOverview();
+  renderIngest();
+  renderReliability();
+  renderPerformance();
+  renderStorage();
+  renderSymbolDiagnostics();
+  renderServerHealth();
+}
+
+async function loadCore() {
+  const [status, storage, overview] = await Promise.all([
+    j('/api/status'),
+    j('/api/admin/storage'),
+    j('/api/admin/overview_metrics'),
+  ]);
+  data.status = status;
+  data.storage = storage;
+  data.overview = overview;
+}
+async function loadFeedback() {
+  const params = new URLSearchParams({limit: '200'});
+  if (state.fbStatus) params.set('status', state.fbStatus);
+  if (state.fbSearch) params.set('q', state.fbSearch);
+  const response = await j(`/api/feedback?${params.toString()}`);
+  data.feedback = response.feedback || [];
+}
+async function loadAll() {
+  await Promise.all([loadCore(), loadFeedback()]);
+  renderAll();
+  document.getElementById('lastUpdated').textContent = new Date().toLocaleString();
+  refreshLeft = refreshEvery;
+}
+
+function renderLogsSummary(logs) {
+  let errors = 0;
+  let warnings = 0;
+  const repeated = {};
+  for (const line of (logs || []).flatMap(l => l.tail || [])) {
+    const lower = line.toLowerCase();
+    if (/error|exception|traceback|critical/.test(lower)) {
+      errors += 1;
+      repeated[line] = (repeated[line] || 0) + 1;
+    } else if (/warn|warning/.test(lower)) {
+      warnings += 1;
+    }
+  }
+  const top = Object.entries(repeated).sort((a, b) => b[1] - a[1])[0];
+  document.getElementById('logsSummary').innerHTML = `${badge(errors ? 'Warning' : 'OK')} <span class="muted">errors ${errors}</span> <span class="muted">warnings ${warnings}</span> <span class="muted">top repeat ${esc(top ? `${top[0].slice(0, 100)} (${top[1]}x)` : '-')}</span>`;
+}
+function renderLogs() {
+  const needle = (state.logFilter || '').toLowerCase();
+  const rows = data.logs.filter(log => state.logFile === 'all' || log.file === state.logFile);
+  if (!rows.length) {
+    document.getElementById('logs').innerHTML = empty('No logs for the selected filter.');
+    return;
+  }
+  const grouped = {};
+  for (const log of rows) {
+    const source = log.source || 'backend';
+    (grouped[source] ||= []).push(log);
+  }
+  let html = '';
+  for (const source of ['backend', 'ingest', 'stdout']) {
+    const group = grouped[source] || [];
+    if (!group.length) continue;
+    html += `<h3>${esc(source)}</h3>`;
+    for (const log of group) {
+      let lines = [...(log.tail || [])];
+      if (state.logNewest) lines.reverse();
+      const total = lines.length;
+      if (needle) lines = lines.filter(line => line.toLowerCase().includes(needle));
+      html += `<details open><summary>${esc(log.file)} <span class="muted">${fmtBytes(log.sizeBytes)} | ${lines.length}${needle ? ` of ${total}` : ''} lines</span></summary><pre>${esc(lines.join('\n') || '(empty)')}</pre></details>`;
+    }
+  }
+  document.getElementById('logs').innerHTML = html || empty('No logs for the selected source.');
+}
+async function loadLogs() {
+  document.getElementById('logs').innerHTML = '<div class="muted">Loading logs...</div>';
+  const params = new URLSearchParams({limit: '5000', level: state.logLevel, source: state.logSource});
+  const response = await j(`/api/admin/logs?${params.toString()}`);
+  data.logs = response.logs || [];
+  data.logsLoaded = true;
+  const selector = document.getElementById('logFile');
+  const previous = state.logFile || selector.value;
+  selector.innerHTML = '<option value="all">all files</option>' + data.logs.map(log => `<option value="${esc(log.file)}">${esc(log.file)}</option>`).join('');
+  state.logFile = data.logs.some(log => log.file === previous) ? previous : 'all';
+  selector.value = state.logFile;
+  const artifacts = response.artifacts?.ingest || [];
+  document.getElementById('logsArtifacts').innerHTML = artifacts.length
+    ? `<div class="muted">Ingest artifacts: ${artifacts.map(x => `${esc(x.name)} (${fmtBytes(x.sizeBytes)})`).join(', ')}</div>`
+    : '<div class="muted">Ingest artifacts: none</div>';
+  renderLogsSummary(data.logs);
+  renderLogs();
+}
+
+async function setStatus(id, status) {
+  await j(`/api/feedback/${id}`, {
+    method: 'PATCH',
+    headers: {'content-type': 'application/json'},
+    body: JSON.stringify({status}),
+  });
+  await loadFeedback();
+  renderReliability();
+  renderAttention();
+  renderOverview();
+}
+function copyText(text) {
+  return navigator.clipboard?.writeText(text).then(() => true).catch(() => false);
+}
+function debugShell(title, url, payload) {
+  const pretty = JSON.stringify(payload, null, 2);
+  return `<div class="toolbar"><button class="secondary" onclick="copyDebug(${JSON.stringify(url)})">Copy URL</button><button class="secondary" onclick="copyDebug(${JSON.stringify(pretty)})">Copy JSON</button></div><details open><summary>${esc(title)}</summary><div class="muted mono" style="margin:8px 0">${esc(url)}</div><pre>${esc(pretty)}</pre></details>`;
+}
+async function queryEmagram() {
+  const lat = document.getElementById('emLat').value;
+  const lon = document.getElementById('emLon').value;
+  const time = document.getElementById('emTime').value.trim() || 'latest';
+  const model = document.getElementById('emModel').value;
+  const out = document.getElementById('emResult');
+  out.innerHTML = '<div class="muted">Loading...</div>';
+  try {
+    const params = new URLSearchParams({lat, lon, time, model});
+    const url = `/api/emagram_point?${params.toString()}`;
+    const payload = await j(url);
+    const point = payload.point || {};
+    const rows = (payload.levels || []).slice(0, 20).map(l => `<tr><td>${esc(l.pressureHpa)}</td><td>${esc(l.altitudeM ?? '-')}</td><td>${esc(l.temperatureC ?? '-')}</td><td>${esc(l.dewpointC ?? '-')}</td><td>${esc(l.relativeHumidityPct ?? '-')}</td><td>${esc(l.windSpeedKt ?? '-')}</td><td>${esc(l.windDirDeg ?? '-')}</td></tr>`);
+    out.innerHTML = `
+      ${table(['Metric', 'Value'], [
+        `<tr><td>Run</td><td class="mono">${esc(payload.run || '-')}</td></tr>`,
+        `<tr><td>Step</td><td>${esc(payload.step ?? '-')}</td></tr>`,
+        `<tr><td>Valid</td><td>${cleanTime(payload.validTime)}</td></tr>`,
+        `<tr><td>Nearest point</td><td>${esc(point.gridLat)}, ${esc(point.gridLon)} (i=${esc(point.i)}, j=${esc(point.j)})</td></tr>`,
+      ], 'compact')}
+      <h3>Levels</h3>${rows.length ? table(['hPa', 'Alt m', 'Temp C', 'Dew C', 'RH %', 'Wind kt', 'Dir'], rows, 'compact') : empty('No profile levels returned.')}
+      ${debugShell('Raw response', url, payload)}
+    `;
+  } catch (error) {
+    out.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+  }
+}
+async function queryMeteogram() {
+  const lat = document.getElementById('mgLat').value;
+  const lon = document.getElementById('mgLon').value;
+  const model = document.getElementById('mgModel').value;
+  const out = document.getElementById('mgResult');
+  out.innerHTML = '<div class="muted">Loading...</div>';
+  try {
+    const params = new URLSearchParams({lat, lon, model});
+    const url = `/api/meteogram_point?${params.toString()}`;
+    const payload = await j(url);
+    const series = payload.series || [];
+    const point = payload.point || {};
+    const sample = series.slice(0, 12).map(r => `<tr><td>${cleanTime(r.validTime)}</td><td>${esc(r.model)}</td><td>${esc(r.wind10mKt ?? '-')}</td><td>${esc(r.gust10mKt ?? '-')}</td><td>${esc(r.cloudTotalPct ?? '-')}</td><td>${esc(r.precipTotal ?? '-')}</td><td>${esc(r.capeMl ?? '-')}</td></tr>`);
+    out.innerHTML = `
+      ${table(['Metric', 'Value'], [
+        `<tr><td>Nearest point</td><td>${esc(point.gridLat)}, ${esc(point.gridLon)} (i=${esc(point.i)}, j=${esc(point.j)})</td></tr>`,
+        `<tr><td>Rows</td><td>${esc(payload.count ?? 0)}</td></tr>`,
+        `<tr><td>From</td><td>${cleanTime(series[0]?.validTime)}</td></tr>`,
+        `<tr><td>To</td><td>${cleanTime(series[series.length - 1]?.validTime)}</td></tr>`,
+      ], 'compact')}
+      <h3>Series sample</h3>${sample.length ? table(['Valid', 'Model', 'Wind kt', 'Gust kt', 'Cloud %', 'Precip', 'CAPE'], sample, 'compact') : empty('No meteogram rows returned.')}
+      ${debugShell('Raw response', url, payload)}
+    `;
+  } catch (error) {
+    out.innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+  }
+}
+
+function applyUrlState() {
+  const params = new URLSearchParams(location.search);
+  for (const key of ['tab', 'fbStatus', 'fbSearch', 'logLevel', 'logSource', 'logFilter', 'logFile']) {
+    if (params.has(key)) state[key] = params.get(key) || state[key];
+  }
+  if (params.has('logNewest')) state.logNewest = params.get('logNewest') === '1';
+  document.getElementById('fbStatus').value = state.fbStatus;
+  document.getElementById('fbSearch').value = state.fbSearch;
+  document.getElementById('logLevel').value = state.logLevel;
+  document.getElementById('logSource').value = state.logSource;
+  document.getElementById('logFilter').value = state.logFilter;
+  document.getElementById('logNewest').checked = state.logNewest;
+}
+function persistUrlState() {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(state)) {
+    if (value !== '' && value !== 'all' && !(key === 'logNewest' && value === true)) params.set(key, String(value));
+  }
+  history.replaceState({}, '', `${location.pathname}${params.toString() ? `?${params.toString()}` : ''}`);
+}
+function activateTab(tab) {
+  if (!document.getElementById(`tab-${tab}`)) tab = 'overview';
+  state.tab = tab;
+  document.querySelectorAll('.tab').forEach(button => button.classList.toggle('active', button.dataset.tab === tab));
+  document.querySelectorAll('.panel').forEach(panel => panel.classList.toggle('active', panel.id === `tab-${tab}`));
+  persistUrlState();
+}
+
+window.setStatus = (id, status) => setStatus(id, status).catch(error => alert(error.message));
+window.copyDebug = text => copyText(text).then(ok => alert(ok ? 'Copied.' : 'Clipboard copy failed.'));
+document.getElementById('refresh').addEventListener('click', () => loadAll().catch(error => alert(error.message)));
+document.getElementById('fbApply').addEventListener('click', () => {
+  state.fbStatus = document.getElementById('fbStatus').value;
+  state.fbSearch = document.getElementById('fbSearch').value.trim();
+  persistUrlState();
+  loadFeedback().then(() => { renderReliability(); renderAttention(); renderOverview(); }).catch(error => alert(error.message));
+});
+document.getElementById('logApply').addEventListener('click', () => {
+  state.logLevel = document.getElementById('logLevel').value;
+  state.logSource = document.getElementById('logSource').value;
+  state.logFilter = document.getElementById('logFilter').value.trim();
+  state.logFile = document.getElementById('logFile').value;
+  state.logNewest = document.getElementById('logNewest').checked;
+  persistUrlState();
+  loadLogs().catch(error => alert(error.message));
+});
+document.getElementById('logFilter').addEventListener('input', () => {
+  state.logFilter = document.getElementById('logFilter').value.trim();
+  persistUrlState();
+  if (data.logsLoaded) renderLogs();
+});
+document.getElementById('logFile').addEventListener('change', () => {
+  state.logFile = document.getElementById('logFile').value;
+  persistUrlState();
+  if (data.logsLoaded) renderLogs();
+});
+document.getElementById('logNewest').addEventListener('change', () => {
+  state.logNewest = document.getElementById('logNewest').checked;
+  persistUrlState();
+  if (data.logsLoaded) renderLogs();
+});
+document.querySelectorAll('.tab').forEach(button => button.addEventListener('click', () => activateTab(button.dataset.tab)));
+document.getElementById('loadLogs').addEventListener('click', () => loadLogs().catch(error => alert(error.message)));
+document.getElementById('loadLogsTop').addEventListener('click', () => {
+  activateTab('diagnostics');
+  loadLogs().catch(error => alert(error.message));
+});
+document.getElementById('emQuery').addEventListener('click', () => queryEmagram());
+document.getElementById('mgQuery').addEventListener('click', () => queryMeteogram());
+
+applyUrlState();
+activateTab(state.tab);
+loadAll().catch(error => {
+  document.getElementById('attentionBanner').className = 'attention crit';
+  document.getElementById('attentionBanner').innerHTML = `<strong>Admin load failed</strong><div class="muted">${esc(error.message)}</div>`;
+});
+setInterval(() => {
+  refreshLeft = Math.max(0, refreshLeft - 1);
+  document.getElementById('refreshCountdown').textContent = String(refreshLeft);
+}, 1000);
+setInterval(() => loadAll().catch(() => {}), refreshEvery * 1000);
 </script>
 </body>
 </html>

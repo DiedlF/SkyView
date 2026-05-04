@@ -2035,6 +2035,53 @@ def _dir_size_bytes(path: str) -> int:
     return int(total)
 
 
+def _cache_storage_info() -> dict[str, Any]:
+    cache_dir = os.path.join(DATA_DIR, "cache")
+    out: dict[str, Any] = {
+        "path": cache_dir,
+        "totalBytes": 0,
+        "kinds": [],
+    }
+    if not os.path.isdir(cache_dir):
+        return out
+
+    for kind in sorted(os.listdir(cache_dir)):
+        kind_path = os.path.join(cache_dir, kind)
+        if not os.path.isdir(kind_path):
+            continue
+        kind_total = _dir_size_bytes(kind_path)
+        model_items = []
+        for model_key in sorted(os.listdir(kind_path)):
+            model_path = os.path.join(kind_path, model_key)
+            if not os.path.isdir(model_path):
+                continue
+            run_items = []
+            for run in sorted(os.listdir(model_path), reverse=True):
+                run_path = os.path.join(model_path, run)
+                if not os.path.isdir(run_path):
+                    continue
+                file_count = 0
+                for _root, _dirs, files in os.walk(run_path):
+                    file_count += len(files)
+                run_items.append({
+                    "run": run,
+                    "bytes": _dir_size_bytes(run_path),
+                    "files": file_count,
+                })
+            model_items.append({
+                "model": model_key,
+                "bytes": _dir_size_bytes(model_path),
+                "runs": run_items,
+            })
+        out["kinds"].append({
+            "kind": kind,
+            "bytes": kind_total,
+            "models": model_items,
+        })
+        out["totalBytes"] += int(kind_total)
+    return out
+
+
 _dwd_run_available_cache: OrderedDict[str, tuple[Optional[str], float]] = OrderedDict()
 
 
@@ -2186,6 +2233,7 @@ async def api_admin_storage():
         "totalBytes": 0,
         "ingest": {},
         "tmp": {},
+        "cache": _cache_storage_info(),
         "staticGrid": _static_grid_info(),
         "markers": get_marker_stats(MARKERS_FILE),
         "usage": get_usage_stats(USAGE_STATS_FILE, days=30),
