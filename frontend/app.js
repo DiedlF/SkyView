@@ -213,6 +213,10 @@ const I18N = {
     'legal.privacy': 'Privacy',
     'legal.terms': 'Terms',
     'legal.impressum': 'Impressum',
+    'legal.href': '/legal.html',
+    'privacy.href': '/privacy.html',
+    'terms.href': '/terms.html',
+    'impressum.href': '/impressum.html',
     helpTitle: 'How to read Skyview',
     helpHtml: `
       <h4>Data sources</h4>
@@ -335,6 +339,10 @@ const I18N = {
     'legal.privacy': 'Datenschutz',
     'legal.terms': 'Nutzung',
     'legal.impressum': 'Impressum',
+    'legal.href': '/de/legal.html',
+    'privacy.href': '/de/privacy.html',
+    'terms.href': '/de/terms.html',
+    'impressum.href': '/de/impressum.html',
     helpTitle: 'Skyview Erklärung',
     helpHtml: `
       <h4>Datenquellen</h4>
@@ -423,6 +431,10 @@ function applyLocale(lang) {
   document.querySelectorAll('[data-i18n]').forEach((el) => {
     const key = el.getAttribute('data-i18n');
     el.textContent = t(key);
+  });
+  document.querySelectorAll('[data-i18n-href]').forEach((el) => {
+    const key = el.getAttribute('data-i18n-href');
+    el.setAttribute('href', t(key));
   });
   const helpTitle = document.getElementById('help-title');
   const helpBody = document.getElementById('help-body');
