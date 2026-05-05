@@ -1,0 +1,156 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #0d1118;
+  color: #e6edf3;
+  font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+}
+
+a {
+  color: #8fc2ff;
+}
+
+.page {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 24px 18px 48px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 34px;
+}
+
+.brand {
+  color: #f8fafc;
+  font-size: 15px;
+  font-weight: 750;
+  letter-spacing: 0;
+  text-decoration: none;
+}
+
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.nav a {
+  color: #cbd5e1;
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.nav a[aria-current="page"] {
+  color: #8fc2ff;
+}
+
+.eyebrow {
+  color: #9fb2c8;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+h1 {
+  font-size: 44px;
+  line-height: 1.04;
+  margin: 8px 0 14px;
+}
+
+h2 {
+  border-top: 1px solid #263244;
+  font-size: 20px;
+  margin: 30px 0 10px;
+  padding-top: 22px;
+}
+
+h3 {
+  font-size: 16px;
+  margin: 22px 0 8px;
+}
+
+p,
+li {
+  color: #cbd5e1;
+}
+
+ul {
+  padding-left: 22px;
+}
+
+.lead {
+  color: #dbeafe;
+  font-size: 18px;
+  max-width: 760px;
+}
+
+.notice {
+  background: #172033;
+  border: 1px solid #31415c;
+  border-left: 5px solid #f59e0b;
+  border-radius: 8px;
+  color: #e5e7eb;
+  margin: 22px 0;
+  padding: 14px 16px;
+}
+
+.notice strong {
+  color: #fde68a;
+}
+
+.meta {
+  color: #9fb2c8;
+  font-size: 13px;
+  margin-top: 28px;
+}
+
+.definition {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 180px minmax(0, 1fr);
+  margin: 12px 0;
+}
+
+.definition dt {
+  color: #9fb2c8;
+  font-weight: 650;
+}
+
+.definition dd {
+  color: #e6edf3;
+  margin: 0;
+}
+
+.placeholder {
+  color: #fde68a;
+}
+
+@media (max-width: 640px) {
+  h1 {
+    font-size: 32px;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+    margin-bottom: 26px;
+  }
+
+  .nav {
+    justify-content: flex-start;
+  }
+
+  .definition {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}

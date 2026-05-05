@@ -208,13 +208,20 @@ const I18N = {
     'layer.lcl': 'Cloud Base (spread * 125)',
     'layer.marker': 'Marker',
     'marker.trackGps': 'Track GPS',
+    'legal.dwd': 'Weather: DWD Open Data, CC BY 4.0; processed by Skyview. Basemap: Esri.',
+    'legal.legal': 'Legal',
+    'legal.privacy': 'Privacy',
+    'legal.terms': 'Terms',
+    'legal.impressum': 'Impressum',
     helpTitle: 'How to read Skyview',
     helpHtml: `
       <h4>Data sources</h4>
       <ul>
+        <li>Weather data: Deutscher Wetterdienst (DWD) Open Data, CC BY 4.0; processed by Skyview.</li>
         <li>Primary model: ICON-D2 (high resolution).</li>
         <li>Fallback/outside D2: ICON-EU where available.</li>
       </ul>
+      <p style="margin:6px 0 8px">Skyview is not certified aviation weather and must not be used as the sole basis for operational flight planning.</p>
       <h4>Symbols</h4>
       <p style="margin:4px 0 8px"><b>Priority:</b> significant weather (ww) &rarr; convective cloud &rarr; non-convective cloud.</p>
       <div class="cloud-sym-grid">
@@ -323,13 +330,20 @@ const I18N = {
     'layer.lcl': 'Wolkenbasis (Spread * 125)',
     'layer.marker': 'Markierung',
     'marker.trackGps': 'GPS folgen',
+    'legal.dwd': 'Wetter: DWD Open Data, CC BY 4.0; verarbeitet durch Skyview. Basiskarte: Esri.',
+    'legal.legal': 'Rechtliches',
+    'legal.privacy': 'Datenschutz',
+    'legal.terms': 'Nutzung',
+    'legal.impressum': 'Impressum',
     helpTitle: 'Skyview Erklärung',
     helpHtml: `
       <h4>Datenquellen</h4>
       <ul>
+        <li>Wetterdaten: Deutscher Wetterdienst (DWD) Open Data, CC BY 4.0; verarbeitet durch Skyview.</li>
         <li>Primärmodell: ICON-D2 (hohe Auflösung).</li>
         <li>Fallback/außerhalb D2: ICON-EU, sofern verfügbar.</li>
       </ul>
+      <p style="margin:6px 0 8px">Skyview ist kein zertifiziertes Flugwetter und darf nicht als alleinige Grundlage fuer operative Flugplanung genutzt werden.</p>
       <h4>Symbole</h4>
       <p style="margin:4px 0 8px"><b>Priorität:</b> Signifikantes Wetter (ww) &rarr; Konvektionswolke &rarr; nicht-konvektive Wolke.</p>
       <div class="cloud-sym-grid">

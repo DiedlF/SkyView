@@ -8,7 +8,7 @@
   <link rel="apple-touch-icon" href="logo.svg">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="anonymous">
   <link rel="stylesheet" href="https://unpkg.com/uplot@1.6.31/dist/uPlot.min.css">
-  <link rel="stylesheet" href="style.css?v=36">
+  <link rel="stylesheet" href="style.css?v=37">
 </head>
 <body>
   <div id="map"></div>
@@ -40,6 +40,13 @@
       <span id="overlay-substep-info" style="display:none;color:#8fc2ff;">Selected: --</span>
       <button id="overlay-substep-prev" style="display:none;">−15</button>
       <button id="overlay-substep-next" style="display:none;">+15</button>
+    </div>
+    <div id="legal-links" aria-label="Legal and data attribution">
+      <span data-i18n="legal.dwd">Weather: DWD Open Data, CC BY 4.0; processed by Skyview. Basemap: Esri.</span>
+      <a href="/legal.html" data-i18n="legal.legal">Legal</a>
+      <a href="/privacy.html" data-i18n="legal.privacy">Privacy</a>
+      <a href="/terms.html" data-i18n="legal.terms">Terms</a>
+      <a href="/impressum.html" data-i18n="legal.impressum">Impressum</a>
     </div>
   </div>
   <div id="layers">
@@ -218,6 +225,6 @@
   <script src="https://unpkg.com/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
   <script src="symbols.js?v=16"></script>
   <script src="windbarbs.js?v=1"></script>
-  <script src="app.js?v=69"></script>
+  <script src="app.js?v=70"></script>
 </body>
 </html>
