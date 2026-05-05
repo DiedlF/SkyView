@@ -351,7 +351,7 @@ const I18N = {
         <li>Primärmodell: ICON-D2 (hohe Auflösung).</li>
         <li>Fallback/außerhalb D2: ICON-EU, sofern verfügbar.</li>
       </ul>
-      <p style="margin:6px 0 8px">Skyview ist kein zertifiziertes Flugwetter und darf nicht als alleinige Grundlage fuer operative Flugplanung genutzt werden.</p>
+      <p style="margin:6px 0 8px">Skyview ist kein zertifiziertes Flugwetter und darf nicht als alleinige Grundlage für operative Flugplanung genutzt werden.</p>
       <h4>Symbole</h4>
       <p style="margin:4px 0 8px"><b>Priorität:</b> Signifikantes Wetter (ww) &rarr; Konvektionswolke &rarr; nicht-konvektive Wolke.</p>
       <div class="cloud-sym-grid">
