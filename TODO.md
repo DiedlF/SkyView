@@ -1,7 +1,7 @@
 # Skyview TODO
 
-**Last updated:** 2026-04-28
-**State:** ✅ Core stable. P1 (arch/cache) complete. P2 (cache correctness) complete. P3 (quality gates) in progress. Admin auth shipped (HTTP Basic). Meteogram shipped. Several new overlays shipped (geopotential, wave, hourly-max cloud base, Gold climb-rate, 600 hPa wind, mh-in-MSL). ICON-D2 substep ingest extended through 48h. Next planned feature: 15-minute symbols (plan in `docs/SYMBOLS_15MIN_IMPLEMENTATION_PLAN_2026-04-13.md`).
+**Last updated:** 2026-05-06
+**State:** ✅ Core stable. P1 (arch/cache) complete. P2 (cache correctness) complete. P3 (quality gates) in progress. Admin auth shipped (HTTP Basic). Meteogram shipped and enhanced with wind-panel cloud layers, terrain masking, and 10 m wind. 15-minute symbol support shipped. Several new overlays shipped (geopotential, wave, hourly-max cloud base, Gold climb-rate, 600 hPa wind, mh-in-MSL). ICON-D2 substep ingest extended through 48h.
 
 ---
 
@@ -13,60 +13,51 @@
 - Frontend layer toggle + styling by class/type
 - Performance + QA + docs
 
+### Deferred performance/watchlist
+- **Per-cell loop vectorization** — `aggregate_symbol_cell` is already vectorized within each cell (NumPy on full cell arrays). Across-cell vectorization is blocked by per-cell EU/D2 source switching. Fast-path exists (zoom ≤ 9 stride sampling). Further work is deferred unless profiling shows it matters. (Arch #6)
+- **Legacy precip fallback** — optional runtime fallback for missing precomputed precip in old runs.
+
 ---
 
 ## Open Tasks (priority order)
 
+### 0) Brand / Public Launch
+
+- [ ] **Rename Skyview to D2View** — complete trademark/domain screening first (DPMA, EUIPO/TMview, WIPO, USPTO, domains/social handles), then update product name across frontend, legal pages, README/docs, GitHub metadata, deployment config, page titles, attribution wording, screenshots/assets, and any public URLs. Avoid implying DWD endorsement; keep DWD attribution as source/license language only.
+
 ### A) Backend / Maintainability
 
-- [x] **Marker auth module** — extracted to `backend/marker_auth.py` (make_token/verify_token/startup_check). app.py thin wrappers; startup warning on weak/missing secret. Tests: `tests/test_marker_auth.py` (17 cases). (Arch #8)
-- [~] **Per-cell loop vectorization** — `aggregate_symbol_cell` is already fully vectorized *within* each cell (NumPy on full cell arrays). Across-cell vectorization blocked by per-cell EU/D2 source switching. Fast-path exists (zoom ≤ 9 stride sampling). Further deferred. (Arch #6)
 - [ ] **EU fallback helpers consolidation** — overlay/tile both have inline EU load+gate logic. Extract shared `_load_eu_for_tile(time, cfg, tile_bounds)` helper.
-- [ ] **`backend/app.py` is still too large** — move ops/admin/overlay/location handler bodies into router/service modules (continuation of PR1 split). (docs/README backlog #4)
+- [ ] **`backend/app.py` is still too large** — move ops/admin/overlay/location handler bodies into router/service modules (continuation of PR1 split).
 - [ ] **Explorer split/deploy boundary** — do not split the Explorer frontend alone. Keep monorepo for now, but prepare Explorer as its own deployable app by extracting shared Skyview/Explorer API-contract helpers into a small shared module/package, adding configurable Explorer `API_BASE`, documenting Explorer service deployment, and revisiting permissive Explorer CORS before public hosting. Consider a separate repo only after the shared contract boundary is clean.
-- [ ] **In-process caches need locking or encapsulation** — `cache_state.py` mutates shared `OrderedDict` caches and counters from request paths without consistent locks. (docs/README backlog #1)
-- [ ] **Feedback storage hardening** — `feedback_ops.py` rewrites the whole JSON file in place; switch to temp-file + `os.replace()`, JSONL, or SQLite. (docs/README backlog #2)
+- [ ] **In-process caches need locking or encapsulation** — `cache_state.py` mutates shared `OrderedDict` caches and counters from request paths without consistent locks.
+- [ ] **Feedback storage hardening** — `feedback_ops.py` rewrites the whole JSON file in place; switch to temp-file + `os.replace()`, JSONL, or SQLite.
 - [ ] **Precip precalculation robustness** — check edge cases/robustness. Keep separate precip layers (convective/gridscale) in mind.
 - [ ] **Phased ingest pipeline** — split ingest into priority phases so the app becomes usable as soon as convective fields land, instead of waiting for the full run. Suggested order: (1) convection basics (CAPE/CIN/LPI/hbas_sc/htop_sc/htop_dc → symbols' convective inputs), (2) remaining symbol inputs (cloud cover, ww, ceiling, mh, hsurf), (3) overlay-only fields (precip, wave, geopotential, wind levels), (4) meteogram/skew-T/nowcast extras. Each phase should write a "ready" marker so frontend/feature gates can light up incrementally; ingest health needs to report per-phase coverage.
 - [ ] **Computed cache tune** — eviction policy for active timestep/layer churn (Phase 2 overlay perf).
-- [ ] **Tile pre-render warmup** — optional ring of viewport tiles on context switch (Phase 3).
 - [ ] **Quantized storage** — optional quantize heavy overlay fields (precip rates); persist scale/offset (Phase 4, medium effort 2–3d).
-- [ ] **Multi-worker docs** — document process-local metric limits; defer fix to later if Redis not needed.
-- [ ] **Legacy precip fallback** — optional runtime fallback for missing precomputed precip in old runs.
+- [ ] **Multi-worker deployment guidance** — expand the existing process-local caveat into deployment docs; defer Redis/shared-store work until multi-worker hosting is actually needed.
 
 ### B) Ops / Release Hygiene (P3)
 
-- [x] **`test_symbol_zoom_continuity` threshold** — resolved.
-- [x] **Precomputed symbols benchmark** — benchmarked on VPS with `scripts/benchmark_symbols_precompute.py`; current low-zoom JSON-bin precompute is now opt-in only (`SKYVIEW_LOW_ZOOM_PRECOMPUTED_BINS=1`) because measured gains were negligible and storage cost was ~4.7 GB. (`docs/PRECOMPUTED_SYMBOLS_BENCHMARK_2026-03-11.md`)
-- [x] **GitHub push** — repo pushed to remote.
-- [x] **CI pipeline** (PR9) — lint/type/pytest + qa_smoke/qa_regression/qa_contract/qa_perf workflows. Live: https://github.com/DiedlF/SkyView/actions
-- [x] **GitHub Actions watch scripts** — `scripts/` helpers + `docs/github-actions-watch.md`.
-- [x] **Pytest migration** (PR8) — `tests/test_smoke.py`, `test_regression.py`, `test_contract.py`, `test_perf.py`. Unit tests (no server) run always; integration/perf marked + skipped in fast CI. `pytest.ini` configured. 20 unit tests pass. (Arch #11)
-- [x] **Marker secret startup policy** — ERROR log + stderr banner on missing secret; WARNING on weak secret; rotation notes in `docs/OPS_SECRETS.md`. (PR10)
-- [ ] **CORS production** — doc that `SKYVIEW_CORS_ORIGINS` must be set to real hostname before public deploy; default already safe (localhost allowlist). (PR11)
-- [ ] **CI integration coverage can silently skip** — add synthetic `.npz` fixtures + `TestClient` API tests so core endpoints are exercised without live DWD/Explorer. (docs/README backlog #3)
-- [ ] **Local developer setup docs** — document `python3`, Ruff installation, test/lint/run commands, expected env vars. (docs/README backlog #8)
-- [x] **Root onboarding README** — short root `README.md` pointing to `SPEC.md`, `TODO.md`, `docs/README.md`. (docs cleanup 2026-04-26)
+- [ ] **CI integration coverage can silently skip** — add synthetic `.npz` fixtures + `TestClient` API tests so core endpoints are exercised without live DWD/Explorer.
+- [ ] **Local developer setup docs** — document `python3`, Ruff installation, test/lint/run commands, expected env vars.
+- [ ] **SPEC/API docs drift** — align `SPEC.md` and the 15-minute symbols design note with current `/api/symbols`, overlay substep, and frontend behavior.
 
 ### C) Data / Model Harmonization (ICON-EU ↔ D2)
 
-- [ ] Finalize variable mapping/normalization rules for EU↔D2:
+- [ ] Finalize remaining variable mapping/normalization rules for EU↔D2:
   - [ ] Precipitation fields (semantics differ)
   - [ ] `hbas_sc`/`htop_sc` (proxy, non-1:1 confirmed)
-  - [x] `lpi` — D2 switched to `lpi_max` (1h max) via `d2_variable_map`; EU uses `lpi_con_max`; both are time-window maxima. Re-validation recommended.
+- [ ] Re-validate LPI parity after the D2 `lpi_max` switch; EU uses `lpi_con_max`, and both are time-window maxima.
 - [ ] Codify parity impacts on symbols/overlays in docs
 
 ### D) UX / Frontend
 
-- [x] **Meteogram** — backend `/api/meteogram_point` (streaming with heartbeats, UTC times, grid-index reuse) + frontend overlay with temp/precip/wind charts and per-point cache. (commits `fe10e93`, `4e09c00`, `56b3fe5`, `22d3d13`, `0a660b6`)
-- [ ] **Meteogram hsurf info** — show surface elevation / model terrain height context in the meteogram.
-- [ ] **Meteogram 2m wind** — add near-surface 2m wind values to the meteogram display/tooltips if available from ingest.
-- [ ] **Meteogram cloud cover by altitude** — add cloud-cover information across available altitude/pressure levels to the meteogram.
-- [ ] **Hover tooltip** — change point tooltip to hover-based overlay value display
-- [ ] **Desktop/mobile verify** — test interaction model and fallback behavior across device types
-- [ ] **Precipitation layer split** — expose precipitation as three distinct layers in the UI: convective only, grid-scale only, and total/cumulative (current behavior). Requires backend overlay handlers and computed-field paths to surface the component fields separately, plus frontend toggles, legend, and point-popup attribution. Supersedes the earlier "Precipitation toggle" item.
-- [ ] **15-minute symbols** — implement Phase 1 of `docs/SYMBOLS_15MIN_IMPLEMENTATION_PLAN_2026-04-13.md`: add `substep` query to `/api/symbols`, thread `substep_minutes` through `compute_symbols_payload`, classify from live quarter-hour fields (not hourly maxima), separate symbol cache keys by substep, wire frontend so symbols/overlays/point popup share one substep control. EU stays hourly with diagnostics. (Plan only; `/api/symbols` currently has no `substep` param.)
-- [ ] **Frontend/admin XSS pass** — broader review of `innerHTML` usage in admin/debug views (marker suggestions are safe via DOM rendering). (docs/README backlog #5)
+- [ ] **Hover tooltip** — change point tooltip to hover-based overlay value display.
+- [ ] **Desktop/mobile verify** — test interaction model and fallback behavior across device types.
+- [ ] **Convective/grid-scale precipitation split** — expose precipitation as convective only, grid-scale only, and total/cumulative. Requires backend overlay handlers and computed-field paths to surface component fields separately, plus frontend toggles, legend, and point-popup attribution. Supersedes the earlier "Precipitation toggle" item.
+- [ ] **Frontend/admin XSS pass** — broader review of `innerHTML` usage in admin/debug views (marker suggestions are safe via DOM rendering).
 
 ### E) Soaring Model
 
@@ -95,13 +86,11 @@
 
 ### I) Admin / Auth (post-MVP polish)
 
-- [x] **Admin HTTP Basic auth** — `backend/admin_auth.py`; `SKYVIEW_ADMIN_USER`/`SKYVIEW_ADMIN_PASSWORD`; admin auth prompt fix. (commits `94eb9e8`, `7b89dea`; `docs/OPS_SECRETS.md`)
-- [ ] **Admin auth polish** — startup warning when admin creds unset, rate-limit failed admin auth attempts, improve admin UI auth messaging. (docs/README backlog #6)
+- [ ] **Admin auth polish** — startup warning when admin creds unset, rate-limit failed admin auth attempts, improve admin UI auth messaging.
 
 ### J) Marker / Location
 
-- [x] **ICAO marker lookup** — exact 4-letter ICAO queries (`EDDM`, `LOWI`, `LSZH`, …) routed via `backend/airport_lookup.py`; results carry structured `icao` field. (commit `94eb9e8`; `d70ec65` map/marker search stabilization)
-- [ ] **Airport/ICAO seed normalization** — give `openaip_seed.json` explicit `icao` fields, or generate an airport index from a maintained source. (docs/README backlog #7)
+- [ ] **Airport/ICAO seed normalization** — give `openaip_seed.json` explicit `icao` fields, or generate an airport index from a maintained source.
 
 ---
 
@@ -114,6 +103,7 @@
 - ✅ **Blocking calls** wrapped: Nominatim `to_thread`, DWD HEAD inside `_ingest_model_timings` (runs in thread pool), asyncio.sleep — Arch #4
 - ✅ **DATA_CACHE_MAX_ITEMS=24** env-configurable in constants.py (was hardcoded 8) — Arch #5
 - ✅ **AppState** consolidation — globals → structured AppState + DI — Arch #7
+- ✅ **Marker auth module** — extracted to `backend/marker_auth.py` (make_token/verify_token/startup_check); tests in `tests/test_marker_auth.py`. (Arch #8)
 - ✅ **api_point selective keys** — uses POINT_KEYS filter, no full-variable load — Arch #9
 - ✅ **data_cache singleflight** + key-merge hardening (PR5, services/data_loader.py) — Arch #10
 - ✅ **constants.py** — all thresholds/cell_sizes centralized with rationale comments
@@ -137,6 +127,9 @@
 - ✅ Symbol gridding verified (no lattice holes at viewport edges)
 - ✅ `symbols.js _typeToWw` aligned to backend weather_codes.py
 - ✅ Meteogram overlay (temp / precip / wind charts, per-point cache)
+- ✅ Meteogram wind-panel enhancement: cloud-cover background, terrain/ground-height masking, 10 m wind barbs, and below-ground pressure-wind suppression.
+- ✅ Meteogram mobile touch tooltip: tap/drag scrubber with pinned cursor and bottom readout; desktop hover unchanged.
+- ✅ 15-minute symbols: `/api/symbols` substep mode, live quarter-hour classification, substep-aware cache keys, and frontend substep controls.
 - ✅ Map layer / marker search stabilization
 - ✅ Marker UI tuning + admin auth prompt fix
 
@@ -158,6 +151,7 @@
 - ✅ Marker write-path race mitigated (markers_lock on POST/DELETE)
 - ✅ Usage analytics module (`/api/usage_stats`, privacy-preserving)
 - ✅ DWD variable comparison docs (hbas/htop/lpi proxy behavior)
+- ✅ D2 LPI mapping switched to `lpi_max` (1h max); EU uses `lpi_con_max`.
 - ✅ Classify.py: canonical scalar cloud classifier; cb/blue_thermal precedence fixed
 - ✅ **ICON-D2 substep ingest extended through 48h** (commit `23d2ab9`)
 - ✅ **EU symbol ingest input fix + regression coverage** (commit `1238e96`)
@@ -166,6 +160,13 @@
 ### Admin / Ops
 - ✅ Admin dashboard MVP (`/admin`): ingest health, fallback/cache/perf, feedback inbox, logs
 - ✅ **Admin HTTP Basic auth** (`backend/admin_auth.py`)
+- ✅ CI pipeline (PR9): lint/type/pytest + qa_smoke/qa_regression/qa_contract/qa_perf workflows.
+- ✅ Pytest migration (PR8): unit tests run always; integration/perf marked and skipped in fast CI.
+- ✅ `test_symbol_zoom_continuity` threshold resolved.
+- ✅ Precomputed symbols benchmark completed; low-zoom JSON-bin precompute is opt-in (`SKYVIEW_LOW_ZOOM_PRECOMPUTED_BINS=1`).
+- ✅ Marker secret startup policy: ERROR/stderr banner on missing secret; WARNING on weak secret; rotation notes in `docs/OPS_SECRETS.md`.
+- ✅ Production CORS documentation: `SKYVIEW_CORS_ORIGINS` covered in `README.md` and `docs/OPS_SECRETS.md`.
+- ✅ Root onboarding README points to `SPEC.md`, `TODO.md`, `docs/README.md`.
 - ✅ Status endpoint richer: widgets/tables, level filters, artifact drilldown
 - ✅ Fallback stats persisted to `data/fallback_stats.json`
 - ✅ `/api/status` fallback counters fixed — were overwritten by snapshot fields (`.update()` fix)
@@ -173,6 +174,7 @@
 - ✅ `ingest.py --fill-missing` — ingests only absent steps for a run; defaults to full step range
 - ✅ EU overlay gap fixed — hsurf NaN slice check replaces rectangular bbox margin (commit `04509e8`)
 - ✅ GitHub Actions watch scripts (`docs/github-actions-watch.md`)
+- ✅ GitHub push / remote setup.
 
 ### Markers / Location
 - ✅ **ICAO marker lookup** (`backend/airport_lookup.py`)
@@ -186,5 +188,5 @@
 - Multi-worker deployment unsafe (process-local state) — document, defer Redis until needed.
 - `_eu_strict_cache` resets on restart — expected, not a bug.
 - OpenAir: resume as separate mini-project with own QA checklist.
-- Items still marked "(docs/README backlog #N)" were imported from the 2026-04 documentation cleanup; `TODO.md` is now the source of truth for those backlog entries.
-- `docs/SYMBOLS_15MIN_IMPLEMENTATION_PLAN_2026-04-13.md` is the design doc for the next D-section feature.
+- `TODO.md` is the source of truth for active backlog entries; archived docs are context only.
+- `docs/SYMBOLS_15MIN_IMPLEMENTATION_PLAN_2026-04-13.md` is now a historical implementation note and should be reconciled with current substep behavior.

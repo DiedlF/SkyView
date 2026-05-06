@@ -29,6 +29,8 @@ from cache_state import symbols_cache_get, symbols_cache_set
 from constants import (
     CELL_SIZES_BY_ZOOM,
     EMAGRAM_D2_LEVELS_HPA,
+    ICON_D2_FULL_LEVEL_HEIGHT_M,
+    METEOGRAM_D2_CLC_MODEL_LEVELS,
     METEOGRAM_D2_LEVELS_HPA,
     G0,
     SYMBOL_MODE_NATIVE_ZOOM_D2,
@@ -85,7 +87,7 @@ def build_weather_router(
     meteogram_build_semaphore = threading.Semaphore(
         max(1, int(os.environ.get("SKYVIEW_METEOGRAM_BUILD_CONCURRENCY", "1")))
     )
-    METEOGRAM_POINT_CACHE_VERSION = 1
+    METEOGRAM_POINT_CACHE_VERSION = 2
     EMAGRAM_POINT_CACHE_VERSION = 1
     NOWCAST_POINT_CACHE_VERSION = 1
     emagram_cache: OrderedDict[str, dict] = OrderedDict()
@@ -274,6 +276,12 @@ def build_weather_router(
 
             t2k = _g("t_2m")
             tdk = _g("td_2m")
+            u10, v10 = _g("u_10m"), _g("v_10m")
+            wind10m_kt = wind10m_dir = None
+            if u10 is not None and v10 is not None:
+                wind10m_kt = round(math.hypot(u10, v10) * 1.943844, 1)
+                wind10m_dir = round((270.0 - math.degrees(math.atan2(v10, u10))) % 360.0, 1)
+
             wind_levels: List[dict] = []
             for lev in METEOGRAM_D2_LEVELS_HPA:
                 uu, vv = _g(f"u_{lev}hpa"), _g(f"v_{lev}hpa")
@@ -284,10 +292,24 @@ def build_weather_router(
                 dr = (270.0 - math.degrees(math.atan2(vv, uu))) % 360.0
                 wind_levels.append({"pressureHpa": lev, "speedKt": round(sp, 1), "dirDeg": round(dr, 1)})
 
+            cloud_levels: List[dict] = []
+            for lev in METEOGRAM_D2_CLC_MODEL_LEVELS:
+                cover = _g(f"clc_ml{lev}")
+                if cover is not None:
+                    cover = max(0.0, min(100.0, float(cover)))
+                cloud_levels.append({
+                    "modelLevel": lev,
+                    "altitudeM": round(float(ICON_D2_FULL_LEVEL_HEIGHT_M.get(lev, 0.0)), 1),
+                    "coverPct": round(cover, 1) if cover is not None else None,
+                })
+
             out.append({
                 "validTime": d.get("validTime") or s.get("validTime"),
                 "model": model_i, "run": run_i, "step": step_i,
                 "windLevels": wind_levels,
+                "cloudLevels": cloud_levels,
+                "wind10mKt": wind10m_kt,
+                "windDir10mDeg": wind10m_dir,
                 "precipTotal": _g("tot_prec"),
                 "snowDepthM": _g("h_snow"),
                 "hsurfM": _g("hsurf"),
@@ -372,7 +394,11 @@ def build_weather_router(
             level_keys: List[str] = []
             for lev in METEOGRAM_D2_LEVELS_HPA:
                 level_keys += [f"u_{lev}hpa", f"v_{lev}hpa"]
-            needed_keys = ["lat", "lon", "validTime", "tot_prec", "h_snow", "t_2m", "td_2m", "hsurf", "hzerocl"] + level_keys
+            cloud_keys = [f"clc_ml{lev}" for lev in METEOGRAM_D2_CLC_MODEL_LEVELS]
+            needed_keys = [
+                "lat", "lon", "validTime", "tot_prec", "h_snow", "t_2m", "td_2m",
+                "u_10m", "v_10m", "hsurf", "hzerocl",
+            ] + level_keys + cloud_keys
             payload = _build_meteogram_payload(
                 steps=steps,
                 grid_point=grid_point,

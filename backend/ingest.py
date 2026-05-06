@@ -290,6 +290,15 @@ def get_pressure_config(config, profile_name="full"):
     return pc.get("variables", []), pc.get("levels", [])
 
 
+def get_model_level_config(config, profile_name="full"):
+    profile = _get_profile(config, profile_name) if config.get("profiles") else None
+    if profile and "model_levels" in profile:
+        mlc = profile.get("model_levels", {})
+    else:
+        mlc = config.get("model_levels", {})
+    return mlc.get("variables", []), mlc.get("levels", [])
+
+
 def get_d2_only_variables(config):
     return set(config.get("d2_only_variables", []))
 
@@ -365,8 +374,8 @@ def expected_next_run_time(model: str, from_utc: datetime | None = None) -> date
     return datetime(day.year, day.month, day.day, next_hour, 0, 0, tzinfo=timezone.utc)
 
 
-def build_url(run, step, var, model="icon-d2", pressure_level=None, config=None, profile_name="full"):
-    """Build DWD download URL for regular-lat-lon data."""
+def build_url(run, step, var, model="icon-d2", pressure_level=None, model_level=None, config=None, profile_name="full"):
+    """Build DWD download URL."""
     cfg = MODEL_CONFIG[model]
     run_hour = run[-2:]
 
@@ -396,6 +405,12 @@ def build_url(run, step, var, model="icon-d2", pressure_level=None, config=None,
         else:
             return (f"{cfg['base_url']}/{run_hour}/{var_name}/"
                     f"icon-eu_europe_regular-lat-lon_pressure-level_{run}_{step:03d}_{pressure_level}_{var_name.upper()}.grib2.bz2")
+
+    if model_level:
+        if model != "icon-d2":
+            raise ValueError("model-level ingest is currently supported for ICON-D2 only")
+        return (f"{cfg['base_url']}/{run_hour}/{var}/"
+                f"icon-d2_germany_icosahedral_model-level_{run}_{step:03d}_{model_level}_{var}.grib2.bz2")
 
     if model == "icon-d2":
         return (f"{cfg['base_url']}/{run_hour}/{var}/"
@@ -457,6 +472,125 @@ def _parse_grib_from_bytes(grib_bytes: bytes, bounds=None) -> Tuple:
             os.unlink(tmp_path)
         except OSError:
             pass
+
+
+_NATIVE_REGRID_INDEX_CACHE: Dict[str, np.ndarray] = {}
+_NATIVE_COORD_CACHE: Dict[str, tuple[np.ndarray, np.ndarray]] = {}
+
+
+def _parse_unstructured_grib_from_bytes(grib_bytes: bytes) -> np.ndarray:
+    """Parse one native ICON unstructured GRIB message to a 1-D float array."""
+    fd, tmp_path = tempfile.mkstemp(suffix=".grib2")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(grib_bytes)
+        with open(tmp_path, "rb") as f:
+            gid = codes_grib_new_from_file(f)
+            if gid is None:
+                raise ValueError(f"No GRIB message in {tmp_path}")
+            try:
+                vals = np.asarray(codes_get_array(gid, "values"), dtype=np.float32)
+                try:
+                    missing = float(codes_get(gid, "missingValue"))
+                    vals[vals == missing] = np.nan
+                except Exception:
+                    pass
+                vals[vals >= 9990.0] = np.nan
+                return vals
+            finally:
+                codes_release(gid)
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
+def _native_coord_url(run: str, var: str, model: str = "icon-d2") -> str:
+    cfg = MODEL_CONFIG[model]
+    run_hour = str(run)[-2:]
+    return (
+        f"{cfg['base_url']}/{run_hour}/{var}/"
+        f"icon-d2_germany_icosahedral_time-invariant_{run}_000_0_{var}.grib2.bz2"
+    )
+
+
+def _load_icon_d2_native_coords(run: str) -> tuple[np.ndarray, np.ndarray]:
+    cache_key = "icon-d2"
+    if cache_key in _NATIVE_COORD_CACHE:
+        return _NATIVE_COORD_CACHE[cache_key]
+
+    grid_dir = _grid_dir_for_model("icon-d2")
+    os.makedirs(grid_dir, exist_ok=True)
+    cache_path = os.path.join(grid_dir, "native_clat_clon.npz")
+    if os.path.exists(cache_path):
+        data = np.load(cache_path)
+        clat = np.asarray(data["clat"], dtype=np.float32)
+        clon = np.asarray(data["clon"], dtype=np.float32)
+        _NATIVE_COORD_CACHE[cache_key] = (clat, clon)
+        return clat, clon
+
+    clat_bytes = _download_and_decompress(_native_coord_url(run, "clat"))
+    clon_bytes = _download_and_decompress(_native_coord_url(run, "clon"))
+    if clat_bytes is None or clon_bytes is None:
+        raise RuntimeError("ICON-D2 native coordinate download failed")
+    clat = _parse_unstructured_grib_from_bytes(clat_bytes)
+    clon = _parse_unstructured_grib_from_bytes(clon_bytes)
+    if clat.shape != clon.shape:
+        raise ValueError(f"Native coordinate shape mismatch: clat={clat.shape}, clon={clon.shape}")
+    np.savez_compressed(cache_path, clat=clat, clon=clon)
+    _NATIVE_COORD_CACHE[cache_key] = (clat, clon)
+    return clat, clon
+
+
+def _regular_grid_hash(lat_1d: np.ndarray, lon_1d: np.ndarray) -> str:
+    digest = hashlib.sha256()
+    digest.update(np.asarray(lat_1d, dtype=np.float32).tobytes())
+    digest.update(np.asarray(lon_1d, dtype=np.float32).tobytes())
+    return digest.hexdigest()[:16]
+
+
+def _native_to_regular_indices(
+    src_lat: np.ndarray,
+    src_lon: np.ndarray,
+    target_lat: np.ndarray,
+    target_lon: np.ndarray,
+) -> np.ndarray:
+    grid_hash = _regular_grid_hash(target_lat, target_lon)
+    cache_key = f"icon-d2:{len(src_lat)}:{grid_hash}"
+    if cache_key in _NATIVE_REGRID_INDEX_CACHE:
+        return _NATIVE_REGRID_INDEX_CACHE[cache_key]
+
+    grid_dir = _grid_dir_for_model("icon-d2")
+    os.makedirs(grid_dir, exist_ok=True)
+    cache_path = os.path.join(grid_dir, f"native_to_regular_{grid_hash}.npz")
+    if os.path.exists(cache_path):
+        idx = np.asarray(np.load(cache_path)["idx"], dtype=np.int32)
+        _NATIVE_REGRID_INDEX_CACHE[cache_key] = idx
+        return idx
+
+    from scipy.spatial import cKDTree
+
+    tree = cKDTree(np.column_stack((src_lat.astype(np.float64), src_lon.astype(np.float64))))
+    yy, xx = np.meshgrid(target_lat.astype(np.float64), target_lon.astype(np.float64), indexing="ij")
+    _dist, idx = tree.query(np.column_stack((yy.ravel(), xx.ravel())), k=1)
+    idx = idx.astype(np.int32).reshape((len(target_lat), len(target_lon)))
+    np.savez_compressed(cache_path, idx=idx)
+    _NATIVE_REGRID_INDEX_CACHE[cache_key] = idx
+    return idx
+
+
+def _regrid_native_to_regular(
+    values: np.ndarray,
+    src_lat: np.ndarray,
+    src_lon: np.ndarray,
+    target_lat: np.ndarray,
+    target_lon: np.ndarray,
+) -> np.ndarray:
+    if values.shape[0] != src_lat.shape[0]:
+        raise ValueError(f"Native value/coord length mismatch: values={values.shape}, coords={src_lat.shape}")
+    idx = _native_to_regular_indices(src_lat, src_lon, target_lat, target_lon)
+    return values[idx].astype(np.float32)
 
 
 def download(url, dest):
@@ -918,6 +1052,7 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
     variables = get_active_variables(config, profile_name=profile_name)
     static_vars = get_static_variables(config, profile_name=profile_name)
     wind_vars, wind_levels = get_pressure_config(config, profile_name=profile_name)
+    model_level_vars, model_levels = get_model_level_config(config, profile_name=profile_name)
     d2_only = get_d2_only_variables(config)
     bounds = get_bounds_for_model(model, config)
 
@@ -949,6 +1084,14 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
             url = build_url(run, step, wind_var, model, pressure_level=plev,
                             config=config, profile_name=profile_name)
             plev_tasks.append((f"{wind_var}_{plev}hpa", url, True))  # pressure wind always optional
+
+    model_level_tasks: List[Tuple[str, str, bool]] = []
+    if model == "icon-d2":
+        for ml in model_levels:
+            for ml_var in model_level_vars:
+                url = build_url(run, step, ml_var, model, model_level=ml,
+                                config=config, profile_name=profile_name)
+                model_level_tasks.append((f"{ml_var}_ml{int(ml)}", url, True))
 
     all_tasks = var_tasks + plev_tasks
 
@@ -1069,6 +1212,47 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
 
     if lat_1d is None:
         return False, None
+
+    if model_level_tasks:
+        try:
+            native_lat, native_lon = _load_icon_d2_native_coords(str(run))
+            logger.debug(f"Step {step:03d}: ingesting {len(model_level_tasks)} native model-level fields")
+
+            def _process_model_level_result(key: str, grib_bytes: Optional[bytes]) -> None:
+                if grib_bytes is None:
+                    logger.debug(f"Step {step:03d}: optional {key} not available, skipping")
+                    return
+                try:
+                    native_values = _parse_unstructured_grib_from_bytes(grib_bytes)
+                    arrays[key] = _regrid_native_to_regular(
+                        native_values,
+                        native_lat,
+                        native_lon,
+                        lat_1d,
+                        lon_1d,
+                    )
+                except Exception as exc:
+                    logger.debug(f"Step {step:03d}: optional {key} model-level parse failed ({exc}), skipping")
+
+            if workers > 1:
+                with ThreadPoolExecutor(max_workers=workers) as executor:
+                    future_to_key = {
+                        executor.submit(_download_and_decompress, url): key
+                        for key, url, _ in model_level_tasks
+                    }
+                    for future in as_completed(future_to_key):
+                        key = future_to_key[future]
+                        try:
+                            grib_bytes = future.result()
+                        except Exception as exc:
+                            logger.debug(f"Step {step:03d}: model-level download future for {key} raised: {exc}")
+                            grib_bytes = None
+                        _process_model_level_result(key, grib_bytes)
+            else:
+                for key, url, _ in model_level_tasks:
+                    _process_model_level_result(key, _download_and_decompress(url))
+        except Exception as exc:
+            logger.debug(f"Step {step:03d}: model-level ingest skipped ({exc})")
 
     # EU lpi_max (mapped to lpi_con_max) may be missing for some runs/steps on DWD.
     # Ensure downstream APIs still get a deterministic field.

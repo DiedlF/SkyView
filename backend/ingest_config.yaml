@@ -78,6 +78,10 @@ profiles:
       # D2 supports emagram + meteogram + selectable overlays
       variables: [u, v, t, fi, relhum, omega]
       levels: [1000, 975, 950, 850, 700, 600, 500, 400, 300, 200]
+    model_levels:
+      # Native ICON-D2 cloud cover, regridded to the app's regular D2 grid for meteograms.
+      variables: [clc]
+      levels: [22, 24, 27, 30, 32, 35, 38, 42, 45, 48, 52, 55, 58, 61, 63, 65]
 
   skyview_eu_core:
     variables:

@@ -2314,7 +2314,7 @@ const nowcastClose = document.getElementById('nowcast-close');
 const nowcastTitle = document.getElementById('nowcast-title');
 const nowcastBody = document.getElementById('nowcast-body');
 let emagramState = { open: false, lat: null, lon: null, model: '', zoom: null, loading: false, reqId: 0, allowedIndices: [], abortCtrl: null };
-let meteogramState = { open: false, lat: null, lon: null, model: '', abortCtrl: null, chartTemp: null, chartPrecip: null, chartWind: null };
+let meteogramState = { open: false, lat: null, lon: null, model: '', abortCtrl: null, chartTemp: null, chartPrecip: null, chartWind: null, touchCleanup: null };
 let nowcastState = { open: false, lat: null, lon: null, model: '', abortCtrl: null, chartA: null, chartB: null };
 const emagramCache = new Map();
 const meteogramCache = new Map();
@@ -2365,6 +2365,10 @@ function closeEmagram() {
 
 function closeMeteogram() {
   meteogramState.open = false;
+  if (meteogramState.touchCleanup) {
+    try { meteogramState.touchCleanup(); } catch {}
+    meteogramState.touchCleanup = null;
+  }
   if (meteogramState.abortCtrl) {
     try { meteogramState.abortCtrl.abort(); } catch {}
     meteogramState.abortCtrl = null;
@@ -2667,7 +2671,7 @@ function renderMeteogramSvg(series) {
   const levels = [1000, 975, 950, 850, 700, 600, 500, 400];
   const pressureToApproxHeightM = (lev) => 44330 * (1 - Math.pow(Number(lev) / 1013.25, 0.1903));
   const windTopAltM = pressureToApproxHeightM(400);
-  const windBottomAltM = pressureToApproxHeightM(1000);
+  const windBottomAltM = 0;
   const yWind = (lev) => {
     const alt = pressureToApproxHeightM(lev);
     return windPlotY + windPlotH - ((alt - windBottomAltM) / (windTopAltM - windBottomAltM || 1)) * windPlotH;
@@ -2676,6 +2680,14 @@ function renderMeteogramSvg(series) {
     if (!Number.isFinite(altM)) return null;
     const clamped = Math.max(windBottomAltM, Math.min(windTopAltM, Number(altM)));
     return windPlotY + windPlotH - ((clamped - windBottomAltM) / (windTopAltM - windBottomAltM || 1)) * windPlotH;
+  };
+  const groundYForRow = (row) => yWindAlt(Math.max(0, Number(row?.hsurfM) || 0));
+  const wind10YForRow = (row) => {
+    const groundY = groundYForRow(row);
+    const terrainM = Math.max(0, Number(row?.hsurfM) || 0);
+    const actualY = yWindAlt(terrainM + 10);
+    if (!Number.isFinite(groundY) || !Number.isFinite(actualY)) return null;
+    return Math.max(windPlotY + 6, Math.min(windPlotY + windPlotH - 10, Math.min(actualY, groundY - 10)));
   };
   const mkBarb = (xx, yy, speedKt = 0, dirDeg = 0) => {
     if (!(Number.isFinite(speedKt) && Number.isFinite(dirDeg))) return '';
@@ -2692,18 +2704,60 @@ function renderMeteogramSvg(series) {
     g += `</g>`;
     return g;
   };
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const clouds = Array.isArray(row.cloudLevels) ? row.cloudLevels
+      .map(c => ({ alt: Number(c.altitudeM), cover: Number(c.coverPct) }))
+      .filter(c => Number.isFinite(c.alt) && Number.isFinite(c.cover))
+      .sort((a, b) => b.alt - a.alt) : [];
+    if (!clouds.length) continue;
+    const xx = x(i);
+    const bw = Math.max(2, pxW / Math.max(rows.length, 24));
+    const groundY = groundYForRow(row);
+    for (let k = 0; k < clouds.length; k++) {
+      const cover = Math.max(0, Math.min(100, clouds[k].cover));
+      if (cover < 5) continue;
+      const upper = k === 0 ? windTopAltM : (clouds[k - 1].alt + clouds[k].alt) / 2;
+      const lower = k === clouds.length - 1 ? windBottomAltM : (clouds[k].alt + clouds[k + 1].alt) / 2;
+      const yTop = yWindAlt(upper);
+      const yBottomRaw = yWindAlt(lower);
+      if (!(Number.isFinite(yTop) && Number.isFinite(yBottomRaw))) continue;
+      const yBottom = Number.isFinite(groundY) ? Math.min(yBottomRaw, groundY) : yBottomRaw;
+      const h = yBottom - yTop;
+      if (h <= 0) continue;
+      const opacity = (0.04 + (cover / 100) * 0.36).toFixed(3);
+      svg += `<rect x="${(xx - bw / 2).toFixed(1)}" y="${yTop.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="#dbeafe" opacity="${opacity}"/>`;
+    }
+  }
+
+  for (let i = 0; i < rows.length; i++) {
+    const groundY = groundYForRow(rows[i]);
+    if (!Number.isFinite(groundY) || groundY >= windPlotY + windPlotH) continue;
+    const xx = x(i);
+    const bw = Math.max(2, pxW / Math.max(rows.length, 24));
+    svg += `<rect x="${(xx - bw / 2).toFixed(1)}" y="${groundY.toFixed(1)}" width="${bw.toFixed(1)}" height="${(windPlotY + windPlotH - groundY).toFixed(1)}" fill="#8b5a2b" opacity="0.72"/>`;
+  }
+
   for (let i = 0; i < rows.length; i++) {
     const xx = x(i);
+    const row = rows[i];
     const wl = rows[i].windLevels || [];
-    const terrainM = Number(rows[i].hsurfM);
+    const terrainM = Math.max(0, Number(row.hsurfM) || 0);
+    const y10m = wind10YForRow(row);
+    if (Number.isFinite(Number(row.wind10mKt)) && Number.isFinite(Number(row.windDir10mDeg)) && Number.isFinite(y10m)) {
+      svg += mkBarb(xx, y10m, Number(row.wind10mKt), Number(row.windDir10mDeg));
+    }
     const byLev = {};
     for (const w of wl) byLev[Number(w.pressureHpa)] = w;
     for (const lev of levels) {
       const w = byLev[lev];
       if (!w) continue;
       const approxHeightM = pressureToApproxHeightM(lev);
-      if (Number.isFinite(terrainM) && approxHeightM < terrainM) continue;
-      svg += mkBarb(xx, yWind(lev), Number(w.speedKt), Number(w.dirDeg));
+      const yy = yWind(lev);
+      if (approxHeightM <= terrainM + 20) continue;
+      if (Number.isFinite(y10m) && Math.abs(yy - y10m) < 14) continue;
+      svg += mkBarb(xx, yy, Number(w.speedKt), Number(w.dirDeg));
     }
   }
 
@@ -2717,17 +2771,19 @@ function renderMeteogramSvg(series) {
     { z: 7000, p: 400 },
   ];
   for (const a of altRefs) {
-    const yy = yWind(a.p);
+    const yy = yWindAlt(a.z);
+    if (!Number.isFinite(yy)) continue;
     svg += `<line x1="${m.l}" y1="${yy.toFixed(1)}" x2="${W - m.r}" y2="${yy.toFixed(1)}" stroke="rgba(255,255,255,0.20)" stroke-dasharray="3 3"/>`;
     svg += `<text x="${m.l - 14}" y="${(yy + 3).toFixed(1)}" fill="rgba(255,255,255,0.62)" font-size="9" text-anchor="end">~${a.z}m</text>`;
   }
 
-  const zeroDegPath = rows.map((r, i) => {
+  const zeroDegPoints = rows.map((r, i) => {
     const alt = v(r, 'zeroDegAltM');
     const yy = yWindAlt(alt);
     if (!Number.isFinite(yy)) return null;
-    return `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${yy.toFixed(1)}`;
-  }).filter(Boolean).join(' ');
+    return { x: x(i), y: yy };
+  }).filter(Boolean);
+  const zeroDegPath = zeroDegPoints.map((pt, i) => `${i === 0 ? 'M' : 'L'}${pt.x.toFixed(1)},${pt.y.toFixed(1)}`).join(' ');
   if (zeroDegPath) {
     svg += `<path d="${zeroDegPath}" fill="none" stroke="#ffd166" stroke-width="1.8" stroke-dasharray="6 4" opacity="0.95"/>`;
   }
@@ -2773,8 +2829,14 @@ function renderMeteogramSvg(series) {
     svg += `<line x1="${m.l}" y1="${yZero.toFixed(1)}" x2="${W - m.r}" y2="${yZero.toFixed(1)}" stroke="rgba(255,255,255,0.35)" stroke-dasharray="4 3"/>`;
   }
 
-  svg += `<text x="${m.l}" y="${(pWind.y - 10).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Wind (surface–~7 km)</text>`;
-  if (zeroDegPath) svg += `<text x="${m.l + 132}" y="${(pWind.y - 10).toFixed(1)}" fill="#ffd166" font-size="10">0°C level</text>`;
+  svg += `<text x="6" y="${(pWind.y + 24).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Wind</text>`;
+  if (zeroDegPoints.length) {
+    const start = zeroDegPoints[0];
+    const labelX = Math.max(m.l + 8, Math.min(W - m.r - 62, start.x + 8));
+    const labelY = Math.max(pWind.y + 12, Math.min(pWind.y + pWind.ph - 6, start.y - 6));
+    svg += `<rect x="${(labelX - 3).toFixed(1)}" y="${(labelY - 10).toFixed(1)}" width="58" height="13" rx="3" fill="rgba(21,27,45,0.78)" stroke="rgba(255,209,102,0.22)"/>`;
+    svg += `<text x="${labelX.toFixed(1)}" y="${labelY.toFixed(1)}" fill="#ffd166" font-size="10">0°C level</text>`;
+  }
   svg += `<text x="6" y="${(pPre.y + 24).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Precip</text>`;
   if (hasSnow) svg += `<text x="${W - m.r + 8}" y="${(pPre.y + 24).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10" text-anchor="end">Snow</text>`;
   svg += `<text x="6" y="${(pTemp.y + 24).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Temp</text>`;
@@ -2895,16 +2957,18 @@ function attachMeteogramHover(svg, series) {
     width: plotRight - plotLeft,
     height: plotBottom - plotTop,
     fill: 'transparent',
-    style: 'cursor:crosshair;pointer-events:all',
+    style: 'cursor:crosshair;pointer-events:all;touch-action:none',
   });
 
-  const show = (event) => {
+  const selectionFromEvent = (event) => {
     const pt = localPoint(event);
-    if (!pt) return;
+    if (!pt) return null;
     const ratio = Math.max(0, Math.min(1, (pt.x - plotLeft) / (plotRight - plotLeft)));
     const idx = Math.max(0, Math.min(rows.length - 1, Math.round(ratio * (rows.length - 1))));
     const xx = rows.length <= 1 ? plotLeft : plotLeft + (idx / (rows.length - 1)) * (plotRight - plotLeft);
-    const row = rows[idx];
+    return { idx, xx, row: rows[idx], pt };
+  };
+  const populateTooltipLines = (row) => {
     const surfaceWind = windLevel(row, 1000) || windLevel(row, 975);
     const w850 = windLevel(row, 850);
     const w700 = windLevel(row, 700);
@@ -2916,23 +2980,131 @@ function attachMeteogramHover(svg, series) {
     tooltipLines[4].textContent = `0°C level: ${fmtAlt(row.zeroDegAltM)}`;
     tooltipLines[5].textContent = `Precip: ${fmt(row.precipRateTotal, 1, ' mm/h')}`;
     tooltipLines[6].textContent = `Temp / dew: ${fmt(row.t2mC, 1, '°C')} / ${fmt(row.dewpoint2mC, 1, '°C')}`;
+  };
+  const show = (event) => {
+    if (event.pointerType === 'touch') return;
+    const sel = selectionFromEvent(event);
+    if (!sel) return;
+    populateTooltipLines(sel.row);
 
     const tipW = 184, tipH = 116;
-    const tipX = (xx + 12 + tipW <= plotRight) ? xx + 12 : xx - tipW - 12;
-    const tipY = Math.max(plotTop + 8, Math.min(plotBottom - tipH - 8, pt.y - tipH / 2));
-    crosshair.setAttribute('x1', xx.toFixed(1));
-    crosshair.setAttribute('x2', xx.toFixed(1));
+    const tipX = (sel.xx + 12 + tipW <= plotRight) ? sel.xx + 12 : sel.xx - tipW - 12;
+    const tipY = Math.max(plotTop + 8, Math.min(plotBottom - tipH - 8, sel.pt.y - tipH / 2));
+    crosshair.setAttribute('x1', sel.xx.toFixed(1));
+    crosshair.setAttribute('x2', sel.xx.toFixed(1));
+    tooltip.style.display = '';
     tooltip.setAttribute('transform', `translate(${tipX.toFixed(1)},${tipY.toFixed(1)})`);
     layer.style.display = '';
   };
-  const hide = () => {
+  const hide = (event) => {
+    if (event?.pointerType === 'touch' || touchActive) return;
+    if (touchReadout?.classList.contains('is-open')) return;
     layer.style.display = 'none';
   };
 
   svg.append(layer, hitbox);
+
+  const parent = svg.parentElement;
+  let touchActive = false;
+  let touchReadout = null;
+  let touchRows = [];
+  let touchClose = null;
+  let touchTitle = null;
+  if (parent) {
+    touchReadout = document.createElement('div');
+    touchReadout.className = 'meteogram-touch-readout';
+    touchReadout.setAttribute('role', 'status');
+    touchReadout.setAttribute('aria-live', 'polite');
+    const head = document.createElement('div');
+    head.className = 'meteogram-touch-readout-head';
+    touchTitle = document.createElement('div');
+    touchTitle.className = 'meteogram-touch-readout-title';
+    touchClose = document.createElement('button');
+    touchClose.type = 'button';
+    touchClose.textContent = 'Close';
+    touchClose.className = 'meteogram-touch-readout-close';
+    head.append(touchTitle, touchClose);
+    const grid = document.createElement('div');
+    grid.className = 'meteogram-touch-readout-grid';
+    touchRows = Array.from({ length: 6 }, () => {
+      const item = document.createElement('div');
+      const label = document.createElement('span');
+      const value = document.createElement('strong');
+      item.append(label, value);
+      grid.appendChild(item);
+      return { label, value };
+    });
+    touchReadout.append(head, grid);
+    parent.appendChild(touchReadout);
+  }
+  const setTouchOpen = (open) => {
+    if (!touchReadout) return;
+    touchReadout.classList.toggle('is-open', Boolean(open));
+    if (!open) {
+      touchActive = false;
+      layer.style.display = 'none';
+    }
+  };
+  const updateTouchReadout = (sel) => {
+    if (!touchReadout || !sel) return;
+    const row = sel.row;
+    const surfaceWind = windLevel(row, 1000) || windLevel(row, 975);
+    const w850 = windLevel(row, 850);
+    const w700 = windLevel(row, 700);
+    if (touchTitle) touchTitle.textContent = hoverTime(row.validTime);
+    const values = [
+      ['10 m wind', fmtWind(row.wind10mKt ?? surfaceWind?.speedKt, row.windDir10mDeg ?? surfaceWind?.dirDeg)],
+      ['~1500 m', fmtWind(w850?.speedKt, w850?.dirDeg)],
+      ['~3000 m', fmtWind(w700?.speedKt, w700?.dirDeg)],
+      ['0°C level', fmtAlt(row.zeroDegAltM)],
+      ['Precip', fmt(row.precipRateTotal, 1, ' mm/h')],
+      ['Temp / dew', `${fmt(row.t2mC, 1, '°C')} / ${fmt(row.dewpoint2mC, 1, '°C')}`],
+    ];
+    values.forEach(([label, value], i) => {
+      touchRows[i].label.textContent = label;
+      touchRows[i].value.textContent = value;
+    });
+    crosshair.setAttribute('x1', sel.xx.toFixed(1));
+    crosshair.setAttribute('x2', sel.xx.toFixed(1));
+    tooltip.style.display = 'none';
+    layer.style.display = '';
+    setTouchOpen(true);
+  };
+  const onTouchPointerDown = (event) => {
+    if (event.pointerType !== 'touch') return;
+    event.preventDefault();
+    touchActive = true;
+    try { hitbox.setPointerCapture(event.pointerId); } catch {}
+    updateTouchReadout(selectionFromEvent(event));
+  };
+  const onTouchPointerMove = (event) => {
+    if (event.pointerType !== 'touch' || !touchActive) return;
+    event.preventDefault();
+    updateTouchReadout(selectionFromEvent(event));
+  };
+  const onTouchPointerEnd = (event) => {
+    if (event.pointerType !== 'touch') return;
+    touchActive = false;
+  };
+  const onOutsidePointerDown = (event) => {
+    if (!touchReadout?.classList.contains('is-open')) return;
+    if (event.target === hitbox || touchReadout.contains(event.target)) return;
+    setTouchOpen(false);
+  };
+  const onCloseClick = () => setTouchOpen(false);
+  if (touchClose) touchClose.addEventListener('click', onCloseClick);
+  if (parent) parent.addEventListener('pointerdown', onOutsidePointerDown);
   hitbox.addEventListener('pointermove', show);
   hitbox.addEventListener('pointerdown', show);
+  hitbox.addEventListener('pointerdown', onTouchPointerDown);
+  hitbox.addEventListener('pointermove', onTouchPointerMove);
+  hitbox.addEventListener('pointerup', onTouchPointerEnd);
+  hitbox.addEventListener('pointercancel', onTouchPointerEnd);
   hitbox.addEventListener('pointerleave', hide);
+  return () => {
+    if (touchClose) touchClose.removeEventListener('click', onCloseClick);
+    if (parent) parent.removeEventListener('pointerdown', onOutsidePointerDown);
+  };
 }
 
 function chartSeriesValues(series, key) {
@@ -3054,11 +3226,15 @@ function renderNowcastCharts(series) {
 async function openMeteogramAt(lat, lon, model = 'icon_d2') {
   if (!meteogramOverlay || !meteogramBody) return;
   const key = `${Number(lat).toFixed(4)}|${Number(lon).toFixed(4)}|${model || ''}`;
+  if (meteogramState.touchCleanup) {
+    try { meteogramState.touchCleanup(); } catch {}
+    meteogramState.touchCleanup = null;
+  }
   if (meteogramState.abortCtrl) {
     try { meteogramState.abortCtrl.abort(); } catch {}
   }
   const abortCtrl = new AbortController();
-  meteogramState = { open: true, lat: Number(lat), lon: Number(lon), model: model || '', abortCtrl };
+  meteogramState = { open: true, lat: Number(lat), lon: Number(lon), model: model || '', abortCtrl, touchCleanup: null };
   meteogramOverlay.style.display = 'flex';
   meteogramBody.innerHTML = '<div style="opacity:.8">Loading meteogram…</div>';
   try {
@@ -3081,7 +3257,7 @@ async function openMeteogramAt(lat, lon, model = 'icon_d2') {
     const glon = (p.gridLon ?? lon);
     if (meteogramTitle) meteogramTitle.textContent = `Meteogram · ${glat}, ${glon} · ${String(modelUsed).toUpperCase().replace('_','-')} · Run ${runUsed}`;
     meteogramBody.innerHTML = renderMeteogramSvg(data.series || []);
-    attachMeteogramHover(meteogramBody.querySelector('svg'), data.series || []);
+    meteogramState.touchCleanup = attachMeteogramHover(meteogramBody.querySelector('svg'), data.series || []) || null;
   } catch (e) {
     if (e && (e.name === 'AbortError' || String(e.message || '').toLowerCase().includes('aborted'))) {
       return;
