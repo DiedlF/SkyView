@@ -2776,6 +2776,10 @@ function renderMeteogramSvg(series) {
     svg += `<line x1="${m.l}" y1="${yy.toFixed(1)}" x2="${W - m.r}" y2="${yy.toFixed(1)}" stroke="rgba(255,255,255,0.20)" stroke-dasharray="3 3"/>`;
     svg += `<text x="${m.l - 14}" y="${(yy + 3).toFixed(1)}" fill="rgba(255,255,255,0.62)" font-size="9" text-anchor="end">~${a.z}m</text>`;
   }
+  const altitudeLabelYs = altRefs
+    .map(a => yWindAlt(a.z))
+    .filter(Number.isFinite)
+    .map(yy => yy + 3);
 
   const zeroDegPoints = rows.map((r, i) => {
     const alt = v(r, 'zeroDegAltM');
@@ -2829,13 +2833,19 @@ function renderMeteogramSvg(series) {
     svg += `<line x1="${m.l}" y1="${yZero.toFixed(1)}" x2="${W - m.r}" y2="${yZero.toFixed(1)}" stroke="rgba(255,255,255,0.35)" stroke-dasharray="4 3"/>`;
   }
 
-  svg += `<text x="6" y="${(pWind.y + 24).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Wind</text>`;
+  svg += `<text x="6" y="${(pWind.y + 12).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Wind</text>`;
   if (zeroDegPoints.length) {
     const start = zeroDegPoints[0];
-    const labelX = Math.max(m.l + 8, Math.min(W - m.r - 62, start.x + 8));
-    const labelY = Math.max(pWind.y + 12, Math.min(pWind.y + pWind.ph - 6, start.y - 6));
-    svg += `<rect x="${(labelX - 3).toFixed(1)}" y="${(labelY - 10).toFixed(1)}" width="58" height="13" rx="3" fill="rgba(21,27,45,0.78)" stroke="rgba(255,209,102,0.22)"/>`;
-    svg += `<text x="${labelX.toFixed(1)}" y="${labelY.toFixed(1)}" fill="#ffd166" font-size="10">0°C level</text>`;
+    const labelX = 6;
+    const rawLabelY = Math.max(pWind.y + 24, Math.min(pWind.y + pWind.ph - 8, start.y));
+    const collides = (yy) => altitudeLabelYs.some(ay => Math.abs(yy - ay) < 12);
+    let labelY = rawLabelY;
+    if (collides(labelY)) {
+      const above = Math.max(pWind.y + 24, rawLabelY - 14);
+      const below = Math.min(pWind.y + pWind.ph - 8, rawLabelY + 14);
+      labelY = collides(above) && !collides(below) ? below : above;
+    }
+    svg += `<text x="${labelX}" y="${labelY.toFixed(1)}" fill="#ffd166" font-size="10">0°C level</text>`;
   }
   svg += `<text x="6" y="${(pPre.y + 24).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Precip</text>`;
   if (hasSnow) svg += `<text x="${W - m.r + 8}" y="${(pPre.y + 24).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10" text-anchor="end">Snow</text>`;
