@@ -1,7 +1,7 @@
 # Skyview TODO
 
-**Last updated:** 2026-05-06
-**State:** ✅ Core stable. P1 (arch/cache) complete. P2 (cache correctness) complete. P3 (quality gates) in progress. Admin auth shipped (HTTP Basic). Meteogram shipped and enhanced with wind-panel cloud layers, terrain masking, and 10 m wind. 15-minute symbol support shipped. Several new overlays shipped (geopotential, wave, hourly-max cloud base, Gold climb-rate, 600 hPa wind, mh-in-MSL). ICON-D2 substep ingest extended through 48h.
+**Last updated:** 2026-05-07
+**State:** ✅ Core stable. P1 (arch/cache) complete. P2 (cache correctness) complete. P3 (quality gates) in progress. Admin auth shipped (HTTP Basic). Meteogram shipped and enhanced with wind-panel cloud layers, terrain masking, and 10 m wind. 15-minute symbol support shipped. Recent overlays include geopotential, wave, hourly-max cloud base, Gold climb-rate, 600 hPa wind, mh-in-MSL, and convective/grid-scale precipitation split. ICON-D2 substep ingest extended through 48h.
 
 ---
 
@@ -15,7 +15,6 @@
 
 ### Deferred performance/watchlist
 - **Per-cell loop vectorization** — `aggregate_symbol_cell` is already vectorized within each cell (NumPy on full cell arrays). Across-cell vectorization is blocked by per-cell EU/D2 source switching. Fast-path exists (zoom ≤ 9 stride sampling). Further work is deferred unless profiling shows it matters. (Arch #6)
-- **Legacy precip fallback** — optional runtime fallback for missing precomputed precip in old runs.
 
 ---
 
@@ -32,7 +31,7 @@
 - [ ] **Explorer split/deploy boundary** — do not split the Explorer frontend alone. Keep monorepo for now, but prepare Explorer as its own deployable app by extracting shared Skyview/Explorer API-contract helpers into a small shared module/package, adding configurable Explorer `API_BASE`, documenting Explorer service deployment, and revisiting permissive Explorer CORS before public hosting. Consider a separate repo only after the shared contract boundary is clean.
 - [ ] **In-process caches need locking or encapsulation** — `cache_state.py` mutates shared `OrderedDict` caches and counters from request paths without consistent locks.
 - [ ] **Feedback storage hardening** — `feedback_ops.py` rewrites the whole JSON file in place; switch to temp-file + `os.replace()`, JSONL, or SQLite.
-- [ ] **Precip precalculation robustness** — check edge cases/robustness. Keep separate precip layers (convective/gridscale) in mind.
+- [ ] **Precip backfill/legacy robustness** — decide how old runs missing `convective_rate`/`gridscale_rate` should behave: explicit re-ingest/backfill requirement, optional runtime fallback, or status/admin warning.
 - [ ] **Phased ingest pipeline** — split ingest into priority phases so the app becomes usable as soon as convective fields land, instead of waiting for the full run. Suggested order: (1) convection basics (CAPE/CIN/LPI/hbas_sc/htop_sc/htop_dc → symbols' convective inputs), (2) remaining symbol inputs (cloud cover, ww, ceiling, mh, hsurf), (3) overlay-only fields (precip, wave, geopotential, wind levels), (4) meteogram/skew-T/nowcast extras. Each phase should write a "ready" marker so frontend/feature gates can light up incrementally; ingest health needs to report per-phase coverage.
 - [ ] **Computed cache tune** — eviction policy for active timestep/layer churn (Phase 2 overlay perf).
 - [ ] **Quantized storage** — optional quantize heavy overlay fields (precip rates); persist scale/offset (Phase 4, medium effort 2–3d).
@@ -47,16 +46,14 @@
 ### C) Data / Model Harmonization (ICON-EU ↔ D2)
 
 - [ ] Finalize remaining variable mapping/normalization rules for EU↔D2:
-  - [ ] Precipitation fields (semantics differ)
   - [ ] `hbas_sc`/`htop_sc` (proxy, non-1:1 confirmed)
 - [ ] Re-validate LPI parity after the D2 `lpi_max` switch; EU uses `lpi_con_max`, and both are time-window maxima.
-- [ ] Codify parity impacts on symbols/overlays in docs
+- [ ] Codify EU↔D2 parity impacts in docs, including precipitation semantics (`tot_prec`, convective/grid-scale split, D2 graupel inclusion), `hbas_sc`/`htop_sc`, and LPI.
 
 ### D) UX / Frontend
 
 - [ ] **Hover tooltip** — change point tooltip to hover-based overlay value display.
 - [ ] **Desktop/mobile verify** — test interaction model and fallback behavior across device types.
-- [ ] **Convective/grid-scale precipitation split** — expose precipitation as convective only, grid-scale only, and total/cumulative. Requires backend overlay handlers and computed-field paths to surface component fields separately, plus frontend toggles, legend, and point-popup attribution. Supersedes the earlier "Precipitation toggle" item.
 - [ ] **Frontend/admin XSS pass** — broader review of `innerHTML` usage in admin/debug views (marker suggestions are safe via DOM rendering).
 
 ### E) Soaring Model
@@ -137,6 +134,7 @@
 - ✅ **Geopotential overlay** added; scaling/colormap refined (commits `ce9eae7`, `28be999`, `ede3dd4`)
 - ✅ **Wave overlays + 600 hPa wind** with contrast tuning and control cleanup (commits `c3be5d1`, `db4087a`, `3305984`, `c6d7e0f`)
 - ✅ **Hourly-max cloud base overlay** (commit `4671388`)
+- ✅ **Convective/grid-scale precipitation split**: ingest writes `convective_rate`/`gridscale_rate`; overlays, frontend selector, legends, and point popups expose the new layers (commit `9e567d1`)
 - ✅ **Gold climb-rate overlay**: aligned with `htop_dc` and hourly-max CAPE; CAPE thresholds tuned (commits `faf8299`, `bb13bde`, `472cdc3`, `c3be5d1`'s siblings, `e768cbf`, `54a6095`, `9840417`, `d230b4d`, `251675f`)
 - ✅ **`mh` overlay shown in MSL** (commit `8c7bdd8`); hbas-above-mh margin increased (`520d386`)
 - ✅ Cumulus symbol cloud-cover gate relaxed; ww 0/1 treated as clear for stratiform (`e614b6f`, `1e67883`)
