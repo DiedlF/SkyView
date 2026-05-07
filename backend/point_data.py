@@ -32,7 +32,7 @@ POINT_KEYS = [
     "ww", "ceiling", "clcl", "clcm", "clch", "clct", "clct_mod",
     "cape_ml", "cape_ml_hourly_max", "cin_ml", "htop_dc", "hbas_sc", "htop_sc", "lpi_max", "hzerocl", "hsurf",
     # Precipitation (pre-computed rate fields, already mm/h equivalent)
-    "tp_rate", "rain_rate", "snow_rate", "hail_rate",
+    "tp_rate", "convective_rate", "gridscale_rate", "rain_rate", "snow_rate", "hail_rate",
     # Boundary layer / atmosphere
     "mh", "ashfl_s", "relhum_2m",
     "t_2m", "td_2m", "h_snow",
@@ -179,8 +179,15 @@ def _build_overlay_values_targeted(
     key = (requested_overlay_key or "").strip()
     ov: dict = {"sigwx": ww_max}
 
-    if key in {"total_precip", "rain", "snow", "hail"}:
-        src = {"total_precip": "tp_rate", "rain": "rain_rate", "snow": "snow_rate", "hail": "hail_rate"}[key]
+    if key in {"total_precip", "convective_precip", "gridscale_precip", "rain", "snow", "hail"}:
+        src = {
+            "total_precip": "tp_rate",
+            "convective_precip": "convective_rate",
+            "gridscale_precip": "gridscale_rate",
+            "rain": "rain_rate",
+            "snow": "snow_rate",
+            "hail": "hail_rate",
+        }[key]
         v = _safe_get(d, src, i0, j0)
         ov[key] = round(max(v, 0.0), 2) if v is not None else None
     elif key in {"clouds_low", "clouds_mid", "clouds_high", "clouds_total"}:
@@ -378,6 +385,10 @@ def build_overlay_values_from_raw(
     gg = values.get("grau_gsp")
     if tp is not None:
         ov["total_precip"] = round(float(tp) / step_h, 2)
+    if rc is not None or sc is not None:
+        ov["convective_precip"] = round((float(rc or 0.0) + float(sc or 0.0)) / step_h, 2)
+    if rg is not None or sg is not None or gg is not None:
+        ov["gridscale_precip"] = round((float(rg or 0.0) + float(sg or 0.0) + float(gg or 0.0)) / step_h, 2)
     if rg is not None or rc is not None:
         ov["rain"] = round((float(rg or 0.0) + float(rc or 0.0)) / step_h, 2)
     if sg is not None or sc is not None:
@@ -520,6 +531,8 @@ def build_overlay_values(
     # These are already in mm/h; no step-hour division needed here.
     for out_key, src_key in [
         ("total_precip", "tp_rate"),
+        ("convective_precip", "convective_rate"),
+        ("gridscale_precip", "gridscale_rate"),
         ("rain",         "rain_rate"),
         ("snow",         "snow_rate"),
         ("hail",         "hail_rate"),

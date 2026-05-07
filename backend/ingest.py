@@ -1028,7 +1028,7 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
       Parsing   — The main thread parses each result with cfgrib as soon as its future
                   completes. cfgrib stays single-threaded (eccodes C library).
 
-    Precip rates (tp_rate, rain_rate, snow_rate, hail_rate) are computed inline and written into
+    Precip rates (tp_rate, rain_rate, snow_rate, hail_rate, convective_rate, gridscale_rate) are computed inline and written into
     the same Zarr group, avoiding a separate post-processing read+rewrite pass.
 
     Args:
@@ -1316,21 +1316,16 @@ def ingest_step(run, step, tmp_dir, out_dir, model="icon-d2", config=None, profi
         prev_step_expected, dt_h = _precip_prev_step_and_dt(model, step)
         use_prev = (prev_acc is not None and prev_step == prev_step_expected)
 
-        if use_prev:
-            tp_rate   = (tp - prev_acc['tot_prec']) / dt_h
-            rain_rate = ((rg + rc) - (prev_acc['rain_gsp'] + prev_acc['rain_con'])) / dt_h
-            snow_rate = ((sg + sc) - (prev_acc['snow_gsp'] + prev_acc['snow_con'])) / dt_h
-            hail_rate = (gg - prev_acc['grau_gsp']) / dt_h
-        else:
-            tp_rate   = tp / dt_h
-            rain_rate = (rg + rc) / dt_h
-            snow_rate = (sg + sc) / dt_h
-            hail_rate = gg / dt_h
-
-        arrays['tp_rate']   = np.maximum(tp_rate,   0.0).astype(np.float32)
-        arrays['rain_rate'] = np.maximum(rain_rate, 0.0).astype(np.float32)
-        arrays['snow_rate'] = np.maximum(snow_rate, 0.0).astype(np.float32)
-        arrays['hail_rate'] = np.maximum(hail_rate, 0.0).astype(np.float32)
+        arrays.update(_compute_precip_rate_fields(
+            tp=tp,
+            rg=rg,
+            rc=rc,
+            sg=sg,
+            sc=sc,
+            gg=gg,
+            dt_h=dt_h,
+            prev_acc=prev_acc if use_prev else None,
+        ))
 
         curr_acc = {
             'tot_prec': tp, 'rain_gsp': rg, 'rain_con': rc,
@@ -1492,6 +1487,42 @@ def _precip_prev_step_and_dt(model: str, step: int) -> tuple[int | None, float]:
     return None, 1.0
 
 
+def _compute_precip_rate_fields(
+    *,
+    tp: np.ndarray,
+    rg: np.ndarray,
+    rc: np.ndarray,
+    sg: np.ndarray,
+    sc: np.ndarray,
+    gg: np.ndarray,
+    dt_h: float,
+    prev_acc: dict | None,
+) -> dict[str, np.ndarray]:
+    if prev_acc is not None:
+        tp_rate = (tp - prev_acc["tot_prec"]) / dt_h
+        rain_rate = ((rg + rc) - (prev_acc["rain_gsp"] + prev_acc["rain_con"])) / dt_h
+        snow_rate = ((sg + sc) - (prev_acc["snow_gsp"] + prev_acc["snow_con"])) / dt_h
+        hail_rate = (gg - prev_acc["grau_gsp"]) / dt_h
+        convective_rate = ((rc + sc) - (prev_acc["rain_con"] + prev_acc["snow_con"])) / dt_h
+        gridscale_rate = ((rg + sg + gg) - (prev_acc["rain_gsp"] + prev_acc["snow_gsp"] + prev_acc["grau_gsp"])) / dt_h
+    else:
+        tp_rate = tp / dt_h
+        rain_rate = (rg + rc) / dt_h
+        snow_rate = (sg + sc) / dt_h
+        hail_rate = gg / dt_h
+        convective_rate = (rc + sc) / dt_h
+        gridscale_rate = (rg + sg + gg) / dt_h
+
+    return {
+        "tp_rate": np.maximum(tp_rate, 0.0).astype(np.float32),
+        "rain_rate": np.maximum(rain_rate, 0.0).astype(np.float32),
+        "snow_rate": np.maximum(snow_rate, 0.0).astype(np.float32),
+        "hail_rate": np.maximum(hail_rate, 0.0).astype(np.float32),
+        "convective_rate": np.maximum(convective_rate, 0.0).astype(np.float32),
+        "gridscale_rate": np.maximum(gridscale_rate, 0.0).astype(np.float32),
+    }
+
+
 def _eu_lpi_max_expected_for_step(step: int) -> bool:
     """ICON-EU lpi_con_max availability pattern (mapped to lpi_max).
 
@@ -1518,7 +1549,8 @@ def precompute_precip_rates_for_run(model: str, run: str):
     rates on the fly and do not need to call this function.
 
     Rewrites each Zarr step group with added fields:
-      - tp_rate, rain_rate, snow_rate, hail_rate  (mm/h-equivalent)
+      - tp_rate, rain_rate, snow_rate, hail_rate, convective_rate, gridscale_rate
+        (mm/h-equivalent)
     """
     run_dir = os.path.join(DATA_DIR, model, run)
     if not os.path.isdir(run_dir):
@@ -1552,26 +1584,16 @@ def precompute_precip_rates_for_run(model: str, run: str):
         prev_step_expected, dt_h = _precip_prev_step_and_dt(model, step)
         use_prev = prev_acc is not None and prev_step_seen == prev_step_expected
 
-        if use_prev:
-            tp_rate = (tp - prev_acc['tot_prec']) / dt_h
-            rain_rate = ((rg + rc) - (prev_acc['rain_gsp'] + prev_acc['rain_con'])) / dt_h
-            snow_rate = ((sg + sc) - (prev_acc['snow_gsp'] + prev_acc['snow_con'])) / dt_h
-            hail_rate = (gg - prev_acc['grau_gsp']) / dt_h
-        else:
-            tp_rate = tp / dt_h
-            rain_rate = (rg + rc) / dt_h
-            snow_rate = (sg + sc) / dt_h
-            hail_rate = gg / dt_h
-
-        tp_rate = np.maximum(tp_rate, 0.0).astype(np.float32)
-        rain_rate = np.maximum(rain_rate, 0.0).astype(np.float32)
-        snow_rate = np.maximum(snow_rate, 0.0).astype(np.float32)
-        hail_rate = np.maximum(hail_rate, 0.0).astype(np.float32)
-
-        arrays['tp_rate'] = tp_rate
-        arrays['rain_rate'] = rain_rate
-        arrays['snow_rate'] = snow_rate
-        arrays['hail_rate'] = hail_rate
+        arrays.update(_compute_precip_rate_fields(
+            tp=tp,
+            rg=rg,
+            rc=rc,
+            sg=sg,
+            sc=sc,
+            gg=gg,
+            dt_h=dt_h,
+            prev_acc=prev_acc if use_prev else None,
+        ))
 
         write_zarr_group(
             step_zarr_path(DATA_DIR, model, run, step),

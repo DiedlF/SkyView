@@ -33,6 +33,8 @@ OVERLAY_NEEDS = {
     "snow": {"snow_rate"},
     "hail": {"hail_rate"},
     "total_precip": {"tp_rate"},
+    "convective_precip": {"convective_rate"},
+    "gridscale_precip": {"gridscale_rate"},
     "h_snow": {"h_snow"},
     "dew_spread_2m": {"t_2m", "td_2m"},
     "conv_thickness": {"htop_sc", "hbas_sc"},

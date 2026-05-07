@@ -26,8 +26,8 @@ def build_overlay_keys(cfg: dict) -> list[str]:
     overlay_keys = ["lat", "lon"]
     if cfg.get("computed"):
         v = cfg["var"]
-        if v in ("total_precip", "rain_amount", "snow_amount", "hail_amount"):
-            overlay_keys += ["tp_rate", "rain_rate", "snow_rate", "hail_rate"]
+        if v in ("total_precip", "convective_precip", "gridscale_precip", "rain_amount", "snow_amount", "hail_amount"):
+            overlay_keys += ["tp_rate", "convective_rate", "gridscale_rate", "rain_rate", "snow_rate", "hail_rate"]
         elif v == "conv_thickness":
             overlay_keys += ["htop_sc", "hbas_sc"]
         elif v == "wstar":
@@ -128,7 +128,7 @@ def _precip_precomputed_field(var: str, d: dict) -> np.ndarray:
 
 def compute_computed_field_cropped(var: str, d: dict, li: np.ndarray, lo: np.ndarray, model_used: str, step: int) -> np.ndarray:
     """Compute cropped computed overlay field for /api/overlay."""
-    if var in ("total_precip", "rain_amount", "snow_amount", "hail_amount"):
+    if var in ("total_precip", "convective_precip", "gridscale_precip", "rain_amount", "snow_amount", "hail_amount"):
         return _precip_precomputed_field(var, d)[np.ix_(li, lo)]
 
     if var == "conv_thickness":
@@ -246,7 +246,7 @@ def compute_computed_field_cropped(var: str, d: dict, li: np.ndarray, lo: np.nda
 
 def compute_computed_field_full(var: str, d: dict, model_used: str, step: int) -> np.ndarray:
     """Compute full-grid computed overlay field for /api/overlay_tile."""
-    if var in ("total_precip", "rain_amount", "snow_amount", "hail_amount"):
+    if var in ("total_precip", "convective_precip", "gridscale_precip", "rain_amount", "snow_amount", "hail_amount"):
         return _precip_precomputed_field(var, d)
     if var == "conv_thickness":
         return np.maximum(0, d["htop_sc"] - d["hbas_sc"])

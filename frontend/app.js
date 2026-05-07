@@ -175,6 +175,8 @@ const I18N = {
     'layer.none': 'None',
     'layer.precip': 'Precipitation',
     'layer.precip.total': 'Total',
+    'layer.precip.convective': 'Convective',
+    'layer.precip.gridscale': 'Grid-scale',
     'layer.precip.rain': 'Rain',
     'layer.precip.snow': 'Snow',
     'layer.precip.hail': 'Hail/Graupel',
@@ -301,6 +303,8 @@ const I18N = {
     'layer.none': 'Keines',
     'layer.precip': 'Niederschlag',
     'layer.precip.total': 'Gesamt',
+    'layer.precip.convective': 'Konvektiv',
+    'layer.precip.gridscale': 'Grid-Scale',
     'layer.precip.rain': 'Regen',
     'layer.precip.snow': 'Schnee',
     'layer.precip.hail': 'Hagel/Graupel',
@@ -592,6 +596,8 @@ async function fetchNdjson(url, onEvent, options = {}) {
 // Legend definitions for each effective backend overlay layer
 const LEGEND_CONFIGS = {
   total_precip: { title: 'Precipitation: Total', gradient: 'linear-gradient(to right, rgb(150,255,255), rgb(100,200,255), rgb(50,150,255), rgb(0,100,255))', labels: ['0.1 mm/h', '5+ mm/h'] },
+  convective_precip: { title: 'Precipitation: Convective', gradient: 'linear-gradient(to right, rgb(150,255,255), rgb(100,200,255), rgb(50,150,255), rgb(0,100,255))', labels: ['0.1 mm/h', '5+ mm/h'] },
+  gridscale_precip: { title: 'Precipitation: Grid-scale', gradient: 'linear-gradient(to right, rgb(150,255,255), rgb(100,200,255), rgb(50,150,255), rgb(0,100,255))', labels: ['0.1 mm/h', '5+ mm/h'] },
   rain: { title: 'Precipitation: Rain', gradient: 'linear-gradient(to right, rgb(180,220,255), rgb(100,160,230), rgb(20,60,180))', labels: ['0.1 mm/h', '5+ mm/h'] },
   snow: { title: 'Precipitation: Snow', gradient: 'linear-gradient(to right, rgb(255,200,255), rgb(210,120,230), rgb(120,40,160))', labels: ['0.1 mm/h', '5+ mm/h'] },
   hail: { title: 'Precipitation: Hail/Graupel', gradient: 'linear-gradient(to right, rgb(200,160,20), rgb(240,100,30), rgb(255,80,20))', labels: ['0.1 mm/h', '5+ mm/h'] },
@@ -968,6 +974,8 @@ async function loadSymbols() {
 // Overlay value formatting (aligned with API_CONVERGENCE_CONTRACT units)
 const OVERLAY_META = {
   total_precip: { label: 'Total precip', unit: 'mm/h', decimals: 2 },
+  convective_precip: { label: 'Convective precip', unit: 'mm/h', decimals: 2 },
+  gridscale_precip: { label: 'Grid-scale precip', unit: 'mm/h', decimals: 2 },
   rain: { label: 'Rain', unit: 'mm/h', decimals: 2 },
   rain_amount: { label: 'Rain', unit: 'mm/h', decimals: 2 },
   snow: { label: 'Snow', unit: 'mm/h', decimals: 2 },

@@ -41,6 +41,8 @@ CEILING_VALID_MAX_METERS: float = 20000.0
 # Precomputed precip-rate fields used by overlays and point payloads
 PRECIP_RATE_FIELD_BY_LAYER_VAR: dict[str, str] = {
     "total_precip": "tp_rate",
+    "convective_precip": "convective_rate",
+    "gridscale_precip": "gridscale_rate",
     "rain_amount": "rain_rate",
     "snow_amount": "snow_rate",
     "hail_amount": "hail_rate",

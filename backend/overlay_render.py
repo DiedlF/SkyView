@@ -370,6 +370,8 @@ def colormap_geopotential_height(v, layer: str = "geopotential_700"):
 
 OVERLAY_CONFIGS = {
     "total_precip": {"var": "total_precip", "cmap": colormap_total_precip, "computed": True},
+    "convective_precip": {"var": "convective_precip", "cmap": colormap_total_precip, "computed": True},
+    "gridscale_precip": {"var": "gridscale_precip", "cmap": colormap_total_precip, "computed": True},
     "rain": {"var": "rain_amount", "cmap": colormap_rain, "computed": True},
     "snow": {"var": "snow_amount", "cmap": colormap_snow, "computed": True},
     "hail": {"var": "hail_amount", "cmap": colormap_hail, "computed": True},
@@ -432,12 +434,12 @@ def colorize_layer_vectorized(layer: str, sampled: np.ndarray, valid: np.ndarray
             rgba[..., 2][mask] = np.clip(b[mask] if isinstance(b, np.ndarray) else b, 0, 255).astype(np.uint8) if isinstance(b, np.ndarray) else np.uint8(b)
             rgba[..., 3][mask] = np.clip(a[mask] if isinstance(a, np.ndarray) else a, 0, 255).astype(np.uint8) if isinstance(a, np.ndarray) else np.uint8(a)
 
-    if layer in ("total_precip", "rain", "snow", "hail"):
+    if layer in ("total_precip", "convective_precip", "gridscale_precip", "rain", "snow", "hail"):
         mmh = v
         m = valid & (mmh >= 0.1)
         if np.any(m):
             t = np.clip(mmh / 5.0, 0.0, 1.0)
-            if layer == "total_precip":
+            if layer in ("total_precip", "convective_precip", "gridscale_precip"):
                 set_rgba(m, 150 * (1 - t), 180 + 75 * (1 - t), np.full_like(t, 255.0), 120 + 135 * t)
             elif layer == "rain":
                 set_rgba(m, 180 - 160 * t, 220 - 160 * t, 255 - 75 * t, 130 + 125 * t)

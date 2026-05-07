@@ -1207,10 +1207,13 @@ from PIL import Image
 OVERLAY_CONFIGS = RENDER_OVERLAY_CONFIGS
 
 OVERLAY_LAYER_ALIASES = {
-    "rain": "rain_amount",
-    "snow": "snow_amount",
-    "hail": "hail_amount",
+    "rain_amount": "rain",
+    "snow_amount": "snow",
+    "hail_amount": "hail",
     "precip": "total_precip",
+    "convective": "convective_precip",
+    "gridscale": "gridscale_precip",
+    "grid_scale": "gridscale_precip",
     "clouds": "clouds_total",
 }
 

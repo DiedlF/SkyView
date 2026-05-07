@@ -10,6 +10,7 @@ BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..", "backend")
 sys.path.insert(0, BACKEND_DIR)
 
 from ingest import (  # noqa: E402
+    _compute_precip_rate_fields,
     _load_precip_acc_from_step,
     _select_spatial_dataset,
     build_d2_boundary_cache,
@@ -215,6 +216,49 @@ def test_load_precip_acc_from_zarr_step(tmp_path, monkeypatch):
     assert acc is not None
     assert float(acc["tot_prec"][0, 0]) == 1.0
     assert acc["rain_gsp"].shape == (2, 2)
+
+
+def test_compute_precip_rate_fields_splits_convective_and_gridscale():
+    shape = (2, 2)
+    zeros = np.zeros(shape, dtype=np.float32)
+    fields = _compute_precip_rate_fields(
+        tp=np.full(shape, 10.0, dtype=np.float32),
+        rg=np.full(shape, 4.0, dtype=np.float32),
+        rc=np.full(shape, 2.0, dtype=np.float32),
+        sg=np.full(shape, 3.0, dtype=np.float32),
+        sc=np.full(shape, 1.0, dtype=np.float32),
+        gg=np.full(shape, 0.5, dtype=np.float32),
+        dt_h=1.0,
+        prev_acc=None,
+    )
+
+    assert float(fields["convective_rate"][0, 0]) == 3.0
+    assert float(fields["gridscale_rate"][0, 0]) == 7.5
+    assert float(fields["rain_rate"][0, 0]) == 6.0
+    assert float(fields["snow_rate"][0, 0]) == 4.0
+    assert float(fields["hail_rate"][0, 0]) == 0.5
+    assert float(fields["tp_rate"][0, 0]) == 10.0
+
+    fields = _compute_precip_rate_fields(
+        tp=np.full(shape, 16.0, dtype=np.float32),
+        rg=np.full(shape, 7.0, dtype=np.float32),
+        rc=np.full(shape, 5.0, dtype=np.float32),
+        sg=np.full(shape, 5.0, dtype=np.float32),
+        sc=np.full(shape, 2.0, dtype=np.float32),
+        gg=np.full(shape, 1.0, dtype=np.float32),
+        dt_h=3.0,
+        prev_acc={
+            "tot_prec": np.full(shape, 10.0, dtype=np.float32),
+            "rain_gsp": np.full(shape, 4.0, dtype=np.float32),
+            "rain_con": np.full(shape, 2.0, dtype=np.float32),
+            "snow_gsp": np.full(shape, 3.0, dtype=np.float32),
+            "snow_con": np.full(shape, 1.0, dtype=np.float32),
+            "grau_gsp": zeros,
+        },
+    )
+
+    assert np.isclose(float(fields["convective_rate"][0, 0]), 4.0 / 3.0)
+    assert np.isclose(float(fields["gridscale_rate"][0, 0]), 6.0 / 3.0)
 
 
 def test_build_d2_boundary_cache_reads_zarr_only(tmp_path, monkeypatch):
