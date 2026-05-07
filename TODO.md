@@ -1,7 +1,7 @@
 # Skyview TODO
 
 **Last updated:** 2026-05-07
-**State:** ✅ Core stable. P1 (arch/cache) complete. P2 (cache correctness) complete. P3 (quality gates) in progress. Admin auth shipped (HTTP Basic). Meteogram shipped and enhanced with wind-panel cloud layers, terrain masking, and 10 m wind. 15-minute symbol support shipped. Recent overlays include geopotential, wave, hourly-max cloud base, Gold climb-rate, 600 hPa wind, mh-in-MSL, and convective/grid-scale precipitation split. ICON-D2 substep ingest extended through 48h.
+**State:** ✅ Core stable. P1 (arch/cache) complete. P2 (cache correctness) complete. P3 (quality gates) in progress. Admin auth shipped (HTTP Basic). Meteogram shipped and enhanced with 300 hPa wind, high-cloud background layers, terrain masking, and 10 m wind. 15-minute symbol support shipped. Recent overlays include geopotential, wave, hourly-max cloud base, Gold climb-rate, 600 hPa wind, mh-in-MSL, and convective/grid-scale precipitation split. ICON-D2 substep ingest extended through 48h.
 
 ---
 
@@ -124,7 +124,7 @@
 - ✅ Symbol gridding verified (no lattice holes at viewport edges)
 - ✅ `symbols.js _typeToWw` aligned to backend weather_codes.py
 - ✅ Meteogram overlay (temp / precip / wind charts, per-point cache)
-- ✅ Meteogram wind-panel enhancement: cloud-cover background, terrain/ground-height masking, 10 m wind barbs, and below-ground pressure-wind suppression.
+- ✅ Meteogram wind-panel enhancement: 300 hPa wind level, high-cloud background layers, gray cloud shading, terrain/ground-height masking, 10 m wind barbs, and below-ground pressure-wind suppression.
 - ✅ Meteogram mobile touch tooltip: tap/drag scrubber with pinned cursor and bottom readout; desktop hover unchanged.
 - ✅ 15-minute symbols: `/api/symbols` substep mode, live quarter-hour classification, substep-aware cache keys, and frontend substep controls.
 - ✅ Map layer / marker search stabilization

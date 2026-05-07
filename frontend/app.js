@@ -2642,14 +2642,11 @@ function renderMeteogramSvg(series) {
   const hasCloudCoverData = rows.some(row => Array.isArray(row.cloudLevels)
     && row.cloudLevels.some(c => Number.isFinite(Number(c?.coverPct))));
   const clearSkyFill = '#bfe9ff';
-  const cloudFill = '#f8fafc';
+  const cloudFill = '#6b7280';
   const windBarbFill = '#0f2742';
 
   let svg = `<svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="Meteogram" data-plot-left="${m.l}" data-plot-right="${W - m.r}" data-plot-top="${m.t}" data-plot-bottom="${H - m.b}">`;
   svg += `<rect x="0" y="0" width="${W}" height="${H}" fill="#151b2d" rx="8"/>`;
-  if (hasCloudCoverData) {
-    svg += `<rect x="${m.l}" y="${windPlotY.toFixed(1)}" width="${pxW}" height="${windPlotH.toFixed(1)}" fill="${clearSkyFill}" opacity="0.92"/>`;
-  }
 
   for (const p of panels) {
     svg += `<line x1="${m.l}" y1="${p.y.toFixed(1)}" x2="${W - m.r}" y2="${p.y.toFixed(1)}" stroke="rgba(255,255,255,0.2)"/>`;
@@ -2684,9 +2681,9 @@ function renderMeteogramSvg(series) {
   }
 
   // Wind panel: trimmed lower/mid-level profile for readability and faster payloads
-  const levels = [1000, 975, 950, 850, 700, 600, 500, 400];
+  const levels = [1000, 975, 950, 850, 700, 600, 500, 400, 300];
   const pressureToApproxHeightM = (lev) => 44330 * (1 - Math.pow(Number(lev) / 1013.25, 0.1903));
-  const windTopAltM = pressureToApproxHeightM(400);
+  const windTopAltM = pressureToApproxHeightM(300);
   const windBottomAltM = 0;
   const yWind = (lev) => {
     const alt = pressureToApproxHeightM(lev);
@@ -2721,6 +2718,18 @@ function renderMeteogramSvg(series) {
     return g;
   };
 
+  if (hasCloudCoverData) {
+    for (let i = 0; i < rows.length; i++) {
+      const xx = x(i);
+      const bw = Math.max(2, pxW / Math.max(rows.length, 24));
+      const groundY = groundYForRow(rows[i]);
+      const yBottom = Number.isFinite(groundY) ? Math.min(windPlotY + windPlotH, groundY) : windPlotY + windPlotH;
+      const h = yBottom - windPlotY;
+      if (h <= 0) continue;
+      svg += `<rect x="${(xx - bw / 2).toFixed(1)}" y="${windPlotY.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="${clearSkyFill}" opacity="0.92"/>`;
+    }
+  }
+
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     const clouds = Array.isArray(row.cloudLevels) ? row.cloudLevels
@@ -2734,7 +2743,9 @@ function renderMeteogramSvg(series) {
     for (let k = 0; k < clouds.length; k++) {
       const cover = Math.max(0, Math.min(100, clouds[k].cover));
       if (cover < 5) continue;
-      const upper = k === 0 ? windTopAltM : (clouds[k - 1].alt + clouds[k].alt) / 2;
+      const upper = k === 0
+        ? (clouds.length > 1 ? Math.min(windTopAltM, clouds[k].alt + (clouds[k].alt - clouds[k + 1].alt) / 2) : windTopAltM)
+        : (clouds[k - 1].alt + clouds[k].alt) / 2;
       const lower = k === clouds.length - 1 ? windBottomAltM : (clouds[k].alt + clouds[k + 1].alt) / 2;
       const yTop = yWindAlt(upper);
       const yBottomRaw = yWindAlt(lower);
@@ -2785,6 +2796,7 @@ function renderMeteogramSvg(series) {
     { z: 4500, p: 600 },
     { z: 5500, p: 500 },
     { z: 7000, p: 400 },
+    { z: 9000, p: 300 },
   ];
   for (const a of altRefs) {
     const yy = yWindAlt(a.z);
@@ -2849,7 +2861,8 @@ function renderMeteogramSvg(series) {
     svg += `<line x1="${m.l}" y1="${yZero.toFixed(1)}" x2="${W - m.r}" y2="${yZero.toFixed(1)}" stroke="rgba(255,255,255,0.35)" stroke-dasharray="4 3"/>`;
   }
 
-  svg += `<text x="6" y="${(pWind.y + 12).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Wind</text>`;
+  svg += `<text x="6" y="${(pWind.y + 7).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Wind/</text>`;
+  svg += `<text x="6" y="${(pWind.y + 18).toFixed(1)}" fill="rgba(255,255,255,0.82)" font-size="10">Cloud</text>`;
   if (zeroDegPoints.length) {
     const start = zeroDegPoints[0];
     const labelX = 6;

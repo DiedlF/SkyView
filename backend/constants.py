@@ -72,13 +72,13 @@ LOW_ZOOM_PRECOMPUTED_BINS_ENABLED: bool = os.environ.get("SKYVIEW_LOW_ZOOM_PRECO
 EMAGRAM_D2_LEVELS_HPA: list[int] = [1000, 975, 950, 850, 700, 600, 500, 400, 300, 200]
 
 # Meteogram wind profile levels (D2) — trimmed for faster loads and better readability.
-# Approx. tops out around 7 km (~400 hPa).
-METEOGRAM_D2_LEVELS_HPA: list[int] = [1000, 975, 950, 850, 700, 600, 500, 400]
+# 300 hPa adds one standard upper-air level above the old ~7 km / 400 hPa top.
+METEOGRAM_D2_LEVELS_HPA: list[int] = [1000, 975, 950, 850, 700, 600, 500, 400, 300]
 
 # ICON-D2 model-level cloud-cover levels for the meteogram wind-panel background.
-# These span roughly surface to 7 km, matching the wind panel without ingesting
+# These span roughly surface to 9.25 km, matching the extended high-cloud panel without ingesting
 # all 44 available levels in that altitude range.
-METEOGRAM_D2_CLC_MODEL_LEVELS: list[int] = [22, 24, 27, 30, 32, 35, 38, 42, 45, 48, 52, 55, 58, 61, 63, 65]
+METEOGRAM_D2_CLC_MODEL_LEVELS: list[int] = [16, 18, 22, 24, 27, 30, 32, 35, 38, 42, 45, 48, 52, 55, 58, 61, 63, 65]
 
 # Standard ICON-D2 full-level heights for zero topography height, in meters AMSL.
 # Source: DWD ICON Database Reference, Table A.4.
