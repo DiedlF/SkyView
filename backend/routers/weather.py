@@ -87,7 +87,7 @@ def build_weather_router(
     meteogram_build_semaphore = threading.Semaphore(
         max(1, int(os.environ.get("SKYVIEW_METEOGRAM_BUILD_CONCURRENCY", "1")))
     )
-    METEOGRAM_POINT_CACHE_VERSION = 4
+    METEOGRAM_POINT_CACHE_VERSION = 5
     EMAGRAM_POINT_CACHE_VERSION = 1
     NOWCAST_POINT_CACHE_VERSION = 1
     emagram_cache: OrderedDict[str, dict] = OrderedDict()

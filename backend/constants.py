@@ -72,8 +72,8 @@ LOW_ZOOM_PRECOMPUTED_BINS_ENABLED: bool = os.environ.get("SKYVIEW_LOW_ZOOM_PRECO
 EMAGRAM_D2_LEVELS_HPA: list[int] = [1000, 975, 950, 850, 700, 600, 500, 400, 300, 200]
 
 # Meteogram wind profile levels (D2) — trimmed for faster loads and better readability.
-# 300 hPa adds one standard upper-air level above the old ~7 km / 400 hPa top.
-METEOGRAM_D2_LEVELS_HPA: list[int] = [1000, 975, 950, 850, 700, 600, 500, 400, 300]
+# Approx. tops out around 7 km (~400 hPa).
+METEOGRAM_D2_LEVELS_HPA: list[int] = [1000, 975, 950, 850, 700, 600, 500, 400]
 
 # ICON-D2 model-level cloud-cover levels for the meteogram wind-panel background.
 # These span roughly surface to 9.25 km, matching the extended high-cloud panel without ingesting

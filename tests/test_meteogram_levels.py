@@ -13,8 +13,8 @@ from constants import (  # noqa: E402
 )
 
 
-def test_meteogram_includes_one_upper_wind_level_above_7000m():
-    assert METEOGRAM_D2_LEVELS_HPA == [1000, 975, 950, 850, 700, 600, 500, 400, 300]
+def test_meteogram_wind_levels_stop_near_7000m():
+    assert METEOGRAM_D2_LEVELS_HPA == [1000, 975, 950, 850, 700, 600, 500, 400]
 
 
 def test_meteogram_cloud_levels_extend_above_7000m_with_consistent_spacing():

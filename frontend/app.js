@@ -2642,7 +2642,7 @@ function renderMeteogramSvg(series) {
   const hasCloudCoverData = rows.some(row => Array.isArray(row.cloudLevels)
     && row.cloudLevels.some(c => Number.isFinite(Number(c?.coverPct))));
   const clearSkyFill = '#bfe9ff';
-  const cloudFill = '#6b7280';
+  const cloudFill = '#374151';
   const windBarbFill = '#0f2742';
 
   let svg = `<svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="Meteogram" data-plot-left="${m.l}" data-plot-right="${W - m.r}" data-plot-top="${m.t}" data-plot-bottom="${H - m.b}">`;
@@ -2681,18 +2681,26 @@ function renderMeteogramSvg(series) {
   }
 
   // Wind panel: trimmed lower/mid-level profile for readability and faster payloads
-  const levels = [1000, 975, 950, 850, 700, 600, 500, 400, 300];
+  const levels = [1000, 975, 950, 850, 700, 600, 500, 400];
   const pressureToApproxHeightM = (lev) => 44330 * (1 - Math.pow(Number(lev) / 1013.25, 0.1903));
-  const windTopAltM = pressureToApproxHeightM(300);
+  const windTopAltM = pressureToApproxHeightM(400);
+  const cloudTopAltM = rows.reduce((top, row) => {
+    const clouds = Array.isArray(row.cloudLevels) ? row.cloudLevels : [];
+    return clouds.reduce((innerTop, c) => {
+      const alt = Number(c?.altitudeM);
+      return Number.isFinite(alt) ? Math.max(innerTop, alt) : innerTop;
+    }, top);
+  }, windTopAltM);
+  const panelTopAltM = hasCloudCoverData ? Math.max(windTopAltM, cloudTopAltM) : windTopAltM;
   const windBottomAltM = 0;
   const yWind = (lev) => {
     const alt = pressureToApproxHeightM(lev);
-    return windPlotY + windPlotH - ((alt - windBottomAltM) / (windTopAltM - windBottomAltM || 1)) * windPlotH;
+    return yWindAlt(alt);
   };
   const yWindAlt = (altM) => {
     if (!Number.isFinite(altM)) return null;
-    const clamped = Math.max(windBottomAltM, Math.min(windTopAltM, Number(altM)));
-    return windPlotY + windPlotH - ((clamped - windBottomAltM) / (windTopAltM - windBottomAltM || 1)) * windPlotH;
+    const clamped = Math.max(windBottomAltM, Math.min(panelTopAltM, Number(altM)));
+    return windPlotY + windPlotH - ((clamped - windBottomAltM) / (panelTopAltM - windBottomAltM || 1)) * windPlotH;
   };
   const groundYForRow = (row) => yWindAlt(Math.max(0, Number(row?.hsurfM) || 0));
   const wind10YForRow = (row) => {
@@ -2744,7 +2752,7 @@ function renderMeteogramSvg(series) {
       const cover = Math.max(0, Math.min(100, clouds[k].cover));
       if (cover < 5) continue;
       const upper = k === 0
-        ? (clouds.length > 1 ? Math.min(windTopAltM, clouds[k].alt + (clouds[k].alt - clouds[k + 1].alt) / 2) : windTopAltM)
+        ? (clouds.length > 1 ? Math.min(panelTopAltM, clouds[k].alt + (clouds[k].alt - clouds[k + 1].alt) / 2) : panelTopAltM)
         : (clouds[k - 1].alt + clouds[k].alt) / 2;
       const lower = k === clouds.length - 1 ? windBottomAltM : (clouds[k].alt + clouds[k + 1].alt) / 2;
       const yTop = yWindAlt(upper);
@@ -2796,7 +2804,6 @@ function renderMeteogramSvg(series) {
     { z: 4500, p: 600 },
     { z: 5500, p: 500 },
     { z: 7000, p: 400 },
-    { z: 9000, p: 300 },
   ];
   for (const a of altRefs) {
     const yy = yWindAlt(a.z);
