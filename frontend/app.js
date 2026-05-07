@@ -2631,9 +2631,17 @@ function renderMeteogramSvg(series) {
   const windPadBottom = 4;
   const windPlotY = pWind.y + windPadTop;
   const windPlotH = Math.max(1, pWind.ph - windPadTop - windPadBottom);
+  const hasCloudCoverData = rows.some(row => Array.isArray(row.cloudLevels)
+    && row.cloudLevels.some(c => Number.isFinite(Number(c?.coverPct))));
+  const clearSkyFill = '#bfe9ff';
+  const cloudFill = '#f8fafc';
+  const windBarbFill = '#0f2742';
 
   let svg = `<svg width="100%" viewBox="0 0 ${W} ${H}" role="img" aria-label="Meteogram" data-plot-left="${m.l}" data-plot-right="${W - m.r}" data-plot-top="${m.t}" data-plot-bottom="${H - m.b}">`;
   svg += `<rect x="0" y="0" width="${W}" height="${H}" fill="#151b2d" rx="8"/>`;
+  if (hasCloudCoverData) {
+    svg += `<rect x="${m.l}" y="${windPlotY.toFixed(1)}" width="${pxW}" height="${windPlotH.toFixed(1)}" fill="${clearSkyFill}" opacity="0.92"/>`;
+  }
 
   for (const p of panels) {
     svg += `<line x1="${m.l}" y1="${p.y.toFixed(1)}" x2="${W - m.r}" y2="${p.y.toFixed(1)}" stroke="rgba(255,255,255,0.2)"/>`;
@@ -2696,11 +2704,11 @@ function renderMeteogramSvg(series) {
     const f10 = Math.floor(s / 10); s -= f10 * 10;
     const f5 = s >= 5 ? 1 : 0;
     let g = `<g transform="translate(${xx},${yy}) rotate(${dirDeg})">`;
-    g += `<line x1="0" y1="0" x2="0" y2="-10.5" stroke="#dbeafe" stroke-width="1.25"/>`;
+    g += `<line x1="0" y1="0" x2="0" y2="-10.5" stroke="${windBarbFill}" stroke-width="1.25"/>`;
     let yyf = -10.5;
-    for (let i = 0; i < f50; i++) { g += `<polygon points="0,${yyf} 5.8,${yyf+1.6} 0,${yyf+3.2}" fill="#dbeafe"/>`; yyf += 3.4; }
-    for (let i = 0; i < f10; i++) { g += `<line x1="0" y1="${yyf}" x2="5.8" y2="${yyf+1.6}" stroke="#dbeafe" stroke-width="1.25"/>`; yyf += 2.5; }
-    if (f5) g += `<line x1="0" y1="${yyf}" x2="3.8" y2="${yyf+1.0}" stroke="#dbeafe" stroke-width="1.25"/>`;
+    for (let i = 0; i < f50; i++) { g += `<polygon points="0,${yyf} 5.8,${yyf+1.6} 0,${yyf+3.2}" fill="${windBarbFill}"/>`; yyf += 3.4; }
+    for (let i = 0; i < f10; i++) { g += `<line x1="0" y1="${yyf}" x2="5.8" y2="${yyf+1.6}" stroke="${windBarbFill}" stroke-width="1.25"/>`; yyf += 2.5; }
+    if (f5) g += `<line x1="0" y1="${yyf}" x2="3.8" y2="${yyf+1.0}" stroke="${windBarbFill}" stroke-width="1.25"/>`;
     g += `</g>`;
     return g;
   };
@@ -2726,8 +2734,8 @@ function renderMeteogramSvg(series) {
       const yBottom = Number.isFinite(groundY) ? Math.min(yBottomRaw, groundY) : yBottomRaw;
       const h = yBottom - yTop;
       if (h <= 0) continue;
-      const opacity = (0.04 + (cover / 100) * 0.36).toFixed(3);
-      svg += `<rect x="${(xx - bw / 2).toFixed(1)}" y="${yTop.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="#dbeafe" opacity="${opacity}"/>`;
+      const opacity = (0.08 + (cover / 100) * 0.66).toFixed(3);
+      svg += `<rect x="${(xx - bw / 2).toFixed(1)}" y="${yTop.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="${cloudFill}" opacity="${opacity}"/>`;
     }
   }
 
