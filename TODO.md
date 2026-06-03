@@ -13,6 +13,12 @@
 - Frontend layer toggle + styling by class/type
 - Performance + QA + docs
 
+### Observation layer — radar + satellite (planned mini-project)
+- Live EUMETNET OPERA radar (5-min dBZ composite) + EUMETSAT MSG RSS satellite overlays.
+- Backend: `backend/observations/` ingest (fetch → reproject Lambert-EA/geostationary → regular lat/lon Zarr), ring-buffer retention, reuse of `/api/overlay_tile`, new `/api/observations/frames` time index.
+- Frontend: "Observations" layer group with its own recent-frames strip + loop animation, legends, CC-BY/EUMETSAT attribution.
+- Full design: `docs/OBSERVATION_LAYER_IMPLEMENTATION_PLAN.md`.
+
 ### Deferred performance/watchlist
 - **Per-cell loop vectorization** — `aggregate_symbol_cell` is already vectorized within each cell (NumPy on full cell arrays). Across-cell vectorization is blocked by per-cell EU/D2 source switching. Fast-path exists (zoom ≤ 9 stride sampling). Further work is deferred unless profiling shows it matters. (Arch #6)
 

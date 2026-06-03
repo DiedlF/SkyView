@@ -25,6 +25,7 @@ Last updated: 2026-04-26
 
 - `API_CONVERGENCE_CONTRACT.md` - Explorer/Skyview API compatibility contract.
 - `ICON_EU_OUTSIDE_D2_IMPLEMENTATION_PLAN.md` - D2-to-EU fallback implementation status.
+- `OBSERVATION_LAYER_IMPLEMENTATION_PLAN.md` - Plan for adding live radar (OPERA) + satellite (MSG RSS) observation overlays (backend + frontend).
 - `ICON-EU-IMPLEMENTATION.md` - ICON-EU integration summary and operational notes.
 - `EXPLORER_SOURCE_API_CONTRACT_V1.md` - Remote Explorer source API contract.
 - `EXPLORER_REMOTE_PROVIDER.md` - Consolidated Explorer local/remote provider and ingest-profile summary.
