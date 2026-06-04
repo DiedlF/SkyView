@@ -1,6 +1,6 @@
 # Observation Layer — Implementation Plan (Radar + Satellite Composites)
 
-**Status:** Phase 0 implemented (scaffold + tests); Phases 1–5 pending
+**Status:** Phases 0–1 implemented (scaffold, reproject, store, orchestrator, tests); Phases 2–5 pending
 **Date:** 2026-06-03
 **Scope:** Add a live **observation layer** to SkyView — EUMETNET OPERA radar
 (5-min, 1 km max-reflectivity composite) and EUMETSAT MSG RSS satellite (5-min)
@@ -328,7 +328,7 @@ Add attribution to the Leaflet attribution control and the legal pages
 | Phase | Deliverable | Verifiable in this sandbox? |
 |-------|-------------|------------------------------|
 | **0. Scaffolding** ✅ **DONE** | `backend/observations/` package (config, radar_ord, satellite_eumetsat, poller, requirements), `.gitignore`, `tests/test_observations_s3keys.py` + `tests/test_observations_odim.py`. S3-key parser extracted as pure/tested helpers; ODIM test uses a synthetic fixture + `importorskip` | ✅ (logic verified; full `pytest`/`h5py` run needs the ingest venv) |
-| **1. Ingest + reproject + store** | `reproject.py`, `store.py`, `ingest_obs.py`, manifest + retention; resolve the 3 PLANNING open items against the live API; one real radar + one real satellite frame on disk as Zarr | ❌ needs network + creds |
+| **1. Ingest + reproject + store** ✅ **CODE DONE** | `reproject.py` (ODIM Lambert-EA + swath), `store.py` (manifest + ring-buffer retention, tested), `ingest_obs.py` (fetch→reproject→store→prune, per-source isolation), `radar_ord.read_odim_valid_time`. Satellite channel extraction + the 3 PLANNING open items still need live verification | ⚠️ pure logic verified; reproject/zarr + live API need the ingest venv + host |
 | **2. Backend serving** | `OVERLAY_CONFIGS` entries + colormaps, observation load branch, `resolve_observation_frame`, `/api/observations/frames` route, cache rotation | ✅ unit-testable with fixture Zarr |
 | **3. Frontend** | Observations control group, panes/layers, recent-frames strip + loop, legends, attribution | ✅ (manual/visual; needs backend frames) |
 | **4. Scheduling** | cron entry or `skyview-observations.service`; optional MQTT push subscriber | ❌ needs host/network |
@@ -361,6 +361,13 @@ Mirror `tests/` conventions (`pytest.ini`, markers `integration`/`perf`):
 - **3 PLANNING open items** (composite `href` field, single-grid vs CoverageJSON
   delivery, ODIM composite group layout) — unverifiable offline; isolate in
   `radar_ord.py`/`reproject.py`, confirm via Swagger + 2 real requests in Phase 1.
+- **EDR returned HTTP 403 in testing** — a live call to
+  `…/eu-eumetnet-weather-radar/collections/observations/items` returned
+  `403 Forbidden`, contradicting the "openly available, no whitelisting" note.
+  Resolve in Phase 1 on a real host: verify the collection/items path via the
+  Swagger UI, check whether an API key/header is required, and confirm the S3
+  fallback (`openradar-24h`) is genuinely unsigned-public. The fetch chain already
+  degrades EDR→S3→skip, so this does not block ingest once S3 access is confirmed.
 - **Reprojection fidelity** — Lambert-EA/geostationary → 0.02° lat/lon; validate
   visually against a known event before shipping; consider 0.01° for radar if the
   Alps window benefits.

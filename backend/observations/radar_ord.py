@@ -160,6 +160,45 @@ def read_odim_maxreflectivity(path: Path):
     return phys, where
 
 
+def read_odim_valid_time(path: Path) -> Optional[dt.datetime]:
+    """Return the composite's nominal valid time from ODIM ``/what`` attrs.
+
+    ODIM stores ``date`` (YYYYMMDD) and ``time`` (HHMMSS) on the root ``/what``
+    group (and/or per-dataset). Falls back to the file mtime if absent. Returns a
+    timezone-aware UTC datetime, or ``None`` if nothing usable is found.
+    """
+    import h5py
+
+    def _parse(date_v, time_v) -> Optional[dt.datetime]:
+        if date_v is None or time_v is None:
+            return None
+        d = date_v.decode() if isinstance(date_v, bytes) else str(date_v)
+        t = time_v.decode() if isinstance(time_v, bytes) else str(time_v)
+        t = t.zfill(6)
+        try:
+            return dt.datetime.strptime(d + t[:6], "%Y%m%d%H%M%S").replace(
+                tzinfo=dt.timezone.utc
+            )
+        except ValueError:
+            return None
+
+    try:
+        with h5py.File(path, "r") as f:
+            for grp in ("what", "dataset1/what"):
+                if grp in f:
+                    a = f[grp].attrs
+                    got = _parse(a.get("date"), a.get("time"))
+                    if got:
+                        return got
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Could not read ODIM valid time from %s: %s", path, exc)
+
+    try:
+        return dt.datetime.fromtimestamp(path.stat().st_mtime, dt.timezone.utc)
+    except OSError:
+        return None
+
+
 # -- pure helpers (no network / heavy deps; unit-tested) -------------------
 def parse_composite_key(key: str) -> Optional[dict]:
     """Parse an OPERA composite S3 key/filename into its components.

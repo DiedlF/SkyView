@@ -103,3 +103,45 @@ class Config:
 def ensure_dirs() -> None:
     for d in (RADAR_DIR, SAT_DIR, STATE_DIR):
         d.mkdir(parents=True, exist_ok=True)
+
+
+# --------------------------------------------------------------------------
+# Target grid for reprojection / serving
+# --------------------------------------------------------------------------
+# Observations are reprojected onto a regular lat/lon grid (the same convention
+# as ICON Zarr output) so they reuse SkyView's overlay-tile pipeline. The bounds
+# mirror ``d2_bounds`` in backend/ingest_config.yaml and the resolution matches
+# ICON-D2 native (0.02° ≈ 2 km), giving a 746×1215 grid over the SkyView region.
+@dataclass(frozen=True)
+class GridSpec:
+    lat_min: float = 43.18
+    lat_max: float = 58.08
+    lon_min: float = -3.94
+    lon_max: float = 20.34
+    resolution: float = 0.02
+
+    @property
+    def n_lat(self) -> int:
+        return int(round((self.lat_max - self.lat_min) / self.resolution)) + 1
+
+    @property
+    def n_lon(self) -> int:
+        return int(round((self.lon_max - self.lon_min) / self.resolution)) + 1
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        return (self.n_lat, self.n_lon)
+
+    def lat_at(self, i: int) -> float:
+        return self.lat_min + i * self.resolution
+
+    def lon_at(self, j: int) -> float:
+        return self.lon_min + j * self.resolution
+
+
+TARGET_GRID = GridSpec()
+
+# Ring-buffer retention for observation frames (seconds). Unlike forecast data
+# (keep_runs=1) we keep a rolling window the UI can animate. Default 3 h.
+RETENTION_SECONDS = int(os.environ.get("EUCOMP_RETENTION_SECONDS", str(3 * 3600)))
+RETENTION_MAX_FRAMES = int(os.environ.get("EUCOMP_RETENTION_MAX_FRAMES", "0")) or None
