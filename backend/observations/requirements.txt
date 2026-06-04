@@ -1,0 +1,20 @@
+# Observation-layer ingest dependencies (kept separate from the core server's
+# backend/requirements.txt so the web app image is not bloated with geo deps).
+# Install on the host/container that runs the observation poller/cron:
+#   pip install -r backend/observations/requirements.txt
+
+requests>=2.31
+numpy>=1.24
+h5py>=3.8            # ODIM HDF5 radar composites
+boto3>=1.34          # unsigned S3 fallback for OPERA 24h cache
+eumdac>=3.0          # EUMETSAT Data Store (satellite)
+
+# Reprojection (Phase 1): Lambert EA / geostationary -> regular lat/lon
+pyproj>=3.6
+pyresample>=1.27
+
+# Optional, for diagnostics/rendering and nicer ODIM reading:
+# satpy[seviri]>=0.46
+# netCDF4>=1.6
+# wradlib>=2.0
+# paho-mqtt>=1.6     # Phase 4 push trigger

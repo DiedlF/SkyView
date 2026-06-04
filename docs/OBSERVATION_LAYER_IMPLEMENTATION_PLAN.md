@@ -1,6 +1,6 @@
 # Observation Layer — Implementation Plan (Radar + Satellite Composites)
 
-**Status:** Proposed
+**Status:** Phase 0 implemented (scaffold + tests); Phases 1–5 pending
 **Date:** 2026-06-03
 **Scope:** Add a live **observation layer** to SkyView — EUMETNET OPERA radar
 (5-min, 1 km max-reflectivity composite) and EUMETSAT MSG RSS satellite (5-min)
@@ -327,7 +327,7 @@ Add attribution to the Leaflet attribution control and the legal pages
 
 | Phase | Deliverable | Verifiable in this sandbox? |
 |-------|-------------|------------------------------|
-| **0. Scaffolding** | `backend/observations/` package (port scaffold), config, requirements, `.gitignore`, unit tests for ODIM reader + S3-key parsing using a tiny synthetic fixture | ✅ (code + tests; deps must be installed) |
+| **0. Scaffolding** ✅ **DONE** | `backend/observations/` package (config, radar_ord, satellite_eumetsat, poller, requirements), `.gitignore`, `tests/test_observations_s3keys.py` + `tests/test_observations_odim.py`. S3-key parser extracted as pure/tested helpers; ODIM test uses a synthetic fixture + `importorskip` | ✅ (logic verified; full `pytest`/`h5py` run needs the ingest venv) |
 | **1. Ingest + reproject + store** | `reproject.py`, `store.py`, `ingest_obs.py`, manifest + retention; resolve the 3 PLANNING open items against the live API; one real radar + one real satellite frame on disk as Zarr | ❌ needs network + creds |
 | **2. Backend serving** | `OVERLAY_CONFIGS` entries + colormaps, observation load branch, `resolve_observation_frame`, `/api/observations/frames` route, cache rotation | ✅ unit-testable with fixture Zarr |
 | **3. Frontend** | Observations control group, panes/layers, recent-frames strip + loop, legends, attribution | ✅ (manual/visual; needs backend frames) |
