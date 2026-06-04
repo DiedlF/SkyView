@@ -18,3 +18,5 @@ data/markers.json
 *secret*.env
 deploy_key
 deploy_key.pub
+# ...but DO commit the placeholder template (no real secrets in it)
+!backend/.env.example
