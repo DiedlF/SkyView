@@ -51,18 +51,27 @@ class RadarConfig:
     )
     s3_bucket: str = os.environ.get("EUCOMP_RADAR_S3_BUCKET", "openradar-24h")
 
-    # MQTT notification service for push-based "new frame" triggers.
-    # (Broker host to be confirmed against the ORD docs page during Phase 1.)
-    mqtt_host: str = os.environ.get("EUCOMP_RADAR_MQTT_HOST", "")
+    # Optional MeteoGate API key. Anonymous access is OPEN but rate-limited
+    # (watch the `x-ratelimit-remaining` response header); a key raises the limit.
+    # Get one at https://devportal.meteogate.eu/. Sent as a request header.
+    api_key: str = os.environ.get("EUCOMP_RADAR_API_KEY", "")
+    api_key_header: str = os.environ.get("EUCOMP_RADAR_API_KEY_HEADER", "apikey")
+
+    # MQTT notification service for push-based "new frame" triggers (confirmed
+    # June 2026): wss://radar.meteogate.eu:8884/ordmqtt, user/pass everyone.
+    # OPERA max-reflectivity topic: ORD/eu.eumetnet/0-20010-0-OPERA/DBZH
+    mqtt_host: str = os.environ.get("EUCOMP_RADAR_MQTT_HOST", "radar.meteogate.eu")
+    mqtt_path: str = "/ordmqtt"
     mqtt_user: str = "everyone"
-    mqtt_port: int = 8884
+    mqtt_password: str = "everyone"
+    mqtt_port: int = 8884  # wss; use 1883 for plain mqtt://
 
     # The 5-minute product: CIRRUS instantaneous max reflectivity composite.
     # Query via EDR with these verified parameters:
-    #   standard_name=DBZH, method=comp, location_id=0-*-*-OPERA, format=ODIM
+    #   standard_name=DBZH, method=comp, location_id=0-20010-0-OPERA, format=ODIM
     standard_name: str = "DBZH"   # RATE (rain rate) or ACRR (accumulation) also valid
     method: str = "comp"          # composite (vs "scan"/"point" for single-site)
-    location_id: str = "0-*-*-OPERA"
+    location_id: str = "0-20010-0-OPERA"  # OPERA composite WIGOS id (confirmed)
     odim_format: str = "ODIM"
     cadence_seconds: int = 300
 

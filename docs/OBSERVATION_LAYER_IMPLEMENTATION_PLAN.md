@@ -238,11 +238,13 @@ Pillow, requests`): `h5py` (ODIM), `pyproj` + `pyresample` (reprojection),
 `boto3` (S3 fallback), `eumdac` (satellite). `satpy[seviri]` optional (satellite
 read/resample). All already listed in the scaffold's `requirements.txt`.
 
-> **Environment note:** this planning session's sandbox has **no network and none
-> of these geo deps installed**, so live smoke-tests (PLANNING tasks 1, 3) and the
-> 3 "open items" (composite href field, delivery shape, ODIM group layout) must be
-> verified on a networked host during Phase 1. The plan is structured so those
-> unknowns are isolated inside `radar_ord.py` / `reproject.py`.
+> **Environment note:** this web session's sandbox has a **restricted egress
+> allowlist** (api.meteogate.eu / cloudferro S3 / api.eumetsat.int are blocked
+> with `Host not in allowlist`) and **none of the geo deps installed**. Live data
+> pulls therefore run on a networked host (or after allowlisting those hosts in
+> the environment's network policy). The 3 "open items" were re-researched against
+> the official ORD docs — **#1 and #2 are now resolved** (see §8); #3 needs a real
+> file. Unknowns stay isolated inside `radar_ord.py` / `reproject.py`.
 
 ---
 
@@ -358,16 +360,43 @@ Mirror `tests/` conventions (`pytest.ini`, markers `integration`/`perf`):
 
 ## 8. Risks & open questions
 
-- **3 PLANNING open items** (composite `href` field, single-grid vs CoverageJSON
-  delivery, ODIM composite group layout) — unverifiable offline; isolate in
-  `radar_ord.py`/`reproject.py`, confirm via Swagger + 2 real requests in Phase 1.
-- **EDR returned HTTP 403 in testing** — a live call to
-  `…/eu-eumetnet-weather-radar/collections/observations/items` returned
-  `403 Forbidden`, contradicting the "openly available, no whitelisting" note.
-  Resolve in Phase 1 on a real host: verify the collection/items path via the
-  Swagger UI, check whether an API key/header is required, and confirm the S3
-  fallback (`openradar-24h`) is genuinely unsigned-public. The fetch chain already
-  degrades EDR→S3→skip, so this does not block ingest once S3 access is confirmed.
+### MeteoGate access — confirmed June 2026 (ORD official docs)
+
+Re-researched against the [ORD API docs](https://eumetnet.github.io/openradardata-documentation/):
+
+- **Access is OPEN and anonymous** — onboarding to MeteoGate finalised 20 May
+  2026, **no whitelisting**. The earlier `403 Forbidden` we saw was **this Claude
+  Code on web sandbox's own egress policy** (body literally `Host not in
+  allowlist`, empty `server` header), NOT MeteoGate. To exercise the live API
+  *from a web session*, the environment's **network policy must allowlist**
+  `api.meteogate.eu`, `s3.waw3-1.cloudferro.com`, `radar.meteogate.eu` (and
+  `api.eumetsat.int` for satellite). A normal host has no such restriction.
+- **Rate limits:** anonymous calls are rate-limited — watch the
+  `x-ratelimit-remaining` header. For sustained 5-min polling, register a free API
+  key at <https://devportal.meteogate.eu/> (`RadarConfig.api_key`, sent as the
+  `apikey` header).
+- **Correct OPERA composite id:** `location_id = 0-20010-0-OPERA` (the previous
+  `0-*-*-OPERA` was wrong — fixed in `config.py`). Composite query:
+  `standard_name=DBZH`, `method=comp`, `format=ODIM`.
+- **Open item #1 (href field) RESOLVED:** the `/collections/observations/items`
+  FeatureCollection puts the download URL in `properties.data` (our code already
+  prefers it). The `/collections/observations/locations/{id}` route returns
+  CoverageJSON with the same links.
+- **Open item #2 (delivery shape) RESOLVED:** the composite is a **single
+  Europe-wide grid file** (Lambert EA, corners ≈70N/30W–32N/30E, 1×1 km CIRRUS),
+  downloadable straight from S3:
+  `s3://openradar-24h/YYYY/MM/DD/OPERA/COMP/OPERA@<YYYYMMDDTHHMM>@0@DBZH.h5`
+  (unsigned `--no-sign-request`, confirmed). No CoverageJSON round-trip needed.
+- **Open item #3 (ODIM group layout) still open** — needs a real CIRRUS file.
+  Mitigation: composites are **also published as cloud-optimized GeoTIFF**, which
+  carries its own georeferencing (rasterio) and sidesteps ODIM `/where` guessing —
+  a lower-risk alternative input for `reproject.py` if the HDF5 layout surprises us.
+- **MQTT push (Phase 4) confirmed:** `wss://radar.meteogate.eu:8884/ordmqtt`,
+  user/pass `everyone`/`everyone`, topic `ORD/eu.eumetnet/0-20010-0-OPERA/DBZH`
+  (or `mqtt://radar.meteogate.eu:1883`). Captured in `RadarConfig`.
+
+### Other risks
+
 - **Reprojection fidelity** — Lambert-EA/geostationary → 0.02° lat/lon; validate
   visually against a known event before shipping; consider 0.01° for radar if the
   Alps window benefits.

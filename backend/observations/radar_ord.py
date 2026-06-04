@@ -28,6 +28,10 @@ class RadarSource:
     def __init__(self, cfg: RadarConfig):
         self.cfg = cfg
         self.session = requests.Session()
+        # Anonymous access is open but rate-limited; an optional API key raises
+        # the limit (see RadarConfig.api_key / devportal.meteogate.eu).
+        if cfg.api_key:
+            self.session.headers[cfg.api_key_header] = cfg.api_key
 
     # -- discovery --------------------------------------------------------
     def list_collections(self) -> list[dict]:
