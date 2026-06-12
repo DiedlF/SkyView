@@ -140,6 +140,19 @@ def has_frame(source: str, fid: str) -> bool:
     return any(f["frame_id"] == fid for f in list_frames(source))
 
 
+def render_file_for_frame(source: str, fid: str, product: str) -> Path:
+    """Return the render PNG path recorded for a frame/product."""
+    for frame in list_frames(source):
+        if frame.get("frame_id") != fid:
+            continue
+        products = frame.get("products") or {}
+        name = products.get(product)
+        if not name:
+            break
+        return source_dir(source) / str(name)
+    raise FileNotFoundError(f"no {source}/{product} render for frame {fid}")
+
+
 # -- retention (pure filesystem) ------------------------------------------
 def prune(
     source: str,

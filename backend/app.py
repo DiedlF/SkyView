@@ -94,6 +94,7 @@ from routers.point import build_point_router
 from routers.domain import build_domain_router
 from routers.weather import build_weather_router
 from routers.overlay import build_overlay_router
+from routers.observations import build_observations_router, observations_summary
 from routers.ops import build_ops_router
 from routers.admin import build_admin_router
 from constants import (
@@ -216,6 +217,7 @@ feature_usage_counters: Dict[str, int] = {
     "meteogram": 0,
     "emagram": 0,
     "status": 0,
+    "observations": 0,
     "admin": 0,
     "ops": 0,
     "other_api": 0,
@@ -309,6 +311,8 @@ def _classify_feature(path: str) -> str:
         return "emagram"
     if path in ("/api/status", "/api/health", "/api/cache_stats", "/api/perf_stats", "/api/usage_stats"):
         return "status"
+    if path.startswith("/api/observations"):
+        return "observations"
     if path.startswith("/api/admin/"):
         return "admin"
     if path.startswith("/api/markers") or path.startswith("/api/marker_") or path.startswith("/api/location_search") or path.startswith("/api/feedback"):
@@ -1623,6 +1627,7 @@ async def api_status():
         "metrics": low_zoom_symbols_cache_metrics,
         "hitRate": (low_zoom_symbols_cache_metrics["hits"] / lz_total) if lz_total else None,
     }
+    payload["observations"] = observations_summary()
 
     # Cache visibility for low-memory VPS sizing (rough in-process estimate).
     tile_desktop_bytes = sum(len(v[0]) for v in tile_cache_desktop.values()) if tile_cache_desktop else 0
@@ -2013,6 +2018,7 @@ app.include_router(build_overlay_router(
     api_overlay=api_overlay,
     api_overlay_tile=api_overlay_tile,
 ))
+app.include_router(build_observations_router())
 
 
 def _tail_lines(path: str, limit: int = 300) -> list[str]:

@@ -26,7 +26,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           timeout: 8m
-          command_timeout: 8m
+          command_timeout: 15m
           script: |
             set -euo pipefail
             echo "[deploy] start $(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -58,11 +58,24 @@ jobs:
             venv/bin/pip install --upgrade pip
             venv/bin/pip install -r backend/requirements.txt --upgrade
 
+            # Observation ingest venv: geo/satellite dependencies are kept out of
+            # the web app venv because satpy/eumdac are comparatively heavy.
+            if [ ! -d .venv-obs ]; then
+              echo "[deploy] creating observation ingest venv"
+              python3 -m venv .venv-obs
+            fi
+            echo "[deploy] installing observation ingest deps (with pip cache)"
+            .venv-obs/bin/pip install --upgrade pip
+            .venv-obs/bin/pip install -r backend/observations/requirements.txt --upgrade
+
             # Always refresh systemd unit (safe, cheap)
-            echo "[deploy] installing systemd unit"
+            echo "[deploy] installing systemd units"
             sudo cp deploy/skyview.service /etc/systemd/system/skyview.service
+            sudo cp deploy/skyview-observations.service /etc/systemd/system/skyview-observations.service
+            sudo cp deploy/skyview-observations.timer /etc/systemd/system/skyview-observations.timer
             sudo systemctl daemon-reload
             sudo systemctl enable skyview
+            sudo systemctl enable --now skyview-observations.timer
 
             # Restart only when relevant files changed (or first deploy)
             NEED_RESTART=1
@@ -74,6 +87,7 @@ jobs:
             if [ "${NEED_RESTART}" -eq 1 ]; then
               echo "[deploy] restarting skyview service"
               sudo systemctl restart skyview
+              sudo systemctl restart skyview-observations.timer
             else
               echo "[deploy] skipping service restart (no backend/unit changes)"
             fi
@@ -98,6 +112,11 @@ jobs:
               exit 1
             fi
             echo "[deploy] health check ok"
+
+            echo "[deploy] observation timer status"
+            sudo systemctl is-enabled skyview-observations.timer
+            sudo systemctl is-active skyview-observations.timer
+            sudo systemctl list-timers skyview-observations.timer --no-pager || true
 
             # Ingest cron: register once, skip if already present
             # Use project cron-ingest script (it handles locking/concurrency policy itself).

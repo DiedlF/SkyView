@@ -15,10 +15,10 @@
 
 ### Observation layer — radar + satellite (in progress)
 - Live EUMETNET OPERA radar (5-min dBZ composite) + EUMETSAT MSG RSS satellite overlays.
-- Backend: `backend/observations/` ingest (fetch → reproject Lambert-EA/geostationary → regular lat/lon Zarr), ring-buffer retention, reuse of `/api/overlay_tile`, new `/api/observations/frames` time index.
-- Frontend: "Observations" layer group with its own recent-frames strip + loop animation, legends, CC-BY/EUMETSAT attribution.
+- Backend: `backend/observations/` ingest (fetch → temporary native decode → derived PNG render cache), 5 h ring-buffer retention, `/api/observations/frames`, `/api/observations/render/...`, and `/api/status` freshness.
+- Frontend: "Observations" layer group with radar/HRV toggles, recent-frames strip + loop animation, and EUMETNET/EUMETSAT attribution.
 - Full design + live-verification log: `docs/OBSERVATION_LAYER_IMPLEMENTATION_PLAN.md` (§10).
-- **Status:** Phases 0–1 merged. Satellite fetch→decode→reproject **live-verified 2026-06-12** against a real MSG RSS frame. Derived radar dBZ + satellite HRV render-cache ingest is wired with 5 h retention; serving (Phase 2) and frontend (Phase 3) pending.
+- **Status:** Derived radar dBZ + satellite HRV ingest, serving endpoints, frontend controls/loop, status freshness, systemd timer files, and GitHub deploy wiring are implemented and live-verified 2026-06-12. Remaining work: VPS deploy verification, visual QA/georeferencing polish, legal page copy, and optional numeric-grid path.
 - **Known bugs to fix (confirmed live, see plan §10.2):**
   - [x] Stale satellite collection id — `EO:EUM:DAT:MSG:HRSEVIRI-RSS` 404s; use `EO:EUM:DAT:MSG:MSG15-RSS` (`backend/observations/config.py`, `backend/.env.example`).
   - [x] `SatelliteSource.fetch_latest` saves product as `.nc` but the Data Store delivers a `.zip` wrapping a `.nat` — unzip + read inner `.nat` (`backend/observations/satellite_eumetsat.py`).

@@ -23,6 +23,19 @@ let symbolTimePending = false;
 let windEnabled = false;
 let windLevel = '10m';
 let modelCapabilities = {};  // Store model capabilities from API
+const OBS_CONFIG = {
+  radar: { product: 'radar_dbz', checkboxId: 'layer-obs-radar', pane: 'skyviewObsRadarPane', opacity: 0.72 },
+  satellite: { product: 'hrv', checkboxId: 'layer-obs-satellite', pane: 'skyviewObsSatellitePane', opacity: 0.68 },
+};
+const obsState = {
+  radar: { enabled: false, frames: [], bbox: null, layer: null },
+  satellite: { enabled: false, frames: [], bbox: null, layer: null },
+  activeSource: null,
+  frameIndex: 0,
+  playing: false,
+  timer: null,
+  pollBusy: false,
+};
 
 function updateViewportHeightVar() {
   const vv = window.visualViewport;
@@ -171,6 +184,9 @@ const I18N = {
     'layer.convection': 'Convection',
     'layer.wind': 'Wind',
     'layer.wind.gust10m': '10m max',
+    'layer.observations.title': 'Observations',
+    'layer.obs.radar': 'Radar',
+    'layer.obs.satellite': 'Satellite HRV',
     'layer.overlay.title': 'Overlay (ICON)',
     'layer.none': 'None',
     'layer.precip': 'Precipitation',
@@ -210,7 +226,7 @@ const I18N = {
     'layer.lcl': 'Cloud Base (spread * 125)',
     'layer.marker': 'Marker',
     'marker.trackGps': 'Track GPS',
-    'legal.dwd': 'Weather: DWD Open Data, CC BY 4.0; processed by Skyview. Basemap: Esri.',
+    'legal.dwd': 'Weather: DWD Open Data, CC BY 4.0; observations: EUMETNET/EUMETSAT. Basemap: Esri.',
     'legal.legal': 'Legal',
     'legal.privacy': 'Privacy',
     'legal.terms': 'Terms',
@@ -299,6 +315,9 @@ const I18N = {
     'layer.convection': 'Konvektion',
     'layer.wind': 'Wind',
     'layer.wind.gust10m': '10m Max',
+    'layer.observations.title': 'Beobachtungen',
+    'layer.obs.radar': 'Radar',
+    'layer.obs.satellite': 'Satellit HRV',
     'layer.overlay.title': 'Overlay (ICON)',
     'layer.none': 'Keines',
     'layer.precip': 'Niederschlag',
@@ -338,7 +357,7 @@ const I18N = {
     'layer.lcl': 'Wolkenbasis (Spread * 125)',
     'layer.marker': 'Markierung',
     'marker.trackGps': 'GPS folgen',
-    'legal.dwd': 'Wetter: DWD Open Data, CC BY 4.0; verarbeitet durch Skyview. Basiskarte: Esri.',
+    'legal.dwd': 'Wetter: DWD Open Data, CC BY 4.0; Beobachtungen: EUMETNET/EUMETSAT. Basiskarte: Esri.',
     'legal.legal': 'Rechtliches',
     'legal.privacy': 'Datenschutz',
     'legal.terms': 'Nutzung',
@@ -655,6 +674,12 @@ L.control.zoom({ position: 'bottomleft' }).addTo(map);
 map.createPane('skyviewRasterPane');
 map.getPane('skyviewRasterPane').style.zIndex = '350';
 map.getPane('skyviewRasterPane').style.pointerEvents = 'none';
+map.createPane('skyviewObsSatellitePane');
+map.getPane('skyviewObsSatellitePane').style.zIndex = '330';
+map.getPane('skyviewObsSatellitePane').style.pointerEvents = 'none';
+map.createPane('skyviewObsRadarPane');
+map.getPane('skyviewObsRadarPane').style.zIndex = '370';
+map.getPane('skyviewObsRadarPane').style.pointerEvents = 'none';
 map.createPane('skyviewWindPane');
 map.getPane('skyviewWindPane').style.zIndex = '610';
 map.getPane('skyviewWindPane').style.pointerEvents = 'none';
@@ -1722,6 +1747,249 @@ async function loadOverlay() {
   }, 220);
 }
 
+function observationEnabled(source) {
+  const cfg = OBS_CONFIG[source];
+  return !!document.getElementById(cfg.checkboxId)?.checked;
+}
+
+function anyObservationEnabled() {
+  return Object.keys(OBS_CONFIG).some(source => obsState[source].enabled);
+}
+
+function activeObservationSource() {
+  if (obsState.activeSource && obsState[obsState.activeSource]?.enabled) return obsState.activeSource;
+  if (obsState.radar.enabled) return 'radar';
+  if (obsState.satellite.enabled) return 'satellite';
+  return null;
+}
+
+function observationBounds(bbox) {
+  const b = Array.isArray(bbox) ? bbox.map(Number) : null;
+  if (!b || b.length !== 4 || b.some(v => !Number.isFinite(v))) return [[43.18, -3.94], [58.08, 20.34]];
+  return [[b[0], b[1]], [b[2], b[3]]];
+}
+
+function observationFrameDate(frame) {
+  const d = new Date(frame?.valid_time || '');
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+
+function nearestObservationFrame(source, targetTime) {
+  const frames = obsState[source].frames || [];
+  if (!frames.length) return null;
+  if (!targetTime) return frames[Math.max(0, Math.min(obsState.frameIndex, frames.length - 1))] || frames[frames.length - 1];
+  const targetMs = targetTime.getTime();
+  let best = frames[0];
+  let bestDist = Infinity;
+  for (const frame of frames) {
+    const d = observationFrameDate(frame);
+    if (!d) continue;
+    const dist = Math.abs(d.getTime() - targetMs);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = frame;
+    }
+  }
+  return best;
+}
+
+function observationFrameUrl(source, frame) {
+  const cfg = OBS_CONFIG[source];
+  const product = cfg.product;
+  const urls = frame?.render_urls || {};
+  const url = urls[product] || `/api/observations/render/${source}/${product}/${frame?.frame_id || 'latest'}.png`;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}_=${encodeURIComponent(frame?.frame_id || Date.now())}`;
+}
+
+async function fetchObservationFrames(source) {
+  const cfg = OBS_CONFIG[source];
+  const res = await fetch(`/api/observations/frames?source=${encodeURIComponent(source)}&product=${encodeURIComponent(cfg.product)}`);
+  if (!res.ok) await throwHttpError(res, 'Observations');
+  const data = await res.json();
+  obsState[source].frames = Array.isArray(data.frames) ? data.frames : [];
+  obsState[source].bbox = data.bbox || null;
+  return data;
+}
+
+function removeObservationLayer(source) {
+  const st = obsState[source];
+  if (st.layer) {
+    try { map.removeLayer(st.layer); } catch {}
+    st.layer = null;
+  }
+}
+
+function updateObservationLayer(source, selectedTime) {
+  const cfg = OBS_CONFIG[source];
+  const st = obsState[source];
+  if (!st.enabled) {
+    removeObservationLayer(source);
+    return;
+  }
+  const frame = nearestObservationFrame(source, selectedTime);
+  if (!frame) {
+    removeObservationLayer(source);
+    return;
+  }
+  const url = observationFrameUrl(source, frame);
+  const bounds = observationBounds(st.bbox);
+  if (st.layer) {
+    try { map.removeLayer(st.layer); } catch {}
+    st.layer = null;
+  }
+  st.layer = L.imageOverlay(url, bounds, {
+    pane: cfg.pane,
+    opacity: cfg.opacity,
+    interactive: false,
+    crossOrigin: true,
+  }).addTo(map);
+}
+
+function selectedObservationTime() {
+  const source = activeObservationSource();
+  if (!source) return null;
+  const frames = obsState[source].frames || [];
+  if (!frames.length) return null;
+  const idx = Math.max(0, Math.min(obsState.frameIndex, frames.length - 1));
+  return observationFrameDate(frames[idx]);
+}
+
+function updateObservationTimebar() {
+  const bar = document.getElementById('obs-timebar');
+  const slider = document.getElementById('obs-frame-slider');
+  const label = document.getElementById('obs-frame-label');
+  const playBtn = document.getElementById('obs-play');
+  const source = activeObservationSource();
+  if (!bar || !slider || !label || !playBtn || !source || !anyObservationEnabled()) {
+    if (bar) bar.style.display = 'none';
+    return;
+  }
+  const frames = obsState[source].frames || [];
+  if (!frames.length) {
+    bar.style.display = 'flex';
+    slider.max = '0';
+    slider.value = '0';
+    label.textContent = 'no frames';
+    return;
+  }
+  obsState.frameIndex = Math.max(0, Math.min(obsState.frameIndex, frames.length - 1));
+  slider.max = String(Math.max(0, frames.length - 1));
+  slider.value = String(obsState.frameIndex);
+  const frame = frames[obsState.frameIndex];
+  const d = observationFrameDate(frame);
+  const hh = d ? String(d.getUTCHours()).padStart(2, '0') : '--';
+  const mm = d ? String(d.getUTCMinutes()).padStart(2, '0') : '--';
+  const age = Number(frame?.age_s);
+  const ageText = Number.isFinite(age) ? ` · ${Math.round(age / 60)} min` : '';
+  label.textContent = `${source === 'radar' ? 'Radar' : 'Sat'} ${hh}:${mm} UTC${ageText}`;
+  label.classList.toggle('stale', Number.isFinite(age) && age > 600);
+  playBtn.textContent = obsState.playing ? 'Ⅱ' : '▶';
+  bar.style.display = 'flex';
+}
+
+function renderObservations() {
+  const target = selectedObservationTime();
+  updateObservationLayer('satellite', target);
+  updateObservationLayer('radar', target);
+  updateObservationTimebar();
+}
+
+async function refreshObservationSource(source, { keepIndex = true } = {}) {
+  const previousTime = selectedObservationTime();
+  await fetchObservationFrames(source);
+  if (!keepIndex || !previousTime || activeObservationSource() === source) {
+    const frames = obsState[source].frames || [];
+    obsState.frameIndex = Math.max(0, frames.length - 1);
+  } else {
+    const active = activeObservationSource();
+    const frames = active ? (obsState[active].frames || []) : [];
+    let bestIdx = obsState.frameIndex;
+    let bestDist = Infinity;
+    frames.forEach((frame, idx) => {
+      const d = observationFrameDate(frame);
+      if (!d) return;
+      const dist = Math.abs(d.getTime() - previousTime.getTime());
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIdx = idx;
+      }
+    });
+    obsState.frameIndex = bestIdx;
+  }
+}
+
+async function setObservationEnabled(source, enabled) {
+  obsState[source].enabled = !!enabled;
+  if (enabled) {
+    obsState.activeSource = source;
+    try {
+      await refreshObservationSource(source, { keepIndex: false });
+      markApiSuccess();
+    } catch (e) {
+      console.error('Observation frames error:', e);
+      markApiFailure('observations', e);
+    }
+  } else {
+    removeObservationLayer(source);
+    if (obsState.activeSource === source) obsState.activeSource = activeObservationSource();
+  }
+  if (!anyObservationEnabled()) stopObservationLoop();
+  renderObservations();
+}
+
+function stopObservationLoop() {
+  obsState.playing = false;
+  if (obsState.timer) {
+    clearInterval(obsState.timer);
+    obsState.timer = null;
+  }
+  updateObservationTimebar();
+}
+
+function toggleObservationLoop() {
+  if (obsState.playing) {
+    stopObservationLoop();
+    return;
+  }
+  const source = activeObservationSource();
+  const frames = source ? obsState[source].frames : [];
+  if (!frames || frames.length < 2) return;
+  obsState.playing = true;
+  obsState.timer = setInterval(() => {
+    const src = activeObservationSource();
+    const n = src ? (obsState[src].frames || []).length : 0;
+    if (n < 2) {
+      stopObservationLoop();
+      return;
+    }
+    obsState.frameIndex = (obsState.frameIndex + 1) % n;
+    renderObservations();
+  }, 550);
+  updateObservationTimebar();
+}
+
+async function pollObservationFrames() {
+  if (!anyObservationEnabled() || obsState.pollBusy) return;
+  obsState.pollBusy = true;
+  const active = activeObservationSource();
+  const oldLatest = active ? obsState[active].frames.at(-1)?.frame_id : null;
+  try {
+    for (const source of Object.keys(OBS_CONFIG)) {
+      if (obsState[source].enabled) await refreshObservationSource(source, { keepIndex: true });
+    }
+    const nextLatest = active ? obsState[active].frames.at(-1)?.frame_id : null;
+    if (oldLatest && nextLatest && oldLatest !== nextLatest && !obsState.playing) {
+      obsState.frameIndex = Math.max(0, (obsState[active].frames || []).length - 1);
+    }
+    renderObservations();
+  } catch (e) {
+    console.error('Observation poll failed:', e);
+  } finally {
+    obsState.pollBusy = false;
+  }
+}
+
 // Load wind barbs
 async function loadWind() {
   clearLayerRetry('wind');
@@ -1928,6 +2196,29 @@ document.getElementById('wind-level').addEventListener('change', (e) => {
   windLevel = e.target.value;
   if (windEnabled) loadWind();
 });
+
+const obsRadarToggle = document.getElementById('layer-obs-radar');
+if (obsRadarToggle) {
+  obsRadarToggle.addEventListener('change', (e) => setObservationEnabled('radar', e.target.checked));
+}
+
+const obsSatelliteToggle = document.getElementById('layer-obs-satellite');
+if (obsSatelliteToggle) {
+  obsSatelliteToggle.addEventListener('change', (e) => setObservationEnabled('satellite', e.target.checked));
+}
+
+const obsFrameSlider = document.getElementById('obs-frame-slider');
+if (obsFrameSlider) {
+  obsFrameSlider.addEventListener('input', (e) => {
+    obsState.frameIndex = Number(e.target.value) || 0;
+    renderObservations();
+  });
+}
+
+const obsPlay = document.getElementById('obs-play');
+if (obsPlay) {
+  obsPlay.addEventListener('click', toggleObservationLoop);
+}
 
 document.querySelectorAll('input[name="overlay"]').forEach(radio => {
   radio.addEventListener('change', (e) => {
@@ -3679,3 +3970,7 @@ setInterval(async () => {
     // ignore pulse errors
   }
 }, 12000);
+
+setInterval(() => {
+  pollObservationFrames();
+}, 60000);

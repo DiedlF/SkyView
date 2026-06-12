@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Skyview observation ingest every 2 minutes
+
+[Timer]
+OnBootSec=90
+OnUnitActiveSec=2min
+AccuracySec=20s
+Persistent=true
+Unit=skyview-observations.service
+
+[Install]
+WantedBy=timers.target

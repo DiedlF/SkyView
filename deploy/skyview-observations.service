@@ -1,0 +1,14 @@
+[Unit]
+Description=Skyview observation ingest
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/skyview
+Environment=PYTHONPATH=/opt/skyview/backend
+Environment=PYTHON_BIN=/opt/skyview/.venv-obs/bin/python
+ExecStart=/opt/skyview/backend/cron-observations.sh
+StandardOutput=append:/var/log/skyview-observations.log
+StandardError=append:/var/log/skyview-observations.log
