@@ -10,7 +10,10 @@ Skyview uses operator-configurable secrets:
 | `SKYVIEW_ADMIN_USER` | HTTP Basic username | Admin dashboard and private ops endpoints |
 | `SKYVIEW_ADMIN_PASSWORD` | HTTP Basic password | Admin dashboard and private ops endpoints |
 | `SKYVIEW_CORS_ORIGINS` | Allowlist of trusted frontend origins | Production deploys |
+| `EUMETSAT_CONSUMER_KEY` | EUMETSAT Data Store API key (consumer key) | Satellite observation ingest |
+| `EUMETSAT_CONSUMER_SECRET` | EUMETSAT Data Store API secret | Satellite observation ingest |
 
+Copy `backend/.env.example` to `backend/.env` and fill in the values you need.
 Secrets are loaded from `backend/.marker_auth_secret.env` (or `.env`) at server startup
 **before** any routes are active. The loader also respects real environment variables — if
 the variable is already set in the environment, the file is ignored for that key.
@@ -118,6 +121,46 @@ If your domain changes:
 2. Restart the server
 3. Verify with: `curl -I -H "Origin: https://newdomain.com" https://skyview.example.com/api/timesteps`
    and check for `Access-Control-Allow-Origin` in the response headers.
+
+---
+
+## EUMETSAT_CONSUMER_KEY / EUMETSAT_CONSUMER_SECRET
+
+Credentials for the EUMETSAT Data Store, used by the satellite half of the
+observation layer (MSG RSS / MTG via EUMDAC). See
+`docs/OBSERVATION_LAYER_IMPLEMENTATION_PLAN.md`.
+
+### Requirements
+
+- This is an **API key pair** (consumer key + secret), **not** your EUMETSAT
+  portal username/password. Get it from <https://user.eumetsat.int> → "API key".
+- Both values must be set for satellite ingest to authenticate.
+- Long-lived secrets (no automatic expiry); EUMDAC exchanges them for a
+  short-lived OAuth2 token (~1 h, auto-refreshed) per session.
+
+### Provisioning
+
+```bash
+cp backend/.env.example backend/.env
+chmod 600 backend/.env
+# edit backend/.env and set EUMETSAT_CONSUMER_KEY / EUMETSAT_CONSUMER_SECRET
+```
+
+### Verify
+
+```bash
+python3 scripts/eumetsat_auth.py            # loads backend/.env, mints a token, lists collections
+python3 scripts/eumetsat_auth.py --token-only   # just confirm the pair mints a token
+python3 scripts/eumetsat_auth.py --write-eumdac # also persist to ~/.eumdac/credentials for the eumdac CLI
+```
+
+Exit codes: `0` ok · `2` missing creds · `3` `eumdac` not installed · `4` auth/API failure.
+
+### Rotation
+
+Regenerate the pair in the EUMETSAT portal (revokes the old one), update
+`backend/.env`, then re-run `scripts/eumetsat_auth.py` to confirm. **Rotate
+immediately if a key/secret is ever pasted into chat, logs, or a ticket.**
 
 ---
 

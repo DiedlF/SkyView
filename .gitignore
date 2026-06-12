@@ -5,6 +5,7 @@
 data/icon-d2/
 data/icon-eu/
 data/cache/
+data/observations/
 data/fallback_stats.json
 data/usage_stats.json
 data/markers.json
@@ -18,3 +19,5 @@ data/markers.json
 *secret*.env
 deploy_key
 deploy_key.pub
+# ...but DO commit the placeholder template (no real secrets in it)
+!backend/.env.example
