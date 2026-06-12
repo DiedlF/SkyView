@@ -13,11 +13,18 @@
 - Frontend layer toggle + styling by class/type
 - Performance + QA + docs
 
-### Observation layer — radar + satellite (planned mini-project)
+### Observation layer — radar + satellite (in progress)
 - Live EUMETNET OPERA radar (5-min dBZ composite) + EUMETSAT MSG RSS satellite overlays.
 - Backend: `backend/observations/` ingest (fetch → reproject Lambert-EA/geostationary → regular lat/lon Zarr), ring-buffer retention, reuse of `/api/overlay_tile`, new `/api/observations/frames` time index.
 - Frontend: "Observations" layer group with its own recent-frames strip + loop animation, legends, CC-BY/EUMETSAT attribution.
-- Full design: `docs/OBSERVATION_LAYER_IMPLEMENTATION_PLAN.md`.
+- Full design + live-verification log: `docs/OBSERVATION_LAYER_IMPLEMENTATION_PLAN.md` (§10).
+- **Status:** Phases 0–1 merged. Satellite fetch→decode→reproject **live-verified 2026-06-12** against a real MSG RSS frame. Derived radar dBZ + satellite HRV render-cache ingest is wired with 5 h retention; serving (Phase 2) and frontend (Phase 3) pending.
+- **Known bugs to fix (confirmed live, see plan §10.2):**
+  - [x] Stale satellite collection id — `EO:EUM:DAT:MSG:HRSEVIRI-RSS` 404s; use `EO:EUM:DAT:MSG:MSG15-RSS` (`backend/observations/config.py`, `backend/.env.example`).
+  - [x] `SatelliteSource.fetch_latest` saves product as `.nc` but the Data Store delivers a `.zip` wrapping a `.nat` — unzip + read inner `.nat` (`backend/observations/satellite_eumetsat.py`).
+  - [ ] `satpy` `Scene.resample()` dropped half the swath in testing; validate/replace `reproject.py:reproject_swath` with the cKDTree nearest path if/when numeric satellite grids return.
+  - [x] Wire the satellite ingest branch for the selected derived HRV render cache (`backend/observations/ingest_obs.py`).
+- **Ops:** satellite downloads need the per-collection **NRT licence** accepted in the EUMETSAT Data Store (documented in `docs/OPS_SECRETS.md`).
 
 ### Deferred performance/watchlist
 - **Per-cell loop vectorization** — `aggregate_symbol_cell` is already vectorized within each cell (NumPy on full cell arrays). Across-cell vectorization is blocked by per-cell EU/D2 source switching. Fast-path exists (zoom ≤ 9 stride sampling). Further work is deferred unless profiling shows it matters. (Arch #6)

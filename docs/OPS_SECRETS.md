@@ -138,6 +138,24 @@ observation layer (MSG RSS / MTG via EUMDAC). See
 - Long-lived secrets (no automatic expiry); EUMDAC exchanges them for a
   short-lived OAuth2 token (~1 h, auto-refreshed) per session.
 
+### Collection access — NRT licence (required, separate step)
+
+A valid key is **not sufficient** to download. The SEVIRI **L1.5 image**
+collection used for the satellite overlay,
+**`EO:EUM:DAT:MSG:MSG15-RSS`** (Rapid Scan, 5-min; note the older id
+`EO:EUM:DAT:MSG:HRSEVIRI-RSS` is dead and 404s), is licence-gated: downloads
+return `403` with body `NRTLicense required to access this collection` until the
+**Near-Real-Time licence for that specific collection** is accepted in the Data
+Store web UI (<https://data.eumetsat.int> → open the collection → accept its
+licence). Caveats learned in live testing (2026-06-12):
+
+- Accepting other licences (e.g. the MSG Cloud Mask) does **not** cover the
+  image-data NRT licence — accept it on the `MSG15-RSS` collection specifically.
+- Acceptance can take **up to ~1 h** to propagate to the API gateway.
+- Auth/search succeed before the licence is accepted; only the **download**
+  401/403s — so a passing `eumetsat_auth.py` does not by itself prove you can
+  pull product files.
+
 ### Provisioning
 
 ```bash

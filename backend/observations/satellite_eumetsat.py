@@ -7,15 +7,17 @@ Requires:  pip install eumdac (and satpy[seviri] netCDF4 for optional rendering)
 Credentials: set EUMETSAT_CONSUMER_KEY / _SECRET, or run `eumdac set-credentials`.
 Verify with: python3 scripts/eumetsat_auth.py
 
-The native NetCDF file is the source of truth; server-side colorization (Phase 2)
-works from physical brightness-temperature values rather than a baked RGB, so the
-satpy RGB helper below is a diagnostic convenience only.
+The MSG RSS Data Store payload is a ZIP containing a SEVIRI native ``.nat`` file.
+In normal ingest this native file is only a temporary render input; the retained
+cache product is a derived PNG frame indexed by ``store.manifest.json``.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import logging
+import re
+import zipfile
 from pathlib import Path
 from typing import Optional
 
@@ -65,12 +67,51 @@ class SatelliteSource:
             return None
 
         product = products[0]
-        out = dest_dir / f"{product}.nc"
+        out = dest_dir / f"{product}.zip"
         with product.open() as src, open(out, "wb") as dst:
             while chunk := src.read(1 << 16):
                 dst.write(chunk)
         log.info("Saved satellite product -> %s", out)
         return out
+
+
+def extract_native_file(product_path: Path, dest_dir: Optional[Path] = None) -> Path:
+    """Return a native ``.nat`` file for a downloaded EUMETSAT product.
+
+    The live MSG RSS product is a ZIP even when older code saved it with a
+    misleading suffix. Sniff the file contents, not just the extension.
+    """
+    product_path = Path(product_path)
+    if product_path.suffix.lower() == ".nat":
+        return product_path
+    if not zipfile.is_zipfile(product_path):
+        raise ValueError(f"satellite product is not a ZIP or .nat file: {product_path}")
+
+    out_dir = dest_dir or product_path.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(product_path) as zf:
+        names = [name for name in zf.namelist() if name.lower().endswith(".nat")]
+        if not names:
+            raise ValueError(f"satellite product ZIP has no .nat member: {product_path}")
+        member = names[0]
+        out = out_dir / Path(member).name
+        with zf.open(member) as src, open(out, "wb") as dst:
+            while chunk := src.read(1 << 20):
+                dst.write(chunk)
+        return out
+
+
+def read_msg_valid_time(path: Path) -> Optional[dt.datetime]:
+    """Parse the nominal MSG product time from a native/ZIP filename."""
+    match = re.search(r"-(\d{14})(?:\.\d+)?Z-", Path(path).name)
+    if not match:
+        return None
+    try:
+        return dt.datetime.strptime(match.group(1), "%Y%m%d%H%M%S").replace(
+            tzinfo=dt.timezone.utc
+        )
+    except ValueError:
+        return None
 
 
 def to_europe_rgb(native_file: Path, out_png: Path) -> Path:
@@ -79,13 +120,10 @@ def to_europe_rgb(native_file: Path, out_png: Path) -> Path:
     Diagnostic convenience only; for serving/analysis keep the native NetCDF file.
     """
     from satpy import Scene
-    from satpy.writers import to_image
-
     scn = Scene(reader="seviri_l1b_native", filenames=[str(native_file)])
     composite = "natural_color"
     scn.load([composite])
     europe = scn.crop(ll_bbox=(-15.0, 32.0, 45.0, 72.0))
-    img = to_image(europe[composite])
-    img.save(str(out_png))
+    europe.save_dataset(composite, filename=str(out_png))
     log.info("Rendered Europe RGB -> %s", out_png)
     return out_png

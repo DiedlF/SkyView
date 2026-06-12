@@ -12,6 +12,8 @@ data/markers.json
 
 .codex
 .state/
+.venv/
+.venv-obs/
 
 # Secrets — never commit these
 *.env

@@ -1,7 +1,7 @@
 # Observation Layer — Implementation Plan (Radar + Satellite Composites)
 
-**Status:** Phases 0–1 implemented (scaffold, reproject, store, orchestrator, tests); Phases 2–5 pending
-**Date:** 2026-06-03
+**Status:** Phase 1A implemented: live OPERA radar dBZ + MSG RSS HRV ingest writes derived PNG render frames with manifest/ring-buffer retention; serving/frontend/scheduling pending
+**Date:** 2026-06-03 (live-verification addendum 2026-06-12 — see §10)
 **Scope:** Add a live **observation layer** to SkyView — EUMETNET OPERA radar
 (5-min, 1 km max-reflectivity composite) and EUMETSAT MSG RSS satellite (5-min)
 — covering both the backend (ingest + serving) and the frontend (UI + animation).
@@ -19,12 +19,12 @@ pipeline that already powers ICON-D2/EU overlays**.
 A glider pilot opens SkyView and, alongside the forecast layers, can switch on:
 
 - **Radar** — the latest OPERA CIRRUS max-reflectivity composite (dBZ).
-- **Satellite** — MSG RSS infrared / water-vapour brightness temperature.
+- **Satellite** — MSG RSS high-resolution visible (HRV) imagery.
 
 Observations have their **own recent-frames time strip** (e.g. the last 2–3 h at
 5-minute cadence) with a **loop/play animation**, independent of the forecast
 timeline. The native composite files remain the source of truth; everything the
-browser sees is a derived, reprojected, colorized PNG tile.
+browser sees is a derived, rendered PNG frame/tile.
 
 ---
 
@@ -43,11 +43,11 @@ mature **serving** half we should not duplicate:
   (`LEGEND_CONFIGS`, `frontend/app.js:597`), and a layer control
   (`frontend/index.html:80`).
 
-**Key consequence:** if we **reproject each composite onto a regular lat/lon
-grid** (the same coordinate convention as ICON output) and store it as Zarr in
-the SkyView layout, observations become "just another overlay layer" for ~90% of
-the serving path. The only genuinely new backend concept is the **time axis**
-(rolling observation frames vs. forecast run/step).
+**Current implementation choice:** for the first live slice we keep only
+**derived render frames** (`radar_dbz` PNG and satellite `hrv` PNG) plus a
+manifest. Native ODIM/ZIP/NAT files are temporary ingest inputs. Numeric
+regular-lat/lon Zarr remains a future option if we later need server-side
+physical-value sampling, recoloring, or per-tile composition from arrays.
 
 SkyView only displays the **Eastern Alps** window (`BOUNDS = 45.5–48.5°N,
 9–17°E`, zoom 5–12; `SPEC.md:466`), and ingest already crops EU data to
@@ -61,18 +61,19 @@ at ingest — the reprojection target is small and cheap.
 
 ```
         ┌─────────────────────── INGEST (new) ───────────────────────┐
- OPERA EDR / S3  ──▶  fetch native ODIM    ──▶  reproject (Lambert EA → reg. lat/lon,
- (radar_ord.py)       (source of truth)         crop to d2_bounds, ~0.02°)  ──▶  Zarr
- EUMDAC MSG RSS  ──▶  fetch native NetCDF  ──▶  reproject (geos → reg. lat/lon)  ──▶  Zarr
+ OPERA EDR / S3  ──▶  fetch native ODIM temp ──▶ reproject + render dBZ PNG
+ (radar_ord.py)
+ EUMDAC MSG RSS  ──▶  fetch ZIP temp ──▶ unzip NAT temp ──▶ render HRV PNG
  (satellite_…py)                                                                    │
         └────────────────────────────────────────────────────────────────────────┘
                                                                                     ▼
-   data/observations/{radar|satellite}/{YYYYMMDDHHMM}.zarr  +  manifest.json (ring buffer)
+   data/observations/{radar|satellite}/{YYYYMMDDHHMM}_{product}.png
+   + manifest.json (5 h ring buffer)
                                                                                     │
         ┌─────────────────────── SERVE (reuse + thin new layer) ──────────────────┘
         ▼
   /api/observations/frames   (NEW: list available timestamps per source)
-  /api/overlay_tile/...png   (REUSE: add observation layers + obs time resolver)
+  /api/observations/render/...png or /api/overlay_tile/...png (serve render frame)
         │
         ▼
         └─────────────────────── FRONTEND (new UI on existing plumbing) ──────────┐
@@ -106,11 +107,11 @@ Adaptation notes vs. the uploaded scaffold:
 
 - **Reuse as-is (logic):** `radar_ord.RadarSource` (EDR + S3 fallback), the ODIM
   reader `read_odim_maxreflectivity()`, `satellite_eumetsat.SatelliteSource`.
-- **Change output:** the scaffold stops at "save native file." We add
-  `reproject.py` + `store.py` so the pipeline ends at a SkyView-shaped Zarr.
-- **Drop satpy RGB** (`to_europe_rgb`) for serving — SkyView colorizes server-side
-  from physical values (dBZ, brightness temp), consistent with every other
-  overlay. Keep native files as source-of-truth artifacts only.
+- **Change output:** the scaffold stops at "save native file." The live slice
+  now adds `render.py` + render-aware `store.py` so the retained cache product is
+  a derived PNG frame, not a native provider file.
+- **Native files are temporary** for the selected cache policy. Keep native
+  files only in explicit debug/live-verification runs.
 - **Config** moves under SkyView's env conventions (`SKYVIEW_*` / existing
   `EUCOMP_*` accepted), data root anchored at SkyView `data/`.
 
@@ -143,25 +144,19 @@ same order as ICON-D2. Reprojection is sub-second per frame.
 ```
 data/observations/
   radar/
-    202606031230.zarr/        # group: dbz (2D), lat (1D), lon (1D) + attrs
-    202606031235.zarr/
-    ...
-    manifest.json             # {"frames": ["202606031230", ...], "updated": "..."}
-  satellite/
-    202606031230.zarr/        # group: ir_bt, wv_bt, lat, lon + attrs
-    ...
+    202606121820_radar_dbz.png
     manifest.json
-  native/                     # optional: keep source ODIM/NetCDF (source of truth)
+  satellite/
+    202606121824_hrv.png
+    manifest.json
+  tmp/                        # temporary native ODIM/ZIP/NAT during ingest
 ```
 
-- Zarr written via the existing `services/storage_io.py:write_zarr_group`
-  (Blosc compression), so it's byte-compatible with the loader.
 - `manifest.json` is the **time index** (avoids `listdir` on the hot path) and
-  records each frame's valid time, source, and age.
+  records each frame's valid time, products, attrs, source, and age.
 - **Retention = ring buffer**, unlike forecast (`keep_runs: 1`). Configurable
-  window, default **3 h** (= 36 frames at 5 min). A `prune_old_frames()` in
-  `store.py` deletes frames older than the window and rewrites the manifest. This
-  is the OPERA S3 cache's own 24 h horizon scaled to what the UI animates.
+  window, default **5 h** (= 60 frames at 5 min). `store.prune()` deletes render
+  PNGs older than the window and rewrites the manifest.
 - Add `data/observations/` to `.gitignore` (runtime data; `.gitignore` already
   ignores `data/icon-d2/` etc.).
 
@@ -238,13 +233,16 @@ Pillow, requests`): `h5py` (ODIM), `pyproj` + `pyresample` (reprojection),
 `boto3` (S3 fallback), `eumdac` (satellite). `satpy[seviri]` optional (satellite
 read/resample). All already listed in the scaffold's `requirements.txt`.
 
-> **Environment note:** this web session's sandbox has a **restricted egress
-> allowlist** (api.meteogate.eu / cloudferro S3 / api.eumetsat.int are blocked
-> with `Host not in allowlist`) and **none of the geo deps installed**. Live data
-> pulls therefore run on a networked host (or after allowlisting those hosts in
-> the environment's network policy). The 3 "open items" were re-researched against
-> the official ORD docs — **#1 and #2 are now resolved** (see §8); #3 needs a real
-> file. Unknowns stay isolated inside `radar_ord.py` / `reproject.py`.
+> **Environment note (updated 2026-06-12):** an earlier draft recorded the
+> session sandbox as blocking `api.meteogate.eu` / cloudferro S3 /
+> `api.eumetsat.int` with `Host not in allowlist`. **This is no longer true on
+> the current host** — all three are reachable, and a full live satellite fetch
+> succeeded on 2026-06-12 (see §10). The geo deps are not in the default
+> interpreter but install cleanly into a dedicated venv (`.venv-obs`:
+> `eumdac`, `satpy`, `pyresample`, `matplotlib`). The earlier ORD "open items
+> #1/#2" remain resolved per the official docs; satellite open items are now
+> resolved against a real file (§10). Unknowns stay isolated inside
+> `radar_ord.py` / `reproject.py` / the satellite ingest branch.
 
 ---
 
@@ -330,8 +328,9 @@ Add attribution to the Leaflet attribution control and the legal pages
 | Phase | Deliverable | Verifiable in this sandbox? |
 |-------|-------------|------------------------------|
 | **0. Scaffolding** ✅ **DONE** | `backend/observations/` package (config, radar_ord, satellite_eumetsat, poller, requirements), `.gitignore`, `tests/test_observations_s3keys.py` + `tests/test_observations_odim.py`. S3-key parser extracted as pure/tested helpers; ODIM test uses a synthetic fixture + `importorskip` | ✅ (logic verified; full `pytest`/`h5py` run needs the ingest venv) |
-| **1. Ingest + reproject + store** ✅ **CODE DONE** | `reproject.py` (ODIM Lambert-EA + swath), `store.py` (manifest + ring-buffer retention, tested), `ingest_obs.py` (fetch→reproject→store→prune, per-source isolation), `radar_ord.read_odim_valid_time`. Satellite channel extraction + the 3 PLANNING open items still need live verification | ⚠️ pure logic verified; reproject/zarr + live API need the ingest venv + host |
-| **2. Backend serving** | `OVERLAY_CONFIGS` entries + colormaps, observation load branch, `resolve_observation_frame`, `/api/observations/frames` route, cache rotation | ✅ unit-testable with fixture Zarr |
+| **1A. Derived render ingest** ✅ **DONE; live-verified 2026-06-12** | `render.py`, render-aware `store.py`, `ingest_obs.py` fetches live OPERA and MSG15 RSS into temp dirs, renders `radar_dbz` + `hrv` PNGs, writes manifests, prunes with 5 h retention. | ✅ live-verified with current provider data |
+| **1B. Numeric observation grids** | Optional future path: `reproject.py` + Zarr for dBZ/IR/WV if physical-value overlays or recoloring become necessary. | partial |
+| **2. Backend serving** | `/api/observations/frames`, render-frame response endpoint or tile integration, cache headers, age/freshness metadata | ✅ unit-testable with fixture PNGs |
 | **3. Frontend** | Observations control group, panes/layers, recent-frames strip + loop, legends, attribution | ✅ (manual/visual; needs backend frames) |
 | **4. Scheduling** | cron entry or `skyview-observations.service`; optional MQTT push subscriber | ❌ needs host/network |
 | **5. Hardening** | retry/backoff (transient HTTP), disk-space guard, structured logging (`backend/logging_config.py`), perf check that obs tiles stay within budget (`scripts/qa_perf.py`) | partial |
@@ -352,10 +351,11 @@ Mirror `tests/` conventions (`pytest.ini`, markers `integration`/`perf`):
   confirm against a real CIRRUS file.
 - `test_observations_s3keys.py` — S3 key parsing/sorting for
   `YYYY/MM/DD/OPERA/COMP/OPERA@<ts>@0@DBZH.h5` (newest-wins).
-- `test_observations_store.py` — write→manifest→prune ring-buffer semantics.
-- `test_observations_overlay.py` — `/api/overlay_tile?layer=obs_radar_dbz` over a
-  fixture Zarr returns a valid PNG with correct headers; `latest`/exact/nearest/404
-  time resolution.
+- `test_observations_store.py` — render write→manifest→prune ring-buffer semantics.
+- `test_observations_satellite.py` — MSG product valid-time parsing.
+- Future `test_observations_overlay.py` — render endpoint/tile path over fixture
+  PNGs returns a valid PNG with correct headers; `latest`/exact/nearest/404 time
+  resolution.
 - Reproject test — Lambert-EA corner → known lat/lon within tolerance.
 
 ## 8. Risks & open questions
@@ -425,6 +425,82 @@ Re-researched against the [ORD API docs](https://eumetnet.github.io/openradardat
 
 ---
 
+## 10. Live verification log — satellite (2026-06-12)
+
+First end-to-end run of the **satellite** path against live EUMETSAT data, on a
+real host (not the restricted sandbox of earlier drafts) using a real API key in
+`backend/.env` and a dedicated `.venv-obs` (`eumdac 3.1.1`, `satpy 0.60.0`,
+`pyresample 1.35.0`, `matplotlib 3.11.0`). Auth → search → download → unzip →
+decode → reproject → preview **all succeeded**. Findings below are confirmed
+against the real product, not docs.
+
+### 10.1 Confirmed working
+
+- **Credential path is correct.** `EUMETSAT_CONSUMER_KEY`/`_SECRET` in
+  `backend/.env` → `eumdac.AccessToken` → token + Data Store reachable.
+  `scripts/eumetsat_auth.py` validates it cleanly (exit 0).
+- **Live product cadence confirmed:** the MSG Rapid Scan collection serves ~9
+  products per 45 min (5-min cadence), newest only a few minutes old.
+- **Download + decode confirmed:** a 59 MB product downloaded in ~4 s; it is a
+  **ZIP** containing a 102 MB `.nat` (SEVIRI native L1.5) + `EOPMetadata.xml` +
+  `manifest.xml`. `satpy` `reader="seviri_l1b_native"` reads it directly.
+- **Channels present and physical:** `IR_108` (10.8 µm window) and `WV_062`
+  (6.2 µm water vapour) both load in Kelvin with sane ranges over Europe
+  (IR ≈ 227–308 K, WV ≈ 222–242 K). All 12 SEVIRI channels are available
+  (HRV, VIS006/008, IR_016/039/087/097/108/120/134, WV_062/073).
+- **Reprojection to the SkyView grid works** and the Alps window is fully
+  covered (native pixels span 14.9–71.9 °N; the 46.5 °N/12 °E point reads a
+  valid BT). Previews saved to `.state/sat_preview_{IR_108,WV_062}.png`.
+
+### 10.2 Code fixes landed from live findings
+
+- **Collection id fixed:** default MSG RSS collection is now
+  `EO:EUM:DAT:MSG:MSG15-RSS`; the older `HRSEVIRI-RSS` id 404s on the live Data
+  Store.
+- **ZIP/NAT handling fixed:** `SatelliteSource.fetch_latest()` saves `.zip`, and
+  `extract_native_file()` opens the inner `.nat`.
+- **Satellite ingest wired for selected cache policy:** `ingest_satellite()`
+  renders the HRV channel to a derived PNG frame and does not retain native
+  products.
+- **Remaining numeric-grid caution:** `satpy`'s `Scene.resample()` silently
+  dropped half the swath during numeric-grid testing. Using
+   `scn.resample(area, resampler="nearest", radius_of_influence=8000)` produced a
+   grid with a clean cut at ~50 °N and only ~52 % coverage — the southern half
+   (including the Alps) was discarded even though the source pixels exist. A
+   manual **`scipy.spatial.cKDTree` nearest-neighbour** reprojection over the
+  native `(lon, lat)` arrays gave **100 % coverage**. **Action if numeric grids
+  return:** validate `reproject.py:reproject_swath` against this exact file
+  before trusting it; prefer the cKDTree path, or pass `reduce_data=False` and
+  verify.
+
+### 10.3 Access / licensing gotchas (operational)
+
+- **NRT licence is per-collection and separate.** Even with a valid key and
+  general account licences accepted, SEVIRI **L1.5 image** collections
+  (`HRSEVIRI`, `MSG15-RSS`) returned `403` with body
+  `NRTLicense required to access this collection` until the licence for **that
+  specific image-data collection** was accepted in the Data Store web UI. Other
+  MSG products (e.g. Cloud Mask `MSG:CLM`) downloaded fine before that, so a
+  blanket "accept all licences" page does **not** necessarily cover the image
+  NRT licence. Acceptance can take up to ~1 h to propagate to the API gateway.
+- **Ops doc:** record the exact collection(s) whose NRT licence must be accepted
+  in `docs/OPS_SECRETS.md` alongside the EUMETSAT key setup, so a new deployer
+  doesn't hit the same 403.
+
+### 10.4 Live ingest verification
+
+- `python -m backend.observations.ingest_obs --source both` live-verified on
+  2026-06-12 with `.venv-obs`.
+- OPERA EDR returned `422` for the query shape, but the unsigned CloudFerro S3
+  fallback successfully downloaded `OPERA@20260612T1820@0@DBZH.h5`; ODIM layout
+  read and Lambert-EA reprojection succeeded.
+- EUMETSAT MSG15 RSS downloaded a live ZIP, extracted the `.nat`, decoded HRV via
+  Satpy, and wrote `202606121824_hrv.png`.
+- Retained cache after cleanup contained only derived PNGs and manifests under
+  `data/observations/{radar,satellite}/`; native inputs lived only in temp dirs.
+
+---
+
 ### Reference map (existing code this plan builds on)
 
 | Concern | File:line |
@@ -449,5 +525,3 @@ Re-researched against the [ORD API docs](https://eumetnet.github.io/openradardat
 | Frontend timeline (forecast) | `frontend/app.js:2027` |
 | Frontend layer controls (HTML) | `frontend/index.html:80` |
 | Display window / zoom map | `SPEC.md:466`, `backend/constants.py:10` |
-</content>
-</invoke>

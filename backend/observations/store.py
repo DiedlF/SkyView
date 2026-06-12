@@ -1,9 +1,12 @@
 """Frame storage + manifest/ring-buffer for the observation layer.
 
-Each reprojected frame is written as a Zarr group under
-``data/observations/<source>/<frame_id>.zarr`` and indexed in a per-source
-``manifest.json``. The manifest is the time index the serving layer (Phase 2)
+Derived render frames are written as PNGs under
+``data/observations/<source>/<frame_id>_<product>.png`` and indexed in a
+per-source ``manifest.json``. The manifest is the time index the serving layer
 and frontend read instead of listing the directory on the hot path.
+
+The older Zarr helpers remain available for numeric overlay experiments, but
+the live radar/HRV cache path uses ``write_frame_render``.
 
 Retention is a rolling window (``prune``), unlike forecast data which keeps only
 the latest run.
@@ -49,12 +52,17 @@ def source_dir(source: str) -> Path:
     return DATA_ROOT / source
 
 
+def manifest_path(source: str) -> Path:
+    return source_dir(source) / MANIFEST_NAME
+
+
 def frame_zarr_path(source: str, fid: str) -> Path:
     return source_dir(source) / f"{fid}.zarr"
 
 
-def manifest_path(source: str) -> Path:
-    return source_dir(source) / MANIFEST_NAME
+def frame_render_path(source: str, fid: str, product: str) -> Path:
+    safe_product = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in product)
+    return source_dir(source) / f"{fid}_{safe_product}.png"
 
 
 def _as_utc(when: dt.datetime) -> dt.datetime:
@@ -89,14 +97,31 @@ def write_manifest(source: str, manifest: dict) -> None:
     os.replace(tmp, path)
 
 
-def record_frame(source: str, when: dt.datetime, *, cadence_seconds: Optional[int] = None) -> dict:
+def record_frame(
+    source: str,
+    when: dt.datetime,
+    *,
+    cadence_seconds: Optional[int] = None,
+    products: Optional[dict] = None,
+    attrs: Optional[dict] = None,
+) -> dict:
     """Add (or refresh) a frame entry, keeping ``frames`` sorted & de-duplicated."""
     fid = frame_id(when)
     manifest = read_manifest(source)
     if cadence_seconds is not None:
         manifest["cadence_seconds"] = cadence_seconds
     frames = {f["frame_id"]: f for f in manifest.get("frames", [])}
-    frames[fid] = {"frame_id": fid, "valid_time": valid_time_iso(when)}
+    entry = dict(frames.get(fid) or {"frame_id": fid, "valid_time": valid_time_iso(when)})
+    entry["valid_time"] = valid_time_iso(when)
+    if products:
+        merged_products = dict(entry.get("products") or {})
+        merged_products.update(products)
+        entry["products"] = merged_products
+    if attrs:
+        merged_attrs = dict(entry.get("attrs") or {})
+        merged_attrs.update(attrs)
+        entry["attrs"] = merged_attrs
+    frames[fid] = entry
     manifest["frames"] = [frames[k] for k in sorted(frames)]
     write_manifest(source, manifest)
     return manifest
@@ -173,6 +198,36 @@ def _remove_frame_dir(source: str, fid: str) -> None:
             path.unlink()
         except OSError:
             pass
+    for render_path in source_dir(source).glob(f"{fid}_*.png"):
+        try:
+            render_path.unlink()
+        except OSError:
+            pass
+
+
+# -- Render I/O ------------------------------------------------------------
+def write_frame_render(
+    source: str,
+    when: dt.datetime,
+    product: str,
+    png_path: Path,
+    attrs: Optional[dict] = None,
+    *,
+    cadence_seconds: Optional[int] = None,
+    prune_after: bool = True,
+) -> Path:
+    """Commit a derived PNG render and index it in the manifest."""
+    fid = frame_id(when)
+    dest = frame_render_path(source, fid, product)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if Path(png_path).resolve() != dest.resolve():
+        shutil.copyfile(png_path, dest)
+    products = {product: dest.name}
+    record_frame(source, when, cadence_seconds=cadence_seconds, products=products, attrs=attrs)
+    log.info("Wrote %s render %s/%s -> %s", source, fid, product, dest)
+    if prune_after:
+        prune(source)
+    return dest
 
 
 # -- Zarr I/O (lazy heavy deps) -------------------------------------------

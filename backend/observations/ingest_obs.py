@@ -13,76 +13,107 @@ alternative to the long-running ``poller``; both end at the same Zarr + manifest
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import logging
 import sys
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Optional
 
 from . import store
-from .config import Config, ensure_dirs
+from .config import Config, TMP_DIR, ensure_dirs
 
 log = logging.getLogger("skyview.observations.ingest")
 
 
 def ingest_radar(cfg: Config) -> Optional[str]:
-    """Fetch the newest OPERA composite, reproject, and store. Returns frame id."""
+    """Fetch the newest OPERA composite, render, and store. Returns frame id."""
     from .radar_ord import (
         RadarSource,
         read_odim_maxreflectivity,
         read_odim_valid_time,
     )
-    from .reproject import build_target_coords, reproject_odim
+    from .render import render_radar_dbz_png
+    from .reproject import reproject_odim
 
     src = RadarSource(cfg.radar)
-    native = src.fetch_latest()
-    if native is None:
-        log.info("radar: no new composite available")
-        return None
+    TMP_DIR.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix="radar-", dir=str(TMP_DIR)) as tmp:
+        native = src.fetch_latest(Path(tmp))
+        if native is None:
+            log.info("radar: no new composite available")
+            return None
 
-    when = read_odim_valid_time(native)
-    if when is None:
-        log.warning("radar: could not determine valid time for %s", native)
-        return None
-    fid = store.frame_id(when)
-    if store.has_frame("radar", fid):
-        log.info("radar: frame %s already ingested; skipping", fid)
-        return None
+        when = read_odim_valid_time(native)
+        if when is None:
+            log.warning("radar: could not determine valid time for %s", native)
+            return None
+        fid = store.frame_id(when)
+        if store.has_frame("radar", fid):
+            log.info("radar: frame %s already ingested; skipping", fid)
+            return None
 
-    phys, where = read_odim_maxreflectivity(native)
-    field = reproject_odim(phys, where)
-    lat, lon = build_target_coords()
-    store.write_frame_zarr(
-        "radar",
-        when,
-        {"dbz": field, "lat": lat, "lon": lon},
-        attrs={"standard_name": cfg.radar.standard_name, "units": "dBZ"},
-        cadence_seconds=cfg.radar.cadence_seconds,
-    )
-    return fid
+        phys, where = read_odim_maxreflectivity(native)
+        field = reproject_odim(phys, where)
+        tmp_png = Path(tmp) / "radar_dbz.png"
+        render_radar_dbz_png(field, tmp_png)
+        store.write_frame_render(
+            "radar",
+            when,
+            "radar_dbz",
+            tmp_png,
+            attrs={
+                "standard_name": cfg.radar.standard_name,
+                "units": "dBZ",
+                "cache": "derived_render",
+            },
+            cadence_seconds=cfg.radar.cadence_seconds,
+        )
+        return fid
 
 
 def ingest_satellite(cfg: Config) -> Optional[str]:
-    """Fetch the newest MSG/MTG product, reproject IR/WV, and store.
-
-    Reading the native SEVIRI/FCI file and extracting per-channel brightness
-    temperatures + lon/lat uses satpy; the exact composite/channel selection is
-    confirmed against a real product in Phase 1 (host with creds + satpy).
-    """
-    from .reproject import reproject_swath  # noqa: F401  (used once wired)
-    from .satellite_eumetsat import SatelliteSource
+    """Fetch the newest MSG RSS product, render HRV, and store. Returns frame id."""
+    from .render import render_satellite_hrv_png
+    from .satellite_eumetsat import (
+        SatelliteSource,
+        extract_native_file,
+        read_msg_valid_time,
+    )
 
     src = SatelliteSource(cfg.satellite)
-    native = src.fetch_latest()
-    if native is None:
-        log.info("satellite: no new product available")
-        return None
+    TMP_DIR.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix="satellite-", dir=str(TMP_DIR)) as tmp:
+        product = src.fetch_latest(Path(tmp))
+        if product is None:
+            log.info("satellite: no new product available")
+            return None
 
-    # Channel extraction + swath reprojection is implemented on the host where
-    # satpy/eumdac are installed and a real product is available (Phase 1 live).
-    raise NotImplementedError(
-        "satellite reprojection (satpy channel extraction) is wired during "
-        "Phase 1 live verification; native product fetched at "
-        f"{native}"
-    )
+        native = extract_native_file(product, Path(tmp))
+        when = read_msg_valid_time(native) or read_msg_valid_time(product)
+        if when is None:
+            when = dt.datetime.fromtimestamp(native.stat().st_mtime, dt.timezone.utc)
+
+        fid = store.frame_id(when)
+        if store.has_frame("satellite", fid):
+            log.info("satellite: frame %s already ingested; skipping", fid)
+            return None
+
+        tmp_png = Path(tmp) / "satellite_hrv.png"
+        render_satellite_hrv_png(native, tmp_png, bbox=cfg.satellite.roi_bbox)
+        store.write_frame_render(
+            "satellite",
+            when,
+            "hrv",
+            tmp_png,
+            attrs={
+                "channel": "HRV",
+                "collection_id": cfg.satellite.collection_id,
+                "cache": "derived_render",
+            },
+            cadence_seconds=cfg.satellite.cadence_seconds,
+        )
+        return fid
 
 
 def run_once(source: str, cfg: Optional[Config] = None) -> dict:

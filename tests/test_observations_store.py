@@ -53,6 +53,41 @@ def test_record_frame_sorts_and_dedupes():
     assert not store.has_frame("radar", "202606031200")
 
 
+def test_write_render_frame_records_product_and_prunes_png(tmp_path):
+    old_png = tmp_path / "old.png"
+    old_png.write_bytes(b"old")
+    new_png = tmp_path / "new.png"
+    new_png.write_bytes(b"new")
+
+    store.write_frame_render(
+        "radar",
+        _dt("202606031210"),
+        "radar_dbz",
+        old_png,
+        cadence_seconds=300,
+        prune_after=False,
+    )
+    store.write_frame_render(
+        "radar",
+        _dt("202606031230"),
+        "radar_dbz",
+        new_png,
+        attrs={"cache": "derived_render"},
+        prune_after=False,
+    )
+
+    frames = store.list_frames("radar")
+    assert frames[-1]["products"]["radar_dbz"] == "202606031230_radar_dbz.png"
+    assert frames[-1]["attrs"]["cache"] == "derived_render"
+    assert store.frame_render_path("radar", "202606031210", "radar_dbz").exists()
+
+    removed = store.prune("radar", keep_seconds=600, keep_frames=None, now=_dt("202606031230"))
+
+    assert removed == ["202606031210"]
+    assert not store.frame_render_path("radar", "202606031210", "radar_dbz").exists()
+    assert store.frame_render_path("radar", "202606031230", "radar_dbz").exists()
+
+
 def test_read_manifest_missing_is_empty():
     m = store.read_manifest("satellite")
     assert m["source"] == "satellite"

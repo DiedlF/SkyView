@@ -5,13 +5,16 @@ product identifiers were verified against the EUMETNET ORD API documentation and
 the EUMETSAT Data Store as of June 2026. Treat these as defaults overridable via
 environment variables.
 
-Data is written under the repository ``data/observations/`` tree by default so it
-sits alongside the ICON Zarr stores and is covered by ``.gitignore``.
+Derived observation frames are written under the repository
+``data/observations/`` tree by default so they sit alongside the ICON stores and
+are covered by ``.gitignore``. Native provider files are temporary ingest inputs
+unless a caller explicitly downloads them elsewhere for debugging.
 """
 
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -20,6 +23,28 @@ from pathlib import Path
 # backend/observations/config.py -> parents[2] == repo root.
 # --------------------------------------------------------------------------
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _load_backend_env(path: Path) -> None:
+    """Load backend/.env for observation CLIs without overriding real env vars."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                line = re.sub(r"^export\s+", "", line)
+                key, _, val = line.partition("=")
+                key = key.strip()
+                val = val.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = val
+    except FileNotFoundError:
+        pass
+
+
+_load_backend_env(_REPO_ROOT / "backend" / ".env")
+
 _DEFAULT_DATA_ROOT = _REPO_ROOT / "data" / "observations"
 
 DATA_ROOT = Path(
@@ -28,10 +53,11 @@ DATA_ROOT = Path(
     or str(_DEFAULT_DATA_ROOT)
 ).expanduser()
 
-# Native source-of-truth files (ODIM HDF5 / NetCDF) land here in Phase 0/1.
+# Derived render products land under these source directories.
 RADAR_DIR = DATA_ROOT / "radar"
 SAT_DIR = DATA_ROOT / "satellite"
 STATE_DIR = DATA_ROOT / ".state"  # last-seen markers for the poller
+TMP_DIR = DATA_ROOT / "tmp"
 
 
 # --------------------------------------------------------------------------
@@ -91,10 +117,10 @@ class SatelliteConfig:
     consumer_secret: str = os.environ.get("EUMETSAT_CONSUMER_SECRET", "")
 
     # Collection IDs (confirm via `eumdac describe`):
-    #   MSG RSS Level 1.5:   "EO:EUM:DAT:MSG:HRSEVIRI-RSS"   (5-min, Europe)
+    #   MSG RSS Level 1.5:   "EO:EUM:DAT:MSG:MSG15-RSS"      (5-min, Europe)
     #   MTG FCI Level 1c:    "EO:EUM:DAT:0662"               (10-min)
     collection_id: str = os.environ.get(
-        "EUCOMP_SAT_COLLECTION", "EO:EUM:DAT:MSG:HRSEVIRI-RSS"
+        "EUCOMP_SAT_COLLECTION", "EO:EUM:DAT:MSG:MSG15-RSS"
     )
     cadence_seconds: int = 300
     poll_interval: int = 60
@@ -110,7 +136,7 @@ class Config:
 
 
 def ensure_dirs() -> None:
-    for d in (RADAR_DIR, SAT_DIR, STATE_DIR):
+    for d in (RADAR_DIR, SAT_DIR, STATE_DIR, TMP_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 
@@ -151,6 +177,7 @@ class GridSpec:
 TARGET_GRID = GridSpec()
 
 # Ring-buffer retention for observation frames (seconds). Unlike forecast data
-# (keep_runs=1) we keep a rolling window the UI can animate. Default 3 h.
-RETENTION_SECONDS = int(os.environ.get("EUCOMP_RETENTION_SECONDS", str(3 * 3600)))
+# (keep_runs=1) we keep a rolling window the UI can animate. Default 5 h
+# (60 frames at 5-minute cadence).
+RETENTION_SECONDS = int(os.environ.get("EUCOMP_RETENTION_SECONDS", str(5 * 3600)))
 RETENTION_MAX_FRAMES = int(os.environ.get("EUCOMP_RETENTION_MAX_FRAMES", "0")) or None
