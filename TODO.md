@@ -18,12 +18,13 @@
 - Backend: `backend/observations/` ingest (fetch → temporary native decode → derived PNG render cache), 5 h ring-buffer retention, `/api/observations/frames`, `/api/observations/render/...`, and `/api/status` freshness.
 - Frontend: "Observations" layer group with radar/HRV toggles, recent-frames strip + loop animation, and EUMETNET/EUMETSAT attribution.
 - Full design + live-verification log: `docs/OBSERVATION_LAYER_IMPLEMENTATION_PLAN.md` (§10).
-- **Status:** Derived radar dBZ + satellite HRV ingest, serving endpoints, frontend controls/loop, status freshness, systemd timer files, and GitHub deploy wiring are implemented and live-verified 2026-06-12. Remaining work: VPS deploy verification, visual QA/georeferencing polish, legal page copy, and optional numeric-grid path.
+- **Status:** Derived radar dBZ + satellite HRV ingest, serving endpoints, frontend controls/loop, status freshness, systemd timer files, GitHub deploy wiring, and render-grid georeferencing fixes are implemented and live-verified 2026-06-13. Remaining work: post-deploy visual QA, legal page copy, backfill/refetch tooling for derived-only cache refreshes, and optional numeric-grid path.
 - **Known bugs to fix (confirmed live, see plan §10.2):**
   - [x] Stale satellite collection id — `EO:EUM:DAT:MSG:HRSEVIRI-RSS` 404s; use `EO:EUM:DAT:MSG:MSG15-RSS` (`backend/observations/config.py`, `backend/.env.example`).
   - [x] `SatelliteSource.fetch_latest` saves product as `.nc` but the Data Store delivers a `.zip` wrapping a `.nat` — unzip + read inner `.nat` (`backend/observations/satellite_eumetsat.py`).
   - [ ] `satpy` `Scene.resample()` dropped half the swath in testing; validate/replace `reproject.py:reproject_swath` with the cKDTree nearest path if/when numeric satellite grids return.
   - [x] Wire the satellite ingest branch for the selected derived HRV render cache (`backend/observations/ingest_obs.py`).
+  - [x] Derived render georeferencing — radar now resamples from ODIM pixel-corner extents; HRV now uses Satpy native geometry + `Scene.resample()` onto the SkyView lat/lon render grid.
 - **Ops:** satellite downloads need the per-collection **NRT licence** accepted in the EUMETSAT Data Store (documented in `docs/OPS_SECRETS.md`).
 
 ### Deferred performance/watchlist

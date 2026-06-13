@@ -1,21 +1,20 @@
-"""Reprojection: native composite grids → regular lat/lon target grid.
+"""Reprojection: native composite grids -> regular lat/lon target grid.
 
 The serving pipeline expects a regular lat/lon grid (1-D ``lat``/``lon`` + 2-D
 field), so ingest reprojects:
 
-  * Radar (OPERA ODIM): Lambert Azimuthal Equal Area → regular lat/lon, via a
-    pyproj transform + nearest-neighbour sampling of the source raster.
-  * Satellite (MSG/MTG geostationary): a generic swath resample (pyresample
-    nearest) given the source lon/lat arrays + data.
+  * Radar (OPERA ODIM): ODIM ``/where`` projection metadata -> regular
+    lat/lon, via pyresample nearest-neighbour area resampling.
+  * Satellite (MSG/MTG geostationary): Satpy reads the official native
+    geostationary geometry and resamples to the same target area.
 
 Both crop/downsample to the SkyView ``TARGET_GRID`` (≈ d2_bounds at 0.02°). All
 heavy dependencies (numpy, pyproj, pyresample) are imported lazily so this module
 imports cleanly in the core-server environment.
 
-NOTE: the exact ODIM ``/where`` attribute set for the CIRRUS *composite* is one
-of the open items to confirm against a real file in Phase 1 (single-site layouts
-differ). The reader below uses the standard ODIM composite georeferencing
-(projdef + UL corner + xscale/yscale + xsize/ysize).
+ODIM geographical image products define corner coordinates as pixel corners. The
+helpers below preserve that convention by building pyresample area extents from
+pixel edges, then returning arrays in SkyView's south-to-north latitude order.
 """
 
 from __future__ import annotations
@@ -68,7 +67,77 @@ def build_target_coords(grid: GridSpec = TARGET_GRID):
     return lat.astype("float32"), lon.astype("float32")
 
 
-# -- radar: ODIM Lambert EA → regular lat/lon -----------------------------
+def target_area_definition(grid: GridSpec = TARGET_GRID):
+    """Return a north-up pyresample area for SkyView's regular lon/lat grid."""
+    from pyresample.geometry import AreaDefinition
+
+    half = grid.resolution / 2.0
+    return AreaDefinition(
+        "skyview_latlon",
+        "SkyView regular lon/lat observation grid",
+        "latlon",
+        {"proj": "longlat", "datum": "WGS84", "no_defs": None, "type": "crs"},
+        grid.n_lon,
+        grid.n_lat,
+        (
+            grid.lon_min - half,
+            grid.lat_min - half,
+            grid.lon_max + half,
+            grid.lat_max + half,
+        ),
+    )
+
+
+def odim_area_definition(where: dict, fallback_shape: tuple[int, int]):
+    """Build a pyresample source area from ODIM Cartesian ``/where`` metadata."""
+    import pyproj
+    from pyresample.geometry import AreaDefinition
+
+    projdef = attr_str(where, "projdef")
+    if not projdef:
+        raise ValueError("ODIM /where has no 'projdef'; cannot reproject")
+
+    xscale = attr_float(where, "xscale")
+    yscale = attr_float(where, "yscale")
+    xsize = int(attr_float(where, "xsize") or fallback_shape[1])
+    ysize = int(attr_float(where, "ysize") or fallback_shape[0])
+    if not xscale or not yscale:
+        raise ValueError("ODIM /where missing xscale/yscale")
+
+    src_crs = (
+        pyproj.CRS.from_proj4(projdef)
+        if projdef.strip().startswith("+")
+        else pyproj.CRS.from_user_input(projdef)
+    )
+    to_src = pyproj.Transformer.from_crs("EPSG:4326", src_crs, always_xy=True)
+
+    corners = {
+        key: (attr_float(where, f"{key}_lon"), attr_float(where, f"{key}_lat"))
+        for key in ("LL", "UL", "UR", "LR")
+    }
+    if all(lon is not None and lat is not None for lon, lat in corners.values()):
+        xs, ys = zip(*(to_src.transform(lon, lat) for lon, lat in corners.values()))
+        extent = (min(xs), min(ys), max(xs), max(ys))
+    else:
+        ul_lon = attr_float(where, "UL_lon")
+        ul_lat = attr_float(where, "UL_lat")
+        if ul_lon is None or ul_lat is None:
+            raise ValueError("ODIM /where missing corner lon/lat metadata")
+        x_ul, y_ul = to_src.transform(ul_lon, ul_lat)
+        extent = (x_ul, y_ul - yscale * ysize, x_ul + xscale * xsize, y_ul)
+
+    return AreaDefinition(
+        "odim_cartesian",
+        "ODIM Cartesian radar image",
+        "odim",
+        projdef,
+        xsize,
+        ysize,
+        extent,
+    )
+
+
+# -- radar: ODIM projected image -> regular lat/lon -----------------------
 def reproject_odim(phys, where: dict, grid: GridSpec = TARGET_GRID):
     """Nearest-neighbour reproject an ODIM composite array onto the target grid.
 
@@ -77,43 +146,19 @@ def reproject_odim(phys, where: dict, grid: GridSpec = TARGET_GRID):
     with NaN where the target falls outside the source raster.
     """
     import numpy as np
-    import pyproj
+    from pyresample import kd_tree
 
-    projdef = attr_str(where, "projdef")
-    if not projdef:
-        raise ValueError("ODIM /where has no 'projdef'; cannot reproject")
-
-    xscale = attr_float(where, "xscale")
-    yscale = attr_float(where, "yscale")
-    xsize = int(attr_float(where, "xsize") or phys.shape[1])
-    ysize = int(attr_float(where, "ysize") or phys.shape[0])
-    if not xscale or not yscale:
-        raise ValueError("ODIM /where missing xscale/yscale")
-
-    src_crs = pyproj.CRS.from_proj4(projdef) if projdef.strip().startswith("+") \
-        else pyproj.CRS.from_user_input(projdef)
-    to_src = pyproj.Transformer.from_crs("EPSG:4326", src_crs, always_xy=True)
-
-    # Source raster origin: upper-left corner projected into source CRS.
-    ul_lon = attr_float(where, "UL_lon")
-    ul_lat = attr_float(where, "UL_lat")
-    if ul_lon is None or ul_lat is None:
-        raise ValueError("ODIM /where missing UL_lon/UL_lat corner")
-    x_ul, y_ul = to_src.transform(ul_lon, ul_lat)
-
-    lat1d, lon1d = build_target_coords(grid)
-    lon_mesh, lat_mesh = np.meshgrid(lon1d.astype("float64"), lat1d.astype("float64"))
-    xs, ys = to_src.transform(lon_mesh, lat_mesh)
-
-    # Source pixel indices (col increases east, row increases south).
-    col = np.round((xs - x_ul) / xscale).astype("int64")
-    row = np.round((y_ul - ys) / yscale).astype("int64")
-    inside = (col >= 0) & (col < xsize) & (row >= 0) & (row < ysize)
-
-    out = np.full(lat_mesh.shape, np.nan, dtype="float32")
     src = np.asarray(phys, dtype="float32")
-    out[inside] = src[row[inside], col[inside]]
-    return out
+    src_def = odim_area_definition(where, src.shape)
+    tgt_def = target_area_definition(grid)
+    north_up = kd_tree.resample_nearest(
+        src_def,
+        src,
+        tgt_def,
+        radius_of_influence=max(grid.resolution * 111_000.0 * 2.0, 5000.0),
+        fill_value=np.nan,
+    ).astype("float32")
+    return np.flipud(north_up)
 
 
 # -- satellite: generic swath (geostationary) → regular lat/lon -----------

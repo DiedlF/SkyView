@@ -56,15 +56,23 @@ def render_satellite_hrv_png(
     *,
     bbox: tuple[float, float, float, float],
 ) -> Path:
-    """Render the MSG SEVIRI HRV channel as a high-resolution grayscale PNG."""
+    """Render MSG SEVIRI HRV as a north-up SkyView-grid grayscale PNG."""
     import numpy as np
     from PIL import Image
     from satpy import Scene
 
+    from .reproject import target_area_definition
+
     scn = Scene(reader="seviri_l1b_native", filenames=[str(native_file)])
-    scn.load(["HRV"])
+    scn.load(["HRV"], upper_right_corner="NE")
     cropped = scn.crop(ll_bbox=bbox)
-    data = np.asarray(cropped["HRV"].values, dtype="float32")
+    resampled = cropped.resample(
+        target_area_definition(),
+        datasets=["HRV"],
+        resampler="nearest",
+        radius_of_influence=5000,
+    )
+    data = np.asarray(resampled["HRV"].values, dtype="float32")
     finite = np.isfinite(data)
     if not np.any(finite):
         raise ValueError("HRV scene has no finite pixels in requested bbox")

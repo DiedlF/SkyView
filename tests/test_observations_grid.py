@@ -15,7 +15,13 @@ BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..", "backend")
 sys.path.insert(0, BACKEND_DIR)
 
 from observations.config import GridSpec  # noqa: E402
-from observations.reproject import attr_float, attr_str, decode_attr  # noqa: E402
+from observations.reproject import (  # noqa: E402
+    attr_float,
+    attr_str,
+    decode_attr,
+    reproject_odim,
+    target_area_definition,
+)
 
 
 def test_grid_shape_matches_d2_window():
@@ -51,3 +57,47 @@ def test_attr_helpers():
     assert attr_str(where, "projdef") == "+proj=laea +lat_0=55"
     assert attr_float(where, "missing") is None
     assert attr_str(where, "missing") is None
+
+
+def test_target_area_uses_grid_centers():
+    pytest.importorskip("pyresample")
+    g = GridSpec(lat_min=0.5, lat_max=1.5, lon_min=10.5, lon_max=11.5, resolution=1.0)
+    area = target_area_definition(g)
+
+    assert area.width == 2
+    assert area.height == 2
+    assert list(area.projection_x_coords) == pytest.approx([10.5, 11.5])
+    # Pyresample AreaDefinition rows are north-to-south for image output.
+    assert list(area.projection_y_coords) == pytest.approx([1.5, 0.5])
+
+
+def test_reproject_odim_respects_pixel_corner_extent():
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("pyproj")
+    pytest.importorskip("pyresample")
+
+    # ODIM image data are stored north-to-south. The /where corners below are
+    # pixel edges, so target centers at 0.5/1.5 degrees should hit each cell.
+    phys = np.array([[10.0, 20.0], [30.0, 40.0]], dtype="float32")
+    where = {
+        "projdef": "+proj=longlat +datum=WGS84 +no_defs",
+        "xsize": 2,
+        "ysize": 2,
+        "xscale": 1.0,
+        "yscale": 1.0,
+        "LL_lon": 0.0,
+        "LL_lat": 0.0,
+        "UL_lon": 0.0,
+        "UL_lat": 2.0,
+        "UR_lon": 2.0,
+        "UR_lat": 2.0,
+        "LR_lon": 2.0,
+        "LR_lat": 0.0,
+    }
+    grid = GridSpec(lat_min=0.5, lat_max=1.5, lon_min=0.5, lon_max=1.5, resolution=1.0)
+
+    got = reproject_odim(phys, where, grid)
+
+    assert got.shape == (2, 2)
+    # reproject_odim keeps SkyView's internal south-to-north latitude order.
+    np.testing.assert_allclose(got, [[30.0, 40.0], [10.0, 20.0]])
