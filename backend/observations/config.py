@@ -144,15 +144,22 @@ def ensure_dirs() -> None:
 # Target grid for reprojection / serving
 # --------------------------------------------------------------------------
 # Observations are reprojected onto a regular lat/lon grid (the same convention
-# as ICON Zarr output) so they reuse SkyView's overlay-tile pipeline. The bounds
-# mirror ``d2_bounds`` in backend/ingest_config.yaml and the resolution matches
-# ICON-D2 native (0.02° ≈ 2 km), giving a 746×1215 grid over the SkyView region.
+# as ICON Zarr output) so the rendered PNG can be georeferenced as a plain
+# lat/lon image overlay. The window is intentionally a bit WIDER than the
+# ICON-EU/D2 forecast crop (``d2_bounds`` in backend/ingest_config.yaml) so radar
+# and satellite frames give surrounding context beyond the forecast domain. The
+# resolution matches ICON-D2 native (0.02° ≈ 2 km).
+#
+# IMPORTANT: this grid is the single source of truth for both the render extent
+# (``reproject_odim`` / ``target_area_definition``) and the bbox advertised by
+# the serving layer (``routers/observations.py``). Render extent and served bbox
+# MUST stay equal or the frontend image overlay will be misregistered.
 @dataclass(frozen=True)
 class GridSpec:
-    lat_min: float = 43.18
-    lat_max: float = 58.08
-    lon_min: float = -3.94
-    lon_max: float = 20.34
+    lat_min: float = 40.0
+    lat_max: float = 60.0
+    lon_min: float = -8.0
+    lon_max: float = 26.0
     resolution: float = 0.02
 
     @property

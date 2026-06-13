@@ -8,7 +8,9 @@ field), so ingest reprojects:
   * Satellite (MSG/MTG geostationary): Satpy reads the official native
     geostationary geometry and resamples to the same target area.
 
-Both crop/downsample to the SkyView ``TARGET_GRID`` (≈ d2_bounds at 0.02°). All
+Both crop/downsample to the SkyView ``TARGET_GRID`` (a regular lat/lon window a
+bit wider than the ICON-EU/D2 crop, at 0.02°), which is also the exact extent the
+serving layer advertises as the frame bbox — render and bbox must stay equal. All
 heavy dependencies (numpy, pyproj, pyresample) are imported lazily so this module
 imports cleanly in the core-server environment.
 

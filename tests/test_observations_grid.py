@@ -24,19 +24,20 @@ from observations.reproject import (  # noqa: E402
 )
 
 
-def test_grid_shape_matches_d2_window():
+def test_grid_shape_matches_obs_window():
+    # Observation render window is a bit wider than the ICON-EU/D2 crop.
     g = GridSpec()
-    assert g.n_lat == 746
-    assert g.n_lon == 1215
-    assert g.shape == (746, 1215)
+    assert g.n_lat == 1001
+    assert g.n_lon == 1701
+    assert g.shape == (1001, 1701)
 
 
 def test_grid_endpoints_inclusive():
     g = GridSpec()
-    assert g.lat_at(0) == pytest.approx(43.18)
-    assert g.lat_at(g.n_lat - 1) == pytest.approx(58.08)
-    assert g.lon_at(0) == pytest.approx(-3.94)
-    assert g.lon_at(g.n_lon - 1) == pytest.approx(20.34)
+    assert g.lat_at(0) == pytest.approx(40.0)
+    assert g.lat_at(g.n_lat - 1) == pytest.approx(60.0)
+    assert g.lon_at(0) == pytest.approx(-8.0)
+    assert g.lon_at(g.n_lon - 1) == pytest.approx(26.0)
 
 
 def test_grid_custom_resolution():

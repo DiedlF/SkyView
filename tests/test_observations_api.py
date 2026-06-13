@@ -9,7 +9,12 @@ BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..", "backend")
 sys.path.insert(0, BACKEND_DIR)
 
 from observations import store  # noqa: E402
-from routers.observations import build_observations_router, observations_summary  # noqa: E402
+from observations.config import TARGET_GRID  # noqa: E402
+from routers.observations import (  # noqa: E402
+    SOURCE_PRODUCTS,
+    build_observations_router,
+    observations_summary,
+)
 
 
 def _dt(fid: str) -> dt.datetime:
@@ -55,6 +60,21 @@ def test_observations_frames_and_render_endpoint(tmp_path, monkeypatch):
     render = asyncio.run(render_endpoint(source="radar", product="radar_dbz", time_str="latest"))
     assert render.media_type == "image/png"
     assert render.headers["x-frame-id"] == "202606121820"
+
+
+def test_served_bbox_matches_render_grid():
+    # Frames are reprojected/resampled onto TARGET_GRID at ingest, and the
+    # frontend places the image overlay using exactly the served bbox. If the
+    # two ever diverge the overlay is misregistered (the satellite bug). Pin
+    # both sources to the render grid extent: [lat_min, lon_min, lat_max, lon_max].
+    expected = [
+        TARGET_GRID.lat_min,
+        TARGET_GRID.lon_min,
+        TARGET_GRID.lat_max,
+        TARGET_GRID.lon_max,
+    ]
+    for source in ("radar", "satellite"):
+        assert SOURCE_PRODUCTS[source]["bbox"] == expected
 
 
 def test_observations_summary_marks_missing_sources_stale(tmp_path, monkeypatch):

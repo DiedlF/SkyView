@@ -15,18 +15,24 @@ except ImportError:  # pragma: no cover - package launch style
     from backend.observations.config import TARGET_GRID
 
 
+# Both products are reprojected/resampled onto ``TARGET_GRID`` at ingest, so the
+# served bbox is derived from that same grid for both. Keeping a single source of
+# truth prevents the render-extent vs served-bbox drift that misregistered the
+# satellite overlay (the image is placed by the frontend using exactly this bbox).
+_GRID_BBOX = [TARGET_GRID.lat_min, TARGET_GRID.lon_min, TARGET_GRID.lat_max, TARGET_GRID.lon_max]
+
 SOURCE_PRODUCTS = {
     "radar": {
         "default": "radar_dbz",
         "products": {"radar_dbz"},
         "label": "OPERA radar dBZ",
-        "bbox": [TARGET_GRID.lat_min, TARGET_GRID.lon_min, TARGET_GRID.lat_max, TARGET_GRID.lon_max],
+        "bbox": list(_GRID_BBOX),
     },
     "satellite": {
         "default": "hrv",
         "products": {"hrv"},
         "label": "MSG RSS HRV",
-        "bbox": [32.0, -15.0, 72.0, 45.0],
+        "bbox": list(_GRID_BBOX),
     },
 }
 
