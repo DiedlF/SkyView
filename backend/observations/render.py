@@ -61,13 +61,13 @@ def render_satellite_hrv_png(
     from PIL import Image
     from satpy import Scene
 
-    from .reproject import target_area_definition
+    from .reproject import web_mercator_area_definition
 
     scn = Scene(reader="seviri_l1b_native", filenames=[str(native_file)])
     scn.load(["HRV"], upper_right_corner="NE")
     cropped = scn.crop(ll_bbox=bbox)
     resampled = cropped.resample(
-        target_area_definition(),
+        web_mercator_area_definition(),
         datasets=["HRV"],
         resampler="nearest",
         radius_of_influence=5000,

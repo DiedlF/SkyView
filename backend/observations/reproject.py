@@ -90,6 +90,39 @@ def target_area_definition(grid: GridSpec = TARGET_GRID):
     )
 
 
+def web_mercator_area_definition(grid: GridSpec = TARGET_GRID):
+    """Return a north-up EPSG:3857 (Web Mercator) area for the grid's geo corners.
+
+    The Leaflet basemap is Web Mercator, and ``L.imageOverlay`` stretches the
+    frame *linearly in projected (Mercator) pixels* between the corner lat/lons.
+    So the frame must itself be uniform in Mercator metres to line up with the
+    map. An equirectangular (uniform-in-latitude) frame is displaced by up to
+    ~100 km N-S at mid latitudes — the visible mismatch against the basemap.
+
+    The served bbox is unchanged: corners map 1:1 between lat/lon and Mercator,
+    so the frontend still places the image at [lat_min/lon_min .. lat_max/lon_max].
+    """
+    import pyproj
+    from pyresample.geometry import AreaDefinition
+
+    to_merc = pyproj.Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+    x_min, y_min = to_merc.transform(grid.lon_min, grid.lat_min)
+    x_max, y_max = to_merc.transform(grid.lon_max, grid.lat_max)
+
+    width = grid.n_lon
+    # Square-ish Mercator pixels: scale height to the projected aspect ratio.
+    height = max(1, int(round(width * (y_max - y_min) / (x_max - x_min))))
+    return AreaDefinition(
+        "skyview_webmerc",
+        "SkyView Web Mercator observation grid",
+        "webmerc",
+        "EPSG:3857",
+        width,
+        height,
+        (x_min, y_min, x_max, y_max),
+    )
+
+
 def odim_area_definition(where: dict, fallback_shape: tuple[int, int]):
     """Build a pyresample source area from ODIM Cartesian ``/where`` metadata."""
     import pyproj
@@ -152,7 +185,7 @@ def reproject_odim(phys, where: dict, grid: GridSpec = TARGET_GRID):
 
     src = np.asarray(phys, dtype="float32")
     src_def = odim_area_definition(where, src.shape)
-    tgt_def = target_area_definition(grid)
+    tgt_def = web_mercator_area_definition(grid)
     north_up = kd_tree.resample_nearest(
         src_def,
         src,

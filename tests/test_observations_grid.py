@@ -21,6 +21,7 @@ from observations.reproject import (  # noqa: E402
     decode_attr,
     reproject_odim,
     target_area_definition,
+    web_mercator_area_definition,
 )
 
 
@@ -70,6 +71,32 @@ def test_target_area_uses_grid_centers():
     assert list(area.projection_x_coords) == pytest.approx([10.5, 11.5])
     # Pyresample AreaDefinition rows are north-to-south for image output.
     assert list(area.projection_y_coords) == pytest.approx([1.5, 0.5])
+
+
+def test_web_mercator_area_matches_basemap_projection():
+    pytest.importorskip("pyresample")
+    pytest.importorskip("pyproj")
+    import pyproj
+
+    g = GridSpec()  # default obs window
+    area = web_mercator_area_definition(g)
+
+    # EPSG:3857 so frames are uniform in Mercator metres like the Leaflet basemap.
+    assert area.crs.to_epsg() == 3857
+
+    # Extent corners equal the grid's geographic corners transformed to 3857.
+    to_merc = pyproj.Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+    x_min, y_min = to_merc.transform(g.lon_min, g.lat_min)
+    x_max, y_max = to_merc.transform(g.lon_max, g.lat_max)
+    assert list(area.area_extent) == pytest.approx([x_min, y_min, x_max, y_max])
+
+    # The image corner lon/lats round-trip back to the served bbox corners, so
+    # L.imageOverlay placement (which uses those lat/lons) stays correct.
+    lons, lats = area.get_lonlats()
+    assert float(lats[0, 0]) == pytest.approx(g.lat_max, abs=0.02)   # top row = north
+    assert float(lats[-1, 0]) == pytest.approx(g.lat_min, abs=0.02)  # bottom row = south
+    assert float(lons[0, 0]) == pytest.approx(g.lon_min, abs=0.02)
+    assert float(lons[0, -1]) == pytest.approx(g.lon_max, abs=0.02)
 
 
 def test_reproject_odim_respects_pixel_corner_extent():
