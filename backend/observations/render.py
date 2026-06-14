@@ -50,6 +50,31 @@ def render_radar_dbz_png(field, out_png: Path) -> Path:
     return out_png
 
 
+def _save_grayscale_png(data, out_png: Path, *, label: str) -> Path:
+    """Percentile-stretch a reflectance field to an 8-bit grayscale PNG.
+
+    ``data`` is the resampled, north-up SkyView-grid array (NaN off-disk). The
+    0.5/99.8 percentile stretch matches across both visible products so MSG HRV
+    and MTG vis_06 frames look comparable side-by-side.
+    """
+    import numpy as np
+    from PIL import Image
+
+    data = np.asarray(data, dtype="float32")
+    finite = np.isfinite(data)
+    if not np.any(finite):
+        raise ValueError(f"{label} scene has no finite pixels in requested bbox")
+
+    lo = float(np.nanpercentile(data[finite], 0.5))
+    hi = float(np.nanpercentile(data[finite], 99.8))
+    scaled = np.clip((data - lo) / max(hi - lo, 1e-6), 0.0, 1.0)
+    scaled[~finite] = 0.0
+
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray((scaled * 255.0).astype("uint8"), mode="L").save(out_png, optimize=True)
+    return out_png
+
+
 def render_satellite_hrv_png(
     native_file: Path,
     out_png: Path,
@@ -57,8 +82,6 @@ def render_satellite_hrv_png(
     bbox: tuple[float, float, float, float],
 ) -> Path:
     """Render MSG SEVIRI HRV as a north-up SkyView-grid grayscale PNG."""
-    import numpy as np
-    from PIL import Image
     from satpy import Scene
 
     from .reproject import web_mercator_area_definition
@@ -72,16 +95,33 @@ def render_satellite_hrv_png(
         resampler="nearest",
         radius_of_influence=5000,
     )
-    data = np.asarray(resampled["HRV"].values, dtype="float32")
-    finite = np.isfinite(data)
-    if not np.any(finite):
-        raise ValueError("HRV scene has no finite pixels in requested bbox")
+    return _save_grayscale_png(resampled["HRV"].values, out_png, label="HRV")
 
-    lo = float(np.nanpercentile(data[finite], 0.5))
-    hi = float(np.nanpercentile(data[finite], 99.8))
-    scaled = np.clip((data - lo) / max(hi - lo, 1e-6), 0.0, 1.0)
-    scaled[~finite] = 0.0
 
-    out_png.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray((scaled * 255.0).astype("uint8"), mode="L").save(out_png, optimize=True)
-    return out_png
+def render_fci_vis_png(
+    chunk_files,
+    out_png: Path,
+    *,
+    bbox: tuple[float, float, float, float],
+    channel: str = "vis_06",
+) -> Path:
+    """Render MTG-I1 FCI ``vis_06`` as a north-up SkyView-grid grayscale PNG.
+
+    ``chunk_files`` is the list of FCI L1c chunk NetCDF files for one repeat
+    cycle. The scene is cropped to ``bbox`` before resampling so only the Europe
+    region of the (very large) full disk is decoded into the target grid.
+    """
+    from satpy import Scene
+
+    from .reproject import web_mercator_area_definition
+
+    scn = Scene(reader="fci_l1c_nc", filenames=[str(f) for f in chunk_files])
+    scn.load([channel], upper_right_corner="NE")
+    cropped = scn.crop(ll_bbox=bbox)
+    resampled = cropped.resample(
+        web_mercator_area_definition(),
+        datasets=[channel],
+        resampler="nearest",
+        radius_of_influence=2000,
+    )
+    return _save_grayscale_png(resampled[channel].values, out_png, label=channel)

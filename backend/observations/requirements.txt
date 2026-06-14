@@ -9,13 +9,13 @@ Pillow>=10.0.0       # derived PNG render cache
 h5py>=3.8            # ODIM HDF5 radar composites
 boto3>=1.34          # unsigned S3 fallback for OPERA 24h cache
 eumdac>=3.0          # EUMETSAT Data Store (satellite)
-satpy[seviri]>=0.60  # MSG SEVIRI HRV decode/render
+satpy[seviri]>=0.60  # MSG SEVIRI HRV decode/render; fci_l1c_nc reader for MTG FCI
+netCDF4>=1.6         # MTG-I1 FCI L1c chunk NetCDF decode (fci_l1c_nc reader)
 
 # Reprojection (Phase 1): Lambert EA / geostationary -> regular lat/lon
 pyproj>=3.6
 pyresample>=1.27
 
 # Optional, for diagnostics and nicer ODIM reading:
-# netCDF4>=1.6
 # wradlib>=2.0
 # paho-mqtt>=1.6     # Phase 4 push trigger

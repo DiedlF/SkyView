@@ -152,6 +152,12 @@ licence). Caveats learned in live testing (2026-06-12):
 - Accepting other licences (e.g. the MSG Cloud Mask) does **not** cover the
   image-data NRT licence — accept it on the `MSG15-RSS` collection specifically.
 - Acceptance can take **up to ~1 h** to propagate to the API gateway.
+- The **MTG-I1 FCI** comparison layer adds a second licence-gated collection,
+  **`EO:EUM:DAT:0665`** (FCI L1c HRFI, the `vis_06` source; `EUCOMP_MTG_COLLECTION`
+  overridable). Accept its NRT licence the same way — it is independent of the
+  `MSG15-RSS` acceptance. Note FCI L1c products are large (one ZIP per repeat
+  cycle); the ingest de-duplicates before downloading, so the licence/download
+  path is only exercised on a genuinely new cycle.
 - Auth/search succeed before the licence is accepted; only the **download**
   401/403s — so a passing `eumetsat_auth.py` does not by itself prove you can
   pull product files.

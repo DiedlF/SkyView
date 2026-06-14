@@ -56,6 +56,7 @@ DATA_ROOT = Path(
 # Derived render products land under these source directories.
 RADAR_DIR = DATA_ROOT / "radar"
 SAT_DIR = DATA_ROOT / "satellite"
+MTG_DIR = DATA_ROOT / "mtg"
 STATE_DIR = DATA_ROOT / ".state"  # last-seen markers for the poller
 TMP_DIR = DATA_ROOT / "tmp"
 
@@ -129,14 +130,57 @@ class SatelliteConfig:
     roi_bbox: tuple[float, float, float, float] = (-15.0, 32.0, 45.0, 72.0)
 
 
+# --------------------------------------------------------------------------
+# Satellite (new generation): MTG-I1 (Meteosat-12) FCI via the Data Store
+# --------------------------------------------------------------------------
+# Separate source from MSG RSS so the two render side-by-side for comparison.
+# MTG-I1 sits at the 0° prime position (true nadir over Europe -> far less of
+# the inclined-orbit cloud parallax that MSG-4 RSS shows). FCI has no broadband
+# HRV; the closest high-res visible analogue to SEVIRI HRV is the ``vis_06``
+# channel (0.5 km in HRFI). FD repeat cycle is 10 minutes, so this is a context/
+# comparison layer, not a 5-minute loop match for radar.
+#
+# IMPORTANT (cost): the full FCI L1c stream is ~440 GB/day. Two guards keep this
+# VPS-safe: (1) ingest de-duplicates against the manifest BEFORE downloading (see
+# ingest_mtg), so a frequent cron tick only fetches genuinely new cycles; and
+# (2) only the northern (Europe) chunks are downloaded as individual Data Store
+# entries (see ``chunk_fraction`` below), not the whole disk.
+@dataclass(frozen=True)
+class MtgConfig:
+    # Shares EUMDAC credentials with the MSG source.
+    consumer_key: str = os.environ.get("EUMETSAT_CONSUMER_KEY", "")
+    consumer_secret: str = os.environ.get("EUMETSAT_CONSUMER_SECRET", "")
+
+    # Collection IDs (confirm via `eumdac describe`):
+    #   FCI L1c HRFI (0.5 km vis_06):  "EO:EUM:DAT:0665"   (default; high-res)
+    #   FCI L1c FDHSI (1 km vis_06):   "EO:EUM:DAT:0662"
+    collection_id: str = os.environ.get("EUCOMP_MTG_COLLECTION", "EO:EUM:DAT:0665")
+    channel: str = os.environ.get("EUCOMP_MTG_CHANNEL", "vis_06")
+    cadence_seconds: int = 600  # FD repeat cycle (10 min)
+    poll_interval: int = 120
+
+    # Chunk subsetting (bandwidth/disk control): an FCI L1c full disk is split
+    # into many chunks stacked south->north; Europe (40–60°N) is the northern
+    # band. We download only the top ``chunk_fraction`` of body chunks (plus the
+    # trailer) instead of the whole disk. 0.35 ≈ EUMETSAT's "Q4" northern-quarter
+    # coverage with margin on the southern (40°N) edge. ``EUCOMP_MTG_CHUNKS`` pins
+    # an explicit range (e.g. "29-40") if you know the product's chunk layout.
+    chunk_fraction: float = float(os.environ.get("EUCOMP_MTG_CHUNK_FRACTION", "0.35"))
+    chunks: str = os.environ.get("EUCOMP_MTG_CHUNKS", "")
+
+    # Region of interest (lon/lat bbox) for cropping to Europe before resample.
+    roi_bbox: tuple[float, float, float, float] = (-15.0, 32.0, 45.0, 72.0)
+
+
 @dataclass(frozen=True)
 class Config:
     radar: RadarConfig = field(default_factory=RadarConfig)
     satellite: SatelliteConfig = field(default_factory=SatelliteConfig)
+    mtg: MtgConfig = field(default_factory=MtgConfig)
 
 
 def ensure_dirs() -> None:
-    for d in (RADAR_DIR, SAT_DIR, STATE_DIR, TMP_DIR):
+    for d in (RADAR_DIR, SAT_DIR, MTG_DIR, STATE_DIR, TMP_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 

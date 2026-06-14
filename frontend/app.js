@@ -24,12 +24,14 @@ let windEnabled = false;
 let windLevel = '10m';
 let modelCapabilities = {};  // Store model capabilities from API
 const OBS_CONFIG = {
-  radar: { product: 'radar_dbz', checkboxId: 'layer-obs-radar', pane: 'skyviewObsRadarPane', opacity: 0.72 },
-  satellite: { product: 'hrv', checkboxId: 'layer-obs-satellite', pane: 'skyviewObsSatellitePane', opacity: 0.68 },
+  radar: { product: 'radar_dbz', checkboxId: 'layer-obs-radar', pane: 'skyviewObsRadarPane', opacity: 0.72, label: 'Radar' },
+  satellite: { product: 'hrv', checkboxId: 'layer-obs-satellite', pane: 'skyviewObsSatellitePane', opacity: 0.68, label: 'Sat' },
+  mtg: { product: 'vis_06', checkboxId: 'layer-obs-mtg', pane: 'skyviewObsMtgPane', opacity: 0.68, label: 'MTG' },
 };
 const obsState = {
   radar: { enabled: false, frames: [], bbox: null, layer: null },
   satellite: { enabled: false, frames: [], bbox: null, layer: null },
+  mtg: { enabled: false, frames: [], bbox: null, layer: null },
   activeSource: null,
   frameIndex: 0,
   playing: false,
@@ -187,6 +189,7 @@ const I18N = {
     'layer.observations.title': 'Observations',
     'layer.obs.radar': 'Radar',
     'layer.obs.satellite': 'Satellite HRV',
+    'layer.obs.mtg': 'Satellite MTG (VIS)',
     'layer.overlay.title': 'Overlay (ICON)',
     'layer.none': 'None',
     'layer.precip': 'Precipitation',
@@ -318,6 +321,7 @@ const I18N = {
     'layer.observations.title': 'Beobachtungen',
     'layer.obs.radar': 'Radar',
     'layer.obs.satellite': 'Satellit HRV',
+    'layer.obs.mtg': 'Satellit MTG (VIS)',
     'layer.overlay.title': 'Overlay (ICON)',
     'layer.none': 'Keines',
     'layer.precip': 'Niederschlag',
@@ -677,6 +681,9 @@ map.getPane('skyviewRasterPane').style.pointerEvents = 'none';
 map.createPane('skyviewObsSatellitePane');
 map.getPane('skyviewObsSatellitePane').style.zIndex = '330';
 map.getPane('skyviewObsSatellitePane').style.pointerEvents = 'none';
+map.createPane('skyviewObsMtgPane');
+map.getPane('skyviewObsMtgPane').style.zIndex = '340';
+map.getPane('skyviewObsMtgPane').style.pointerEvents = 'none';
 map.createPane('skyviewObsRadarPane');
 map.getPane('skyviewObsRadarPane').style.zIndex = '370';
 map.getPane('skyviewObsRadarPane').style.pointerEvents = 'none';
@@ -1758,9 +1765,7 @@ function anyObservationEnabled() {
 
 function activeObservationSource() {
   if (obsState.activeSource && obsState[obsState.activeSource]?.enabled) return obsState.activeSource;
-  if (obsState.radar.enabled) return 'radar';
-  if (obsState.satellite.enabled) return 'satellite';
-  return null;
+  return Object.keys(OBS_CONFIG).find(source => obsState[source].enabled) || null;
 }
 
 function observationBounds(bbox) {
@@ -1882,7 +1887,7 @@ function updateObservationTimebar() {
   const mm = d ? String(d.getUTCMinutes()).padStart(2, '0') : '--';
   const age = Number(frame?.age_s);
   const ageText = Number.isFinite(age) ? ` · ${Math.round(age / 60)} min` : '';
-  label.textContent = `${source === 'radar' ? 'Radar' : 'Sat'} ${hh}:${mm} UTC${ageText}`;
+  label.textContent = `${OBS_CONFIG[source]?.label || source} ${hh}:${mm} UTC${ageText}`;
   label.classList.toggle('stale', Number.isFinite(age) && age > 600);
   playBtn.textContent = obsState.playing ? 'Ⅱ' : '▶';
   bar.style.display = 'flex';
@@ -1891,6 +1896,7 @@ function updateObservationTimebar() {
 function renderObservations() {
   const target = selectedObservationTime();
   updateObservationLayer('satellite', target);
+  updateObservationLayer('mtg', target);
   updateObservationLayer('radar', target);
   updateObservationTimebar();
 }
@@ -2205,6 +2211,11 @@ if (obsRadarToggle) {
 const obsSatelliteToggle = document.getElementById('layer-obs-satellite');
 if (obsSatelliteToggle) {
   obsSatelliteToggle.addEventListener('change', (e) => setObservationEnabled('satellite', e.target.checked));
+}
+
+const obsMtgToggle = document.getElementById('layer-obs-mtg');
+if (obsMtgToggle) {
+  obsMtgToggle.addEventListener('change', (e) => setObservationEnabled('mtg', e.target.checked));
 }
 
 const obsFrameSlider = document.getElementById('obs-frame-slider');

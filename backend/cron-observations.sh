@@ -1,7 +1,8 @@
 #!/bin/bash
 # Skyview observation ingest script.
-# Fetches live OPERA radar + MSG RSS satellite, stores derived render frames,
-# and prunes via the observation ring buffer.
+# Fetches live OPERA radar + MSG RSS satellite + MTG-I1 FCI, stores derived
+# render frames, and prunes via the observation ring buffer. The MTG source
+# de-duplicates before downloading, so frequent ticks only fetch new cycles.
 
 cd "$(dirname "$0")/.."
 
@@ -21,4 +22,4 @@ if [ ! -x "$PYTHON_BIN" ]; then
     PYTHON_BIN="python3"
 fi
 
-PYTHONPATH="${PYTHONPATH:-backend}" "$PYTHON_BIN" -m backend.observations.ingest_obs --source both --log-level "${SKYVIEW_OBS_LOG_LEVEL:-INFO}"
+PYTHONPATH="${PYTHONPATH:-backend}" "$PYTHON_BIN" -m backend.observations.ingest_obs --source "${SKYVIEW_OBS_SOURCE:-all}" --log-level "${SKYVIEW_OBS_LOG_LEVEL:-INFO}"

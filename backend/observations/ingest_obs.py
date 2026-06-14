@@ -3,7 +3,8 @@
 Run once (cron-friendly) or for a single source:
 
     python -m backend.observations.ingest_obs --source radar
-    python -m backend.observations.ingest_obs --source both --once
+    python -m backend.observations.ingest_obs --source mtg --once
+    python -m backend.observations.ingest_obs --source all --once
 
 Each source is isolated: a failure in one never aborts the other. De-duplication
 is by frame id (a frame already in the manifest is skipped). This is the cron
@@ -116,25 +117,104 @@ def ingest_satellite(cfg: Config) -> Optional[str]:
         return fid
 
 
-def run_once(source: str, cfg: Optional[Config] = None) -> dict:
-    """Ingest one cycle for ``source`` in {radar, satellite, both}.
+def ingest_mtg(cfg: Config) -> Optional[str]:
+    """Fetch the newest MTG-I1 FCI cycle, render vis_06, and store. Returns frame id.
 
-    Returns a dict of ``{source: frame_id_or_None}``; never raises for a single
-    source failure (errors are logged and recorded as None).
+    Two cost guards: (1) de-duplicate against the manifest using the search
+    result's sensing time BEFORE any download, and (2) download only the northern
+    (Europe) chunk entries, not the full disk.
+    """
+    from .render import render_fci_vis_png
+    from .satellite_mtg import (
+        MtgSource,
+        parse_chunk_spec,
+        product_sensing_time,
+        select_europe_chunks,
+    )
+
+    src = MtgSource(cfg.mtg)
+    product = src.search_latest()
+    if product is None:
+        log.info("mtg: no new product available")
+        return None
+
+    when = product_sensing_time(product)
+    if when is None:
+        log.warning("mtg: could not determine sensing time for %s", product)
+        return None
+    fid = store.frame_id(when)
+    if store.has_frame("mtg", fid):
+        log.info("mtg: frame %s already ingested; skipping download", fid)
+        return None
+
+    entries = src.product_entries(product)
+    selected = select_europe_chunks(
+        entries,
+        fraction=cfg.mtg.chunk_fraction,
+        explicit=parse_chunk_spec(cfg.mtg.chunks),
+    )
+    if not selected:
+        log.warning("mtg: product %s exposed no chunk entries to download", product)
+        return None
+    log.info("mtg: downloading %d/%d chunks for %s", len(selected), len(entries), fid)
+
+    TMP_DIR.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix="mtg-", dir=str(TMP_DIR)) as tmp:
+        chunks = src.download_entries(product, selected, Path(tmp))
+        if not chunks:
+            log.warning("mtg: no chunk files downloaded for %s", product)
+            return None
+
+        tmp_png = Path(tmp) / "mtg_vis06.png"
+        render_fci_vis_png(chunks, tmp_png, bbox=cfg.mtg.roi_bbox, channel=cfg.mtg.channel)
+        store.write_frame_render(
+            "mtg",
+            when,
+            cfg.mtg.channel,
+            tmp_png,
+            attrs={
+                "channel": cfg.mtg.channel,
+                "collection_id": cfg.mtg.collection_id,
+                "satellite": "MTG-I1",
+                "chunk_count": len(chunks),
+                "cache": "derived_render",
+            },
+            cadence_seconds=cfg.mtg.cadence_seconds,
+        )
+        return fid
+
+
+_INGESTORS = {
+    "radar": ingest_radar,
+    "satellite": ingest_satellite,
+    "mtg": ingest_mtg,
+}
+
+
+def run_once(source: str, cfg: Optional[Config] = None) -> dict:
+    """Ingest one cycle for ``source`` in {radar, satellite, mtg, both, all}.
+
+    ``both`` = radar + satellite (legacy); ``all`` = every source. Returns a
+    dict of ``{source: frame_id_or_None}``; never raises for a single source
+    failure (errors are logged and recorded as None).
     """
     ensure_dirs()
     cfg = cfg or Config()
     results: dict[str, Optional[str]] = {}
-    targets = ["radar", "satellite"] if source == "both" else [source]
+    if source == "both":
+        targets = ["radar", "satellite"]
+    elif source == "all":
+        targets = list(_INGESTORS)
+    else:
+        targets = [source]
     for tgt in targets:
+        ingest = _INGESTORS.get(tgt)
+        if ingest is None:
+            log.error("unknown source: %s", tgt)
+            results[tgt] = None
+            continue
         try:
-            if tgt == "radar":
-                results[tgt] = ingest_radar(cfg)
-            elif tgt == "satellite":
-                results[tgt] = ingest_satellite(cfg)
-            else:
-                log.error("unknown source: %s", tgt)
-                results[tgt] = None
+            results[tgt] = ingest(cfg)
         except Exception as exc:  # noqa: BLE001 - isolate per-source failures
             log.error("%s ingest failed: %s", tgt, exc)
             results[tgt] = None
@@ -143,7 +223,7 @@ def run_once(source: str, cfg: Optional[Config] = None) -> dict:
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="SkyView observation ingest (fetch→reproject→store).")
-    parser.add_argument("--source", choices=["radar", "satellite", "both"], default="radar")
+    parser.add_argument("--source", choices=["radar", "satellite", "mtg", "both", "all"], default="radar")
     parser.add_argument("--once", action="store_true", help="Run a single cycle and exit (default).")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(argv)

@@ -73,7 +73,7 @@ def test_served_bbox_matches_render_grid():
         TARGET_GRID.lat_max,
         TARGET_GRID.lon_max,
     ]
-    for source in ("radar", "satellite"):
+    for source in ("radar", "satellite", "mtg"):
         assert SOURCE_PRODUCTS[source]["bbox"] == expected
 
 

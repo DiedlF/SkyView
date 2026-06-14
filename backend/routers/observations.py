@@ -34,6 +34,12 @@ SOURCE_PRODUCTS = {
         "label": "MSG RSS HRV",
         "bbox": list(_GRID_BBOX),
     },
+    "mtg": {
+        "default": "vis_06",
+        "products": {"vis_06"},
+        "label": "MTG-I1 FCI VIS",
+        "bbox": list(_GRID_BBOX),
+    },
 }
 
 
