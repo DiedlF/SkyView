@@ -166,6 +166,17 @@ licence). Caveats learned in live testing (2026-06-12):
   401/403s — so a passing `eumetsat_auth.py` does not by itself prove you can
   pull product files.
 
+### EUCOMP_RADAR_API_KEY (optional — radar only)
+
+The EUMETNET OPERA radar layer uses MeteoGate's EDR API, which is **open but
+rate-limited for anonymous access** (HTTP 429); the ingest then falls back to the
+open, un-throttled S3 24h cache, so radar still works without a key. A **free**
+MeteoGate key raises the EDR limit and stops the recurring 429 warnings. Get one
+at <https://devportal.meteogate.eu/> (register an app), then set
+`EUCOMP_RADAR_API_KEY` in `backend/.env`. It is sent as a request header
+(`EUCOMP_RADAR_API_KEY_HEADER`, default `apikey`). This is **not** an EUMETSAT
+Data Store credential and is unrelated to the `EUMETSAT_CONSUMER_*` keys.
+
 ### Provisioning
 
 ```bash
