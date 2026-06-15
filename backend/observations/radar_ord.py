@@ -43,10 +43,14 @@ class RadarSource:
 
     # -- fetch via EDR API ------------------------------------------------
     def fetch_latest_edr(self, dest_dir: Path = RADAR_DIR) -> Optional[Path]:
-        """Fetch the most recent CIRRUS max-reflectivity composite via EDR.
+        """Fetch the most recent OPERA max-reflectivity composite via EDR.
 
-        Queries the observations 'items' endpoint for OPERA composites over a
-        short trailing window, then downloads the newest feature's ODIM asset.
+        Uses the OGC-EDR ``locations/{id}`` query for the OPERA composite over a
+        short trailing window (the ``items?id=`` form returns HTTP 422). The
+        response is a CoverageJSON document whose ``links`` carry the ODIM
+        ``.h5`` download href (which itself points at the open S3 cache); we pick
+        the newest and download it. ``f=CoverageJSON`` is the only accepted
+        output format for this endpoint.
         """
         dest_dir.mkdir(parents=True, exist_ok=True)
         now = dt.datetime.now(dt.timezone.utc)
@@ -55,14 +59,13 @@ class RadarSource:
             f"{start.strftime('%Y-%m-%dT%H:%MZ')}/{now.strftime('%Y-%m-%dT%H:%MZ')}"
         )
 
-        url = f"{self.cfg.edr_base}/collections/observations/items"
+        url = f"{self.cfg.edr_base}/collections/observations/locations/{self.cfg.location_id}"
         params = {
-            "id": self.cfg.location_id,               # 0-*-*-OPERA
             "standard_name": self.cfg.standard_name,  # DBZH
             "method": self.cfg.method,                # comp
-            "format": self.cfg.odim_format,           # ODIM
+            "format": self.cfg.odim_format,           # ODIM (data file format)
             "datetime": datetime_range,
-            "f": "json",
+            "f": "CoverageJSON",                      # only accepted value here
         }
         r = self.session.get(url, params=params, timeout=60)
         if r.status_code == 204:
@@ -70,19 +73,12 @@ class RadarSource:
             return None
         r.raise_for_status()
 
-        features = r.json().get("features", [])
-        if not features:
-            log.info("No composite features returned")
-            return None
-
-        feat = newest_feature(features)
-        href = feat.get("properties", {}).get("data") or first_asset_href(feat)
+        href = newest_odim_href(odim_hrefs_from_coveragejson(r.json()))
         if not href:
-            log.warning("Composite feature had no data href")
+            log.warning("EDR CoverageJSON had no ODIM (.h5) download link")
             return None
 
-        ts = feat.get("properties", {}).get("datetime", "latest")
-        out = dest_dir / f"opera_cirrus_dbzh_{sanitize_timestamp(ts)}.h5"
+        out = dest_dir / Path(href).name
         return self._download(href, out)
 
     # -- fetch via unsigned S3 cache -------------------------------------
@@ -246,21 +242,28 @@ def select_newest_composite_key(keys, standard_name: str) -> Optional[str]:
     return parsed[-1]["key"]
 
 
-def newest_feature(features: list[dict]) -> dict:
-    def key(feat):
-        return feat.get("properties", {}).get("datetime", "")
-    return sorted(features, key=key)[-1]
+def odim_hrefs_from_coveragejson(doc: dict) -> list[str]:
+    """Collect the ODIM ``.h5`` download hrefs from a CoverageJSON ``links`` list.
+
+    The OPERA composite ``locations`` response carries the data file(s) as
+    ``links`` entries whose href ends in ``.h5`` (alongside docs/license links we
+    ignore). The href points at the open S3 cache, so the download itself is an
+    unauthenticated GET.
+    """
+    hrefs = []
+    for link in doc.get("links") or []:
+        href = link.get("href") if isinstance(link, dict) else None
+        if href and href.lower().endswith(".h5"):
+            hrefs.append(href)
+    return hrefs
 
 
-def first_asset_href(feature: dict) -> Optional[str]:
-    for asset in (feature.get("assets") or {}).values():
-        if "href" in asset:
-            return asset["href"]
-    for link in feature.get("links", []):
-        if link.get("rel") in ("data", "enclosure") and "href" in link:
-            return link["href"]
-    return None
-
-
-def sanitize_timestamp(ts: str) -> str:
-    return ts.replace(":", "").replace("-", "").replace("T", "_").rstrip("Z")
+def newest_odim_href(hrefs: list[str]) -> Optional[str]:
+    """Return the newest OPERA composite href by its embedded timestamp."""
+    if not hrefs:
+        return None
+    parsed = [(parse_composite_key(h), h) for h in hrefs]
+    dated = [(p["timestamp"], h) for p, h in parsed if p]
+    if not dated:
+        return hrefs[-1]  # unparseable names: fall back to last listed
+    return max(dated, key=lambda th: th[0])[1]

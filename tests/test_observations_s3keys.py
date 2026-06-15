@@ -12,11 +12,47 @@ BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..", "backend")
 sys.path.insert(0, BACKEND_DIR)
 
 from observations.radar_ord import (  # noqa: E402
+    newest_odim_href,
+    odim_hrefs_from_coveragejson,
     parse_composite_key,
     select_newest_composite_key,
 )
 
 PREFIX = "2026/06/03/OPERA/COMP/"
+
+# A trimmed CoverageJSON like the live OPERA locations response: the ODIM file
+# is a `.h5` link alongside docs/license links we must ignore.
+_COVERAGE_JSON = {
+    "type": "Coverage",
+    "links": [
+        {"href": "https://api.meteogate.eu/eu-eumetnet-weather-radar/docs", "rel": "service-doc"},
+        {
+            "href": "https://s3.waw3-1.cloudferro.com/openradar-24h/2026/06/15/OPERA/COMP/OPERA@20260615T1045@0@DBZH.h5",
+            "rel": "data",
+        },
+        {
+            "href": "https://s3.waw3-1.cloudferro.com/openradar-24h/2026/06/15/OPERA/COMP/OPERA@20260615T1050@0@DBZH.h5",
+            "rel": "data",
+        },
+        {"href": "https://www.eumetnet.eu/observations/weather-radar-network/", "rel": "license"},
+    ],
+}
+
+
+def test_odim_hrefs_ignores_non_data_links():
+    hrefs = odim_hrefs_from_coveragejson(_COVERAGE_JSON)
+    assert all(h.endswith(".h5") for h in hrefs)
+    assert len(hrefs) == 2
+
+
+def test_newest_odim_href_picks_latest_timestamp():
+    href = newest_odim_href(odim_hrefs_from_coveragejson(_COVERAGE_JSON))
+    assert href.endswith("OPERA@20260615T1050@0@DBZH.h5")
+
+
+def test_newest_odim_href_empty():
+    assert newest_odim_href([]) is None
+    assert odim_hrefs_from_coveragejson({"links": []}) == []
 
 
 def test_parse_valid_key():
