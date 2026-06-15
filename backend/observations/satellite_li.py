@@ -18,7 +18,6 @@ from __future__ import annotations
 import datetime as dt
 import logging
 from pathlib import Path
-from typing import Optional
 
 from .config import LI_DIR, LiConfig
 # product_sensing_time / read_fci_valid_time are generic WMO-filename helpers
