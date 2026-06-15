@@ -158,6 +158,10 @@ licence). Caveats learned in live testing (2026-06-12):
   `MSG15-RSS` acceptance. Note FCI L1c products are large (one ZIP per repeat
   cycle); the ingest de-duplicates before downloading, so the licence/download
   path is only exercised on a genuinely new cycle.
+- The **MTG-I1 LI** lightning overlay adds a third licence-gated collection,
+  **`EO:EUM:DAT:0686`** (LI L2 Accumulated Flashes; `EUCOMP_LI_COLLECTION`
+  overridable). Accept its NRT licence independently. These products are small
+  (~2–3 MB per 10-min cycle), so no chunk subsetting is needed.
 - Auth/search succeed before the licence is accepted; only the **download**
   401/403s — so a passing `eumetsat_auth.py` does not by itself prove you can
   pull product files.

@@ -98,6 +98,64 @@ def render_satellite_hrv_png(
     return _save_grayscale_png(resampled["HRV"].values, out_png, label="HRV")
 
 
+def render_li_accum_png(
+    nc_files,
+    out_png: Path,
+    *,
+    bbox: tuple[float, float, float, float],
+    dataset: str = "flash_accumulation",
+) -> Path:
+    """Render MTG-I1 LI accumulated flashes as a coloured, transparent RGBA overlay.
+
+    The accumulated product is a sparse 2-D field on the FCI 2 km geostationary
+    grid (only flash cells are finite). We crop to ``bbox``, resample to the
+    SkyView Web-Mercator grid, and colour-map flash count to a yellow→white
+    lightning palette, fully transparent where there are no flashes — so it
+    overlays cleanly on top of either the HRV or vis_06 image.
+    """
+    import numpy as np
+    from PIL import Image
+    from satpy import Scene
+
+    from .reproject import web_mercator_area_definition
+
+    scn = Scene(reader="li_l2_nc", filenames=[str(f) for f in nc_files])
+    scn.load([dataset])
+    cropped = scn.crop(ll_bbox=bbox)
+    resampled = cropped.resample(
+        web_mercator_area_definition(),
+        datasets=[dataset],
+        resampler="nearest",
+        radius_of_influence=4000,
+    )
+    data = np.asarray(resampled[dataset].values, dtype="float32")
+    # Target-grid latitudes are ascending south->north; image rows are north->south.
+    data = np.flipud(data)
+    flashes = np.isfinite(data) & (data > 0.0)
+
+    stops = np.asarray([1, 5, 20, 50, 100], dtype="float32")
+    colors = np.asarray(
+        [
+            (255, 255, 130, 200),  # 1   pale yellow
+            (255, 226, 60, 225),   # 5   yellow
+            (255, 165, 30, 240),   # 20  orange
+            (255, 85, 35, 250),    # 50  red-orange
+            (255, 255, 255, 255),  # 100 white-hot
+        ],
+        dtype="float32",
+    )
+
+    rgba = np.zeros((*data.shape, 4), dtype="uint8")
+    clipped = np.clip(np.where(flashes, data, stops[0]), stops[0], stops[-1])
+    for channel in range(4):
+        rgba[..., channel] = np.interp(clipped, stops, colors[:, channel]).astype("uint8")
+    rgba[~flashes] = (0, 0, 0, 0)
+
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(rgba, mode="RGBA").save(out_png, optimize=True)
+    return out_png
+
+
 def render_fci_vis_png(
     chunk_files,
     out_png: Path,

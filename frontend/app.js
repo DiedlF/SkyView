@@ -27,11 +27,13 @@ const OBS_CONFIG = {
   radar: { product: 'radar_dbz', checkboxId: 'layer-obs-radar', pane: 'skyviewObsRadarPane', opacity: 0.72, label: 'Radar' },
   satellite: { product: 'hrv', checkboxId: 'layer-obs-satellite', pane: 'skyviewObsSatellitePane', opacity: 0.68, label: 'Sat' },
   mtg: { product: 'vis_06', checkboxId: 'layer-obs-mtg', pane: 'skyviewObsMtgPane', opacity: 0.68, label: 'MTG' },
+  li: { product: 'af', checkboxId: 'layer-obs-li', pane: 'skyviewObsLightningPane', opacity: 0.95, label: 'LI' },
 };
 const obsState = {
   radar: { enabled: false, frames: [], bbox: null, layer: null },
   satellite: { enabled: false, frames: [], bbox: null, layer: null },
   mtg: { enabled: false, frames: [], bbox: null, layer: null },
+  li: { enabled: false, frames: [], bbox: null, layer: null },
   activeSource: null,
   frameIndex: 0,
   playing: false,
@@ -190,6 +192,7 @@ const I18N = {
     'layer.obs.radar': 'Radar',
     'layer.obs.satellite': 'Satellite HRV',
     'layer.obs.mtg': 'Satellite MTG-I1',
+    'layer.obs.li': 'Lightning (MTG-I1)',
     'layer.overlay.title': 'Overlay (ICON)',
     'layer.none': 'None',
     'layer.precip': 'Precipitation',
@@ -322,6 +325,7 @@ const I18N = {
     'layer.obs.radar': 'Radar',
     'layer.obs.satellite': 'Satellit HRV',
     'layer.obs.mtg': 'Satellit MTG-I1',
+    'layer.obs.li': 'Blitze (MTG-I1)',
     'layer.overlay.title': 'Overlay (ICON)',
     'layer.none': 'Keines',
     'layer.precip': 'Niederschlag',
@@ -687,6 +691,9 @@ map.getPane('skyviewObsMtgPane').style.pointerEvents = 'none';
 map.createPane('skyviewObsRadarPane');
 map.getPane('skyviewObsRadarPane').style.zIndex = '370';
 map.getPane('skyviewObsRadarPane').style.pointerEvents = 'none';
+map.createPane('skyviewObsLightningPane');
+map.getPane('skyviewObsLightningPane').style.zIndex = '380';
+map.getPane('skyviewObsLightningPane').style.pointerEvents = 'none';
 map.createPane('skyviewWindPane');
 map.getPane('skyviewWindPane').style.zIndex = '610';
 map.getPane('skyviewWindPane').style.pointerEvents = 'none';
@@ -1898,6 +1905,7 @@ function renderObservations() {
   updateObservationLayer('satellite', target);
   updateObservationLayer('mtg', target);
   updateObservationLayer('radar', target);
+  updateObservationLayer('li', target);
   updateObservationTimebar();
 }
 
@@ -2216,6 +2224,11 @@ if (obsSatelliteToggle) {
 const obsMtgToggle = document.getElementById('layer-obs-mtg');
 if (obsMtgToggle) {
   obsMtgToggle.addEventListener('change', (e) => setObservationEnabled('mtg', e.target.checked));
+}
+
+const obsLiToggle = document.getElementById('layer-obs-li');
+if (obsLiToggle) {
+  obsLiToggle.addEventListener('change', (e) => setObservationEnabled('li', e.target.checked));
 }
 
 const obsFrameSlider = document.getElementById('obs-frame-slider');

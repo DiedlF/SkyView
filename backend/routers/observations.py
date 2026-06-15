@@ -40,6 +40,12 @@ SOURCE_PRODUCTS = {
         "label": "MTG-I1 FCI VIS",
         "bbox": list(_GRID_BBOX),
     },
+    "li": {
+        "default": "af",
+        "products": {"af"},
+        "label": "MTG-I1 LI flashes",
+        "bbox": list(_GRID_BBOX),
+    },
 }
 
 

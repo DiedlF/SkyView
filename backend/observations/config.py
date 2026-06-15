@@ -57,6 +57,7 @@ DATA_ROOT = Path(
 RADAR_DIR = DATA_ROOT / "radar"
 SAT_DIR = DATA_ROOT / "satellite"
 MTG_DIR = DATA_ROOT / "mtg"
+LI_DIR = DATA_ROOT / "li"
 STATE_DIR = DATA_ROOT / ".state"  # last-seen markers for the poller
 TMP_DIR = DATA_ROOT / "tmp"
 
@@ -172,15 +173,48 @@ class MtgConfig:
     roi_bbox: tuple[float, float, float, float] = (-15.0, 32.0, 45.0, 72.0)
 
 
+# --------------------------------------------------------------------------
+# Lightning: MTG-I1 (Meteosat-12) Lightning Imager (LI) via the Data Store
+# --------------------------------------------------------------------------
+# LI is a separate optical lightning instrument on MTG-I1 (not an FCI channel),
+# so it renders as its own coloured, mostly-transparent overlay that sits on top
+# of whichever satellite/basemap layer is shown — it pairs equally with the MSG
+# HRV and the MTG vis_06 images. MSG/SEVIRI has no lightning sensor, so there is
+# no equivalent for the HRV layer beyond this same overlay.
+#
+# We use the gridded "Accumulated Flashes" (AF) product: a sparse 2-D field on
+# the FCI 2 km geostationary grid (10-min product, 30-s accumulation internally).
+# Cheap: one ~2–3 MB single-chunk product per cycle (~330 MB/day), so unlike FCI
+# there is no chunk subsetting — we just download the .nc and render it.
+@dataclass(frozen=True)
+class LiConfig:
+    # Shares EUMDAC credentials with the MSG/MTG sources.
+    consumer_key: str = os.environ.get("EUMETSAT_CONSUMER_KEY", "")
+    consumer_secret: str = os.environ.get("EUMETSAT_CONSUMER_SECRET", "")
+
+    # Collection IDs (confirm via `eumdac describe`):
+    #   LI L2 Accumulated Flashes (AF):       "EO:EUM:DAT:0686"  (default)
+    #   LI L2 Accumulated Flash Area (AFA):   "EO:EUM:DAT:0687"
+    #   LI L2 Accumulated Flash Radiance:     "EO:EUM:DAT:0688"
+    collection_id: str = os.environ.get("EUCOMP_LI_COLLECTION", "EO:EUM:DAT:0686")
+    dataset: str = os.environ.get("EUCOMP_LI_DATASET", "flash_accumulation")
+    cadence_seconds: int = 600  # AF product cadence (10 min)
+    poll_interval: int = 120
+
+    # Region of interest (lon/lat bbox) for cropping to Europe before resample.
+    roi_bbox: tuple[float, float, float, float] = (-15.0, 32.0, 45.0, 72.0)
+
+
 @dataclass(frozen=True)
 class Config:
     radar: RadarConfig = field(default_factory=RadarConfig)
     satellite: SatelliteConfig = field(default_factory=SatelliteConfig)
     mtg: MtgConfig = field(default_factory=MtgConfig)
+    li: LiConfig = field(default_factory=LiConfig)
 
 
 def ensure_dirs() -> None:
-    for d in (RADAR_DIR, SAT_DIR, MTG_DIR, STATE_DIR, TMP_DIR):
+    for d in (RADAR_DIR, SAT_DIR, MTG_DIR, LI_DIR, STATE_DIR, TMP_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 
