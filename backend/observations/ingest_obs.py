@@ -243,15 +243,50 @@ _INGESTORS = {
 }
 
 
+def _source_cadences(cfg: Config) -> dict[str, int]:
+    return {
+        "radar": cfg.radar.cadence_seconds,
+        "satellite": cfg.satellite.cadence_seconds,
+        "mtg": cfg.mtg.cadence_seconds,
+        "li": cfg.li.cadence_seconds,
+    }
+
+
+def fresh_within_cadence(
+    latest: Optional[dict], cadence_seconds: Optional[int], now: dt.datetime
+) -> bool:
+    """True if the newest stored frame is younger than one cadence.
+
+    When the latest frame is still within its cadence window, no new frame is
+    published yet, so there's nothing to fetch. Gating on this skips the upstream
+    request entirely — it stops the redundant re-downloads (and, for radar, the
+    EDR API hits that trip MeteoGate's anonymous rate limit) that happen because
+    the cron fires more often (2 min) than the products update (5–10 min).
+    """
+    if not latest or not cadence_seconds:
+        return False
+    fid = latest.get("frame_id")
+    if not fid:
+        return False
+    try:
+        when = store.parse_frame_id(str(fid))
+    except ValueError:
+        return False
+    return (now - when).total_seconds() < cadence_seconds
+
+
 def run_once(source: str, cfg: Optional[Config] = None) -> dict:
-    """Ingest one cycle for ``source`` in {radar, satellite, mtg, both, all}.
+    """Ingest one cycle for ``source`` in {radar, satellite, mtg, li, both, all}.
 
     ``both`` = radar + satellite (legacy); ``all`` = every source. Returns a
     dict of ``{source: frame_id_or_None}``; never raises for a single source
-    failure (errors are logged and recorded as None).
+    failure (errors are logged and recorded as None). Sources whose latest frame
+    is still within its cadence window are skipped without an upstream request.
     """
     ensure_dirs()
     cfg = cfg or Config()
+    cadences = _source_cadences(cfg)
+    now = dt.datetime.now(dt.timezone.utc)
     results: dict[str, Optional[str]] = {}
     if source == "both":
         targets = ["radar", "satellite"]
@@ -263,6 +298,10 @@ def run_once(source: str, cfg: Optional[Config] = None) -> dict:
         ingest = _INGESTORS.get(tgt)
         if ingest is None:
             log.error("unknown source: %s", tgt)
+            results[tgt] = None
+            continue
+        if fresh_within_cadence(store.latest_frame(tgt), cadences.get(tgt), now):
+            log.debug("%s: latest frame within cadence; skipping fetch", tgt)
             results[tgt] = None
             continue
         try:
