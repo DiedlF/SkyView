@@ -167,13 +167,16 @@ def render_fci_vis_png(
 
     ``chunk_files`` is the list of FCI L1c chunk NetCDF files for one repeat
     cycle. The scene is cropped to ``bbox`` before resampling so only the Europe
-    region of the (very large) full disk is decoded into the target grid.
+    region of the (very large) full disk is decoded into the target grid. TRAIL
+    chunks are dropped — the ``fci_l1c_nc`` reader can't open them (it only reads
+    BODY chunks) and passing them just logs a "Don't know how to open" warning.
     """
     from satpy import Scene
 
     from .reproject import web_mercator_area_definition
 
-    scn = Scene(reader="fci_l1c_nc", filenames=[str(f) for f in chunk_files])
+    body_files = [str(f) for f in chunk_files if "-TRAIL-" not in str(f).upper()]
+    scn = Scene(reader="fci_l1c_nc", filenames=body_files)
     scn.load([channel], upper_right_corner="NE")
     cropped = scn.crop(ll_bbox=bbox)
     resampled = cropped.resample(

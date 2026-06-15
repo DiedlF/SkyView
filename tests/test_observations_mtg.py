@@ -78,21 +78,22 @@ def test_parse_chunk_spec():
     assert parse_chunk_spec(None) is None
 
 
-def test_select_europe_chunks_keeps_northern_fraction_plus_trailer():
+def test_select_europe_chunks_keeps_northern_fraction_without_trailer():
     # 40 body chunks (1..40) + a named trailer. North = high numbers; 0.25 keeps
-    # the top 10 body chunks (31..40), and the trailer is always included.
+    # the top 10 body chunks (31..40). The TRAIL chunk is excluded — satpy can't
+    # read it, so passing it only produces a "Don't know how to open" warning.
     entries = [_chunk_name(n) for n in range(1, 41)] + [_chunk_name(41, kind="TRAIL")]
     selected = select_europe_chunks(entries, fraction=0.25)
-    nums = sorted(chunk_number(e) for e in selected if not is_trailer(e))
-    assert nums == list(range(31, 41))
-    assert any(is_trailer(e) for e in selected)
+    assert sorted(chunk_number(e) for e in selected) == list(range(31, 41))
+    assert not any(is_trailer(e) for e in selected)
 
 
-def test_select_europe_chunks_explicit_overrides_fraction():
+def test_select_europe_chunks_excludes_trailer_even_if_in_range():
+    # The trailer's chunk number (41) is the highest, but it must never be picked.
     entries = [_chunk_name(n) for n in range(1, 41)] + [_chunk_name(41, kind="TRAIL")]
-    selected = select_europe_chunks(entries, fraction=0.25, explicit={29, 30, 40})
-    nums = sorted(chunk_number(e) for e in selected if not is_trailer(e))
-    assert nums == [29, 30, 40]
+    selected = select_europe_chunks(entries, fraction=0.25, explicit={40, 41})
+    assert sorted(chunk_number(e) for e in selected) == [40]
+    assert not any(is_trailer(e) for e in selected)
 
 
 def test_select_europe_chunks_unknown_layout_falls_back_to_all():

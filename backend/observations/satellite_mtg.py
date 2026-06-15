@@ -160,16 +160,17 @@ def select_europe_chunks(
     fraction: float = 0.35,
     explicit: Optional[set[int]] = None,
 ) -> list[str]:
-    """Pick the FCI chunk entries covering the northern (Europe) band.
+    """Pick the FCI BODY chunk entries covering the northern (Europe) band.
 
     Chunks are stacked south->north, so the Europe band is the highest-numbered
     body chunks. We keep the top ``fraction`` of body chunks by number (or an
-    ``explicit`` chunk-number set), plus the trailer. Unknown layouts (no parseable
-    chunk numbers) fall back to every ``.nc`` entry so we never silently render an
-    empty/partial frame.
+    ``explicit`` chunk-number set). The per-cycle TRAIL chunk is excluded: the
+    satpy ``fci_l1c_nc`` reader cannot open it ("Don't know how to open" warning)
+    and only the BODY chunks carry image data, so downloading/passing it is pure
+    waste. Unknown layouts (no parseable chunk numbers) fall back to every ``.nc``
+    entry so we never silently render an empty/partial frame.
     """
     ncs = [e for e in entries if str(e).lower().endswith(".nc")]
-    trailers = [e for e in ncs if is_trailer(e)]
     body = [e for e in ncs if not is_trailer(e) and chunk_number(e) is not None]
     if not body:
         return sorted(ncs)
@@ -182,11 +183,4 @@ def select_europe_chunks(
         keep_count = max(1, round(len(numbers) * frac))
         wanted = set(numbers[-keep_count:])  # top (northern) chunks
 
-    selected = [e for e in body if chunk_number(e) in wanted]
-    # If the product names no explicit TRAIL file, the highest-numbered chunk
-    # doubles as the trailer (the "+41" in EUMETSAT's coverage codes); keep it.
-    if not trailers:
-        top = max(body, key=lambda e: chunk_number(e))
-        if top not in selected:
-            selected.append(top)
-    return sorted(set(selected) | set(trailers))
+    return sorted(e for e in body if chunk_number(e) in wanted)
