@@ -115,24 +115,38 @@ def extract_li_flashes(
     the merged granules. Returns ``[{"lat", "lon", "r"?, "n"?}, ...]``; density
     scaling is left to the frontend.
     """
+    import gc
+
     import numpy as np
     from satpy import Scene
 
     lon_min, lat_min, lon_max, lat_max = bbox
     scn = Scene(reader="li_l2_nc", filenames=[str(f) for f in nc_files])
-    available = set(scn.available_dataset_names())
-    load = [dataset] + (["number_of_events"] if "number_of_events" in available else [])
-    scn.load(load)
+    try:
+        available = set(scn.available_dataset_names())
+        load = [dataset] + (["number_of_events"] if "number_of_events" in available else [])
+        scn.load(load)
 
-    lon, lat = scn[dataset].attrs["area"].get_lonlats()
-    lon = np.asarray(lon, dtype="float64").ravel()
-    lat = np.asarray(lat, dtype="float64").ravel()
-    radiance = np.asarray(scn[dataset].values, dtype="float64").ravel()
-    events = (
-        np.asarray(scn["number_of_events"].values).ravel()
-        if "number_of_events" in load
-        else None
-    )
+        # Materialise everything into owned numpy copies so the netCDF file
+        # handlers can be released immediately (see the finally block).
+        lon, lat = scn[dataset].attrs["area"].get_lonlats()
+        lon = np.array(lon, dtype="float64").ravel()
+        lat = np.array(lat, dtype="float64").ravel()
+        radiance = np.array(scn[dataset].values, dtype="float64").ravel()
+        events = (
+            np.array(scn["number_of_events"].values).ravel()
+            if "number_of_events" in load
+            else None
+        )
+    finally:
+        # satpy's NetCDF4FileHandler.__del__ closes the file via
+        # ``with suppress(RuntimeError)``; if the handler survives (it sits in a
+        # reference cycle) until interpreter shutdown, the ``suppress`` global is
+        # already torn down to None and finalisation raises a noisy, ignored
+        # TypeError. Drop the Scene and collect now, while the interpreter is
+        # alive, so the handlers close cleanly.
+        del scn
+        gc.collect()
 
     keep = (
         np.isfinite(lon) & np.isfinite(lat)
