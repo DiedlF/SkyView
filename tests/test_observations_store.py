@@ -88,6 +88,44 @@ def test_write_render_frame_records_product_and_prunes_png(tmp_path):
     assert store.frame_render_path("radar", "202606031230", "radar_dbz").exists()
 
 
+def test_write_frame_points_records_json_and_resolves():
+    flashes = [{"lon": 8.5, "lat": 50.1, "r": 1.2, "n": 3}, {"lon": 8.6, "lat": 50.2}]
+    store.write_frame_points(
+        "li",
+        _dt("202606031230"),
+        "flashes",
+        flashes,
+        attrs={"product": "lightning_flashes", "count": len(flashes)},
+        cadence_seconds=600,
+        prune_after=False,
+    )
+
+    frame = store.latest_frame("li")
+    assert frame["products"]["flashes"] == "202606031230_flashes.json"
+    assert frame["attrs"]["product"] == "lightning_flashes"
+
+    path = store.render_file_for_frame("li", "202606031230", "flashes")
+    assert path.exists() and path.suffix == ".json"
+    import json
+
+    payload = json.loads(path.read_text())
+    assert payload["count"] == 2
+    assert payload["flashes"][0]["lat"] == 50.1
+
+
+def test_prune_removes_points_json():
+    store.write_frame_points("li", _dt("202606031210"), "flashes", [{"lon": 1.0, "lat": 2.0}], prune_after=False)
+    store.write_frame_points("li", _dt("202606031230"), "flashes", [{"lon": 1.0, "lat": 2.0}], prune_after=False)
+    old = store.source_dir("li") / "202606031210_flashes.json"
+    assert old.exists()
+
+    removed = store.prune("li", keep_seconds=600, keep_frames=None, now=_dt("202606031230"))
+
+    assert removed == ["202606031210"]
+    assert not old.exists()
+    assert (store.source_dir("li") / "202606031230_flashes.json").exists()
+
+
 def test_read_manifest_missing_is_empty():
     m = store.read_manifest("satellite")
     assert m["source"] == "satellite"

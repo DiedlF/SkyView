@@ -41,8 +41,8 @@ SOURCE_PRODUCTS = {
         "bbox": list(_GRID_BBOX),
     },
     "li": {
-        "default": "af",
-        "products": {"af"},
+        "default": "flashes",
+        "products": {"flashes"},
         "label": "MTG-I1 LI flashes",
         "bbox": list(_GRID_BBOX),
     },
@@ -125,10 +125,18 @@ def frame_payload(source: str, frame: dict, *, now: Optional[dt.datetime] = None
         "products": products,
         "attrs": attrs,
     }
-    for product in products.keys():
-        out.setdefault("render_urls", {})[product] = (
-            f"/api/observations/render/{source}/{product}/{frame.get('frame_id')}.png"
-        )
+    fid = frame.get("frame_id")
+    for product, filename in products.items():
+        # Point-vector products (lightning flashes) are stored as JSON and drawn
+        # as dots by the frontend; raster products are served as PNG image overlays.
+        if str(filename).endswith(".json"):
+            out.setdefault("point_urls", {})[product] = (
+                f"/api/observations/points/{source}/{product}/{fid}.json"
+            )
+        else:
+            out.setdefault("render_urls", {})[product] = (
+                f"/api/observations/render/{source}/{product}/{fid}.png"
+            )
     return out
 
 
@@ -208,5 +216,32 @@ def build_observations_router():
             ),
         }
         return FileResponse(path, media_type="image/png", headers=headers)
+
+    @router.get("/api/observations/points/{source}/{product}/{time_str}.json")
+    async def api_observation_points(source: str, product: str, time_str: str):
+        source_v = _validate_source(source)
+        product_v = _validate_product(source_v, product)
+        frame = resolve_frame(source_v, time_str, max_delta_seconds=900)
+        fid = str(frame.get("frame_id") or "")
+        try:
+            path = store.render_file_for_frame(source_v, fid, product_v)
+        except FileNotFoundError:
+            raise HTTPException(404, "observation points not found")
+        if not Path(path).is_file():
+            raise HTTPException(404, "observation points file missing")
+
+        valid_time = str(frame.get("valid_time") or "")
+        headers = {
+            "Cache-Control": "public, max-age=240",
+            "X-Observation-Source": source_v,
+            "X-Observation-Product": product_v,
+            "X-Frame-Id": fid,
+            "X-ValidTime": valid_time,
+            "X-Bbox": ",".join(str(x) for x in SOURCE_PRODUCTS[source_v]["bbox"]),
+            "Access-Control-Expose-Headers": (
+                "X-Observation-Source, X-Observation-Product, X-Frame-Id, X-ValidTime, X-Bbox"
+            ),
+        }
+        return FileResponse(path, media_type="application/json", headers=headers)
 
     return router

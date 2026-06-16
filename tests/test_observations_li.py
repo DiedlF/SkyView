@@ -15,9 +15,10 @@ from observations.satellite_li import product_sensing_time  # noqa: E402
 
 def test_li_default_collection_and_dataset():
     cfg = LiConfig()
-    assert cfg.collection_id == "EO:EUM:DAT:0686"  # LI L2 Accumulated Flashes
-    assert cfg.dataset == "flash_accumulation"
+    assert cfg.collection_id == "EO:EUM:DAT:0691"  # LI L2 Lightning Flashes (points)
+    assert cfg.dataset == "radiance"
     assert cfg.cadence_seconds == 600
+    assert cfg.window_seconds == 600
 
 
 def test_li_reuses_wmo_sensing_time_helper():

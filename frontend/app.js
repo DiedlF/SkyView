@@ -27,7 +27,7 @@ const OBS_CONFIG = {
   radar: { product: 'radar_dbz', checkboxId: 'layer-obs-radar', pane: 'skyviewObsRadarPane', opacity: 0.72, label: 'Radar' },
   satellite: { product: 'hrv', checkboxId: 'layer-obs-satellite', pane: 'skyviewObsSatellitePane', opacity: 0.68, label: 'Sat' },
   mtg: { product: 'vis_06', checkboxId: 'layer-obs-mtg', pane: 'skyviewObsMtgPane', opacity: 0.68, label: 'MTG' },
-  li: { product: 'af', checkboxId: 'layer-obs-li', pane: 'skyviewObsLightningPane', opacity: 0.95, label: 'LI' },
+  li: { product: 'flashes', kind: 'points', checkboxId: 'layer-obs-li', pane: 'skyviewObsLightningPane', opacity: 0.95, label: 'LI', color: '#ff2a2a', baseRadius: 2.5, maxRadius: 11 },
 };
 const obsState = {
   radar: { enabled: false, frames: [], bbox: null, layer: null },
@@ -1808,8 +1808,14 @@ function nearestObservationFrame(source, targetTime) {
 function observationFrameUrl(source, frame) {
   const cfg = OBS_CONFIG[source];
   const product = cfg.product;
-  const urls = frame?.render_urls || {};
-  const url = urls[product] || `/api/observations/render/${source}/${product}/${frame?.frame_id || 'latest'}.png`;
+  let url;
+  if (cfg.kind === 'points') {
+    const urls = frame?.point_urls || {};
+    url = urls[product] || `/api/observations/points/${source}/${product}/${frame?.frame_id || 'latest'}.json`;
+  } else {
+    const urls = frame?.render_urls || {};
+    url = urls[product] || `/api/observations/render/${source}/${product}/${frame?.frame_id || 'latest'}.png`;
+  }
   const sep = url.includes('?') ? '&' : '?';
   return `${url}${sep}_=${encodeURIComponent(frame?.frame_id || Date.now())}`;
 }
@@ -1844,6 +1850,10 @@ function updateObservationLayer(source, selectedTime) {
     removeObservationLayer(source);
     return;
   }
+  if (cfg.kind === 'points') {
+    updateObservationPointsLayer(source, frame);
+    return;
+  }
   const url = observationFrameUrl(source, frame);
   const bounds = observationBounds(st.bbox);
   if (st.layer) {
@@ -1856,6 +1866,80 @@ function updateObservationLayer(source, selectedTime) {
     interactive: false,
     crossOrigin: true,
   }).addTo(map);
+}
+
+// Count, for each flash, how many flashes fall in its ~0.1° neighbourhood
+// (the flash itself + its 8 surrounding cells). This proximity density drives
+// the dot radius so active storm cores read as larger/hotter clusters.
+function computeFlashDensity(flashes, cellDeg = 0.1) {
+  const buckets = new Map();
+  const keyOf = (cx, cy) => `${cx}|${cy}`;
+  const cells = flashes.map((f) => {
+    const cx = Math.round(f.lon / cellDeg);
+    const cy = Math.round(f.lat / cellDeg);
+    buckets.set(keyOf(cx, cy), (buckets.get(keyOf(cx, cy)) || 0) + 1);
+    return [cx, cy];
+  });
+  return cells.map(([cx, cy]) => {
+    let n = 0;
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        n += buckets.get(keyOf(cx + dx, cy + dy)) || 0;
+      }
+    }
+    return n;
+  });
+}
+
+function flashDotRadius(density, cfg) {
+  // sqrt keeps lone strikes small while big clusters grow, capped at maxRadius.
+  const r = cfg.baseRadius + 1.6 * Math.sqrt(Math.max(0, density - 1));
+  return Math.min(r, cfg.maxRadius);
+}
+
+async function updateObservationPointsLayer(source, frame) {
+  const cfg = OBS_CONFIG[source];
+  const st = obsState[source];
+  const fid = frame?.frame_id || 'latest';
+  // Ignore an out-of-order fetch if the frame changed while we awaited.
+  st.pendingFrameId = fid;
+  let data = st.pointCache && st.pointCache[fid];
+  if (!data) {
+    try {
+      const res = await fetch(observationFrameUrl(source, frame));
+      if (!res.ok) throw new Error(`points ${res.status}`);
+      data = await res.json();
+      st.pointCache = st.pointCache || {};
+      st.pointCache[fid] = data;
+    } catch (e) {
+      console.error('Lightning points error:', e);
+      return;
+    }
+  }
+  if (!st.enabled || st.pendingFrameId !== fid) return;
+
+  const flashes = Array.isArray(data?.flashes) ? data.flashes : [];
+  const density = computeFlashDensity(flashes);
+  const renderer = (st.canvasRenderer = st.canvasRenderer || L.canvas({ pane: cfg.pane }));
+  const group = L.layerGroup();
+  flashes.forEach((f, i) => {
+    if (!Number.isFinite(f.lat) || !Number.isFinite(f.lon)) return;
+    L.circleMarker([f.lat, f.lon], {
+      pane: cfg.pane,
+      renderer,
+      radius: flashDotRadius(density[i], cfg),
+      color: cfg.color,
+      weight: 0.5,
+      opacity: 0.85,
+      fillColor: cfg.color,
+      fillOpacity: 0.55,
+      interactive: false,
+    }).addTo(group);
+  });
+  if (st.layer) {
+    try { map.removeLayer(st.layer); } catch {}
+  }
+  st.layer = group.addTo(map);
 }
 
 function selectedObservationTime() {

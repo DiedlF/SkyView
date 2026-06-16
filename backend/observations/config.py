@@ -176,16 +176,19 @@ class MtgConfig:
 # --------------------------------------------------------------------------
 # Lightning: MTG-I1 (Meteosat-12) Lightning Imager (LI) via the Data Store
 # --------------------------------------------------------------------------
-# LI is a separate optical lightning instrument on MTG-I1 (not an FCI channel),
-# so it renders as its own coloured, mostly-transparent overlay that sits on top
-# of whichever satellite/basemap layer is shown — it pairs equally with the MSG
-# HRV and the MTG vis_06 images. MSG/SEVIRI has no lightning sensor, so there is
-# no equivalent for the HRV layer beyond this same overlay.
+# LI is a separate optical lightning instrument on MTG-I1 (not an FCI channel).
+# It renders as its own layer on top of whichever satellite/basemap layer is
+# shown. MSG/SEVIRI has no lightning sensor, so there is no equivalent for the
+# HRV layer beyond this layer.
 #
-# We use the gridded "Accumulated Flashes" (AF) product: a sparse 2-D field on
-# the FCI 2 km geostationary grid (10-min product, 30-s accumulation internally).
-# Cheap: one ~2–3 MB single-chunk product per cycle (~330 MB/day), so unlike FCI
-# there is no chunk subsetting — we just download the .nc and render it.
+# We use the point-based "Lightning Flashes" (LFL) product, NOT the gridded
+# "Accumulated Flashes" (AF) grid. LFL is a list of individual detected flashes,
+# each carrying its own lat/lon (via the satpy ``li_l2_nc`` reader's
+# SwathDefinition ``area``) plus per-flash ``radiance``/``number_of_events``. The
+# frontend draws each flash as a red dot scaled by nearby-flash density, so we
+# serve flash points (small JSON), not a coloured raster. LFL is delivered as
+# many small granules per cycle, so ``window_seconds`` merges a cycle's granules
+# into one frame for a useful dot field.
 @dataclass(frozen=True)
 class LiConfig:
     # Shares EUMDAC credentials with the MSG/MTG sources.
@@ -193,15 +196,20 @@ class LiConfig:
     consumer_secret: str = os.environ.get("EUMETSAT_CONSUMER_SECRET", "")
 
     # Collection IDs (confirm via `eumdac describe`):
-    #   LI L2 Accumulated Flashes (AF):       "EO:EUM:DAT:0686"  (default)
-    #   LI L2 Accumulated Flash Area (AFA):   "EO:EUM:DAT:0687"
-    #   LI L2 Accumulated Flash Radiance:     "EO:EUM:DAT:0688"
-    collection_id: str = os.environ.get("EUCOMP_LI_COLLECTION", "EO:EUM:DAT:0686")
-    dataset: str = os.environ.get("EUCOMP_LI_DATASET", "flash_accumulation")
-    cadence_seconds: int = 600  # AF product cadence (10 min)
+    #   LI L2 Lightning Flashes (LFL):        "EO:EUM:DAT:0691"  (default; points)
+    #   LI L2 Lightning Groups (LGR):         "EO:EUM:DAT:0782"
+    #   LI L2 Accumulated Flashes (AF, grid): "EO:EUM:DAT:0686"
+    collection_id: str = os.environ.get("EUCOMP_LI_COLLECTION", "EO:EUM:DAT:0691")
+    # Point dataset loaded to obtain the swath + per-flash intensity. Any LFL
+    # point dataset carries the lat/lon ``area``; ``radiance`` is always present.
+    dataset: str = os.environ.get("EUCOMP_LI_DATASET", "radiance")
+    cadence_seconds: int = 600  # LFL cycle (10 min)
     poll_interval: int = 120
+    # Trailing window (s) of LFL granules merged into one frame. Defaults to one
+    # cadence so each frame holds a full cycle of flashes.
+    window_seconds: int = int(os.environ.get("EUCOMP_LI_WINDOW_SECONDS", "600"))
 
-    # Region of interest (lon/lat bbox) for cropping to Europe before resample.
+    # Region of interest (lon/lat bbox) for cropping flashes to Europe.
     roi_bbox: tuple[float, float, float, float] = (-15.0, 32.0, 45.0, 72.0)
 
 

@@ -98,62 +98,62 @@ def render_satellite_hrv_png(
     return _save_grayscale_png(resampled["HRV"].values, out_png, label="HRV")
 
 
-def render_li_accum_png(
+def extract_li_flashes(
     nc_files,
-    out_png: Path,
     *,
     bbox: tuple[float, float, float, float],
-    dataset: str = "flash_accumulation",
-) -> Path:
-    """Render MTG-I1 LI accumulated flashes as a coloured, transparent RGBA overlay.
+    dataset: str = "radiance",
+) -> list[dict]:
+    """Extract individual MTG-I1 LI flashes from LFL point granules.
 
-    The accumulated product is a sparse 2-D field on the FCI 2 km geostationary
-    grid (only flash cells are finite). We crop to ``bbox``, resample to the
-    SkyView Web-Mercator grid, and colour-map flash count to a yellow→white
-    lightning palette, fully transparent where there are no flashes — so it
-    overlays cleanly on top of either the HRV or vis_06 image.
+    ``bbox`` is a lon/lat ROI ``(lon_min, lat_min, lon_max, lat_max)``. The LFL
+    product is point-based: the ``li_l2_nc`` reader returns 1-D arrays whose
+    ``area`` attribute is a ``SwathDefinition`` carrying each flash's lat/lon.
+    We load ``dataset`` (for the swath + per-flash intensity) plus
+    ``number_of_events`` when present, keep finite points inside ``bbox``, round
+    coordinates to ~4 decimals (≈10 m) and de-duplicate identical points across
+    the merged granules. Returns ``[{"lat", "lon", "r"?, "n"?}, ...]``; density
+    scaling is left to the frontend.
     """
     import numpy as np
-    from PIL import Image
     from satpy import Scene
 
-    from .reproject import web_mercator_area_definition
-
+    lon_min, lat_min, lon_max, lat_max = bbox
     scn = Scene(reader="li_l2_nc", filenames=[str(f) for f in nc_files])
-    scn.load([dataset])
-    cropped = scn.crop(ll_bbox=bbox)
-    resampled = cropped.resample(
-        web_mercator_area_definition(),
-        datasets=[dataset],
-        resampler="nearest",
-        radius_of_influence=4000,
-    )
-    data = np.asarray(resampled[dataset].values, dtype="float32")
-    # Target-grid latitudes are ascending south->north; image rows are north->south.
-    data = np.flipud(data)
-    flashes = np.isfinite(data) & (data > 0.0)
+    available = set(scn.available_dataset_names())
+    load = [dataset] + (["number_of_events"] if "number_of_events" in available else [])
+    scn.load(load)
 
-    stops = np.asarray([1, 5, 20, 50, 100], dtype="float32")
-    colors = np.asarray(
-        [
-            (255, 255, 130, 200),  # 1   pale yellow
-            (255, 226, 60, 225),   # 5   yellow
-            (255, 165, 30, 240),   # 20  orange
-            (255, 85, 35, 250),    # 50  red-orange
-            (255, 255, 255, 255),  # 100 white-hot
-        ],
-        dtype="float32",
+    lon, lat = scn[dataset].attrs["area"].get_lonlats()
+    lon = np.asarray(lon, dtype="float64").ravel()
+    lat = np.asarray(lat, dtype="float64").ravel()
+    radiance = np.asarray(scn[dataset].values, dtype="float64").ravel()
+    events = (
+        np.asarray(scn["number_of_events"].values).ravel()
+        if "number_of_events" in load
+        else None
     )
 
-    rgba = np.zeros((*data.shape, 4), dtype="uint8")
-    clipped = np.clip(np.where(flashes, data, stops[0]), stops[0], stops[-1])
-    for channel in range(4):
-        rgba[..., channel] = np.interp(clipped, stops, colors[:, channel]).astype("uint8")
-    rgba[~flashes] = (0, 0, 0, 0)
+    keep = (
+        np.isfinite(lon) & np.isfinite(lat)
+        & (lon >= lon_min) & (lon <= lon_max)
+        & (lat >= lat_min) & (lat <= lat_max)
+    )
 
-    out_png.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(rgba, mode="RGBA").save(out_png, optimize=True)
-    return out_png
+    seen: set[tuple[float, float]] = set()
+    flashes: list[dict] = []
+    for i in np.flatnonzero(keep):
+        key = (round(float(lon[i]), 4), round(float(lat[i]), 4))
+        if key in seen:
+            continue
+        seen.add(key)
+        flash = {"lon": key[0], "lat": key[1]}
+        if i < radiance.size and np.isfinite(radiance[i]):
+            flash["r"] = round(float(radiance[i]), 4)
+        if events is not None and i < events.size and np.isfinite(events[i]):
+            flash["n"] = int(events[i])
+        flashes.append(flash)
+    return flashes
 
 
 def render_fci_vis_png(

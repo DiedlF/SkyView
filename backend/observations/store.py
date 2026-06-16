@@ -211,11 +211,12 @@ def _remove_frame_dir(source: str, fid: str) -> None:
             path.unlink()
         except OSError:
             pass
-    for render_path in source_dir(source).glob(f"{fid}_*.png"):
-        try:
-            render_path.unlink()
-        except OSError:
-            pass
+    for pattern in (f"{fid}_*.png", f"{fid}_*.json"):
+        for render_path in source_dir(source).glob(pattern):
+            try:
+                render_path.unlink()
+            except OSError:
+                pass
 
 
 # -- Render I/O ------------------------------------------------------------
@@ -238,6 +239,46 @@ def write_frame_render(
     products = {product: dest.name}
     record_frame(source, when, cadence_seconds=cadence_seconds, products=products, attrs=attrs)
     log.info("Wrote %s render %s/%s -> %s", source, fid, product, dest)
+    if prune_after:
+        prune(source)
+    return dest
+
+
+def write_frame_points(
+    source: str,
+    when: dt.datetime,
+    product: str,
+    points: list,
+    attrs: Optional[dict] = None,
+    *,
+    cadence_seconds: Optional[int] = None,
+    prune_after: bool = True,
+) -> Path:
+    """Commit a point-vector frame as JSON and index it in the manifest.
+
+    Used for the lightning layer (individual flashes), which the frontend draws
+    as dots rather than a raster overlay. The JSON file is recorded in the same
+    ``products`` map as PNG renders (``render_file_for_frame`` is extension
+    agnostic), so the serving layer resolves it the same way.
+    """
+    fid = frame_id(when)
+    dest = source_dir(source) / f"{fid}_{product}.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "source": source,
+        "frame_id": fid,
+        "valid_time": valid_time_iso(when),
+        "count": len(points),
+        "flashes": points,
+    }
+    tmp = dest.with_suffix(".json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, separators=(",", ":"))
+    os.replace(tmp, dest)
+    record_frame(
+        source, when, cadence_seconds=cadence_seconds, products={product: dest.name}, attrs=attrs
+    )
+    log.info("Wrote %s points %s/%s (%d) -> %s", source, fid, product, len(points), dest)
     if prune_after:
         prune(source)
     return dest

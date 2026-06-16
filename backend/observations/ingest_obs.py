@@ -185,23 +185,25 @@ def ingest_mtg(cfg: Config) -> Optional[str]:
 
 
 def ingest_li(cfg: Config) -> Optional[str]:
-    """Fetch the newest MTG-I1 LI accumulated-flashes product, render, and store.
+    """Fetch the latest MTG-I1 LI Lightning-Flashes cycle, extract points, and store.
 
-    De-duplicates on the search result's sensing time before downloading. The AF
-    product is a single small ``.nc`` body, so there is no chunk subsetting.
+    LFL is delivered as many small ``.nc`` granules per cycle, so we collect a
+    trailing window of granules, merge their flashes into one frame keyed by the
+    newest sensing time, and store them as a JSON point list. De-duplicates on
+    that frame id before downloading.
     """
-    from .render import render_li_accum_png
+    from .render import extract_li_flashes
     from .satellite_li import LiSource, product_sensing_time
 
     src = LiSource(cfg.li)
-    product = src.search_latest()
-    if product is None:
+    products = src.search_window(cfg.li.window_seconds)
+    if not products:
         log.info("li: no new product available")
         return None
 
-    when = product_sensing_time(product)
+    when = product_sensing_time(products[0])  # newest granule -> frame/dedup key
     if when is None:
-        log.warning("li: could not determine sensing time for %s", product)
+        log.warning("li: could not determine sensing time for %s", products[0])
         return None
     fid = store.frame_id(when)
     if store.has_frame("li", fid):
@@ -210,25 +212,29 @@ def ingest_li(cfg: Config) -> Optional[str]:
 
     TMP_DIR.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(prefix="li-", dir=str(TMP_DIR)) as tmp:
-        bodies = src.download_body(product, Path(tmp))
+        bodies: list[Path] = []
+        for product in products:
+            bodies.extend(src.download_body(product, Path(tmp)))
         if not bodies:
-            log.warning("li: product %s had no NetCDF body to render", product)
+            log.warning("li: cycle %s had no NetCDF bodies to read", fid)
             return None
 
-        tmp_png = Path(tmp) / "li_af.png"
-        render_li_accum_png(bodies, tmp_png, bbox=cfg.li.roi_bbox, dataset=cfg.li.dataset)
-        store.write_frame_render(
+        flashes = extract_li_flashes(bodies, bbox=cfg.li.roi_bbox, dataset=cfg.li.dataset)
+        log.info("li: extracted %d flashes for frame %s", len(flashes), fid)
+        store.write_frame_points(
             "li",
             when,
-            "af",
-            tmp_png,
+            "flashes",
+            flashes,
             attrs={
-                "product": "accumulated_flashes",
+                "product": "lightning_flashes",
                 "dataset": cfg.li.dataset,
                 "collection_id": cfg.li.collection_id,
                 "satellite": "MTG-I1",
                 "instrument": "LI",
-                "cache": "derived_render",
+                "granules": len(products),
+                "count": len(flashes),
+                "cache": "derived_points",
             },
             cadence_seconds=cfg.li.cadence_seconds,
         )
