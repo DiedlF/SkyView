@@ -2,7 +2,13 @@
 Description=Run Skyview observation ingest every 2 minutes
 
 [Timer]
+# OnActiveSec seeds a run 90s after the timer itself is (re)started - not just
+# after boot - so enable/restart (e.g. a deploy restarting the timer) always
+# schedules a next run. Without it, restarting the timer long after boot can
+# leave it with nothing queued (OnBootSec already elapsed, OnUnitActiveSec has
+# no base yet) and ingest silently stalls.
 OnBootSec=90
+OnActiveSec=90
 OnUnitActiveSec=2min
 AccuracySec=20s
 Persistent=true
