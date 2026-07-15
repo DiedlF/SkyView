@@ -1,0 +1,33 @@
+# Log rotation for Skyview's append-mode log files.
+#
+# Installed to /etc/logrotate.d/skyview by .github/workflows/deploy.yml.
+#
+# All three files are written in append mode by processes that hold the file
+# open for the lifetime of the run and cannot be signalled to reopen it:
+#   * /var/log/skyview.log              - systemd StandardOutput=append: (skyview.service)
+#   * /var/log/skyview-ingest.log       - cron `>> ... 2>&1` (backend/cron-ingest.sh)
+#   * /var/log/skyview-observations.log - systemd/cron append (cron-observations.sh)
+# `copytruncate` is therefore required: logrotate copies then truncates the file
+# in place so the open writers keep appending to the same inode. (The backend's
+# own RotatingFileHandler manages backend/logs/skyview.log separately.)
+#
+# Motivation: on 2026-07-05 the 38 GB root disk filled to 100% and wedged the
+# box for days. /var/log/skyview.log alone had grown to 259 MB unrotated. Bound
+# it so log growth can never contribute to a repeat.
+
+/var/log/skyview.log
+/var/log/skyview-ingest.log
+/var/log/skyview-observations.log {
+    # /var/log is root:syslog 775 (world/group not root-only), so logrotate
+    # refuses to rotate without being told which user/group to run as. The log
+    # files themselves are root:root.
+    su root root
+    weekly
+    rotate 6
+    maxsize 100M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+}

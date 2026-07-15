@@ -77,6 +77,11 @@ jobs:
             sudo systemctl enable skyview
             sudo systemctl enable --now skyview-observations.timer
 
+            # Log rotation for the append-mode log files (unbounded growth on the
+            # 38 GB disk contributed to the 2026-07 disk-full wedge).
+            echo "[deploy] installing logrotate config"
+            sudo cp deploy/skyview.logrotate /etc/logrotate.d/skyview
+
             # Restart only when relevant files changed (or first deploy)
             NEED_RESTART=1
             if [ -n "${CHANGED}" ]; then
