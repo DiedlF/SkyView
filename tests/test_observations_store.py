@@ -167,3 +167,52 @@ def test_prune_noop_when_unlimited():
     store.record_frame("radar", _dt("202606031230"))
     assert store.prune("radar", keep_seconds=None, keep_frames=None) == []
     assert len(store.list_frames("radar")) == 1
+
+
+# -- consecutive-failure memo ---------------------------------------------
+# NB: unlike frames (pruned only on an explicit prune() call), the failure memo
+# is pruned against wall-clock now on every write, so these tests must use
+# now-relative frame ids — the fixed 2026-06-03 ids used above are older than the
+# retention window and would be dropped as soon as they were written.
+def _now_fid(minutes_ago: float = 0) -> tuple[dt.datetime, str]:
+    when = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=minutes_ago)).replace(
+        second=0, microsecond=0
+    )
+    return when, store.frame_id(when)
+
+
+def test_failure_count_increments_and_persists():
+    _, fid = _now_fid()
+    _, other_fid = _now_fid(minutes_ago=5)
+    assert store.failure_count("satellite", fid) == 0
+    assert store.record_failure("satellite", fid) == 1
+    assert store.record_failure("satellite", fid) == 2
+    # Re-read from the manifest on disk, not in-memory state.
+    assert store.failure_count("satellite", fid) == 2
+    # Counts are per frame id and per source.
+    assert store.failure_count("satellite", other_fid) == 0
+    assert store.failure_count("mtg", fid) == 0
+
+
+def test_successful_record_frame_clears_failure_memo():
+    when, fid = _now_fid()
+    store.record_failure("satellite", fid)
+    store.record_failure("satellite", fid)
+    assert store.failure_count("satellite", fid) == 2  # guard: memo really is set
+    store.record_frame("satellite", when, products={"hrv": "x.png"})
+    assert store.failure_count("satellite", fid) == 0
+
+
+def test_record_failure_prunes_entries_older_than_retention():
+    now = dt.datetime.now(dt.timezone.utc)
+    old = store.frame_id(now - dt.timedelta(hours=48))
+    recent = store.frame_id(now)
+    store.record_failure("mtg", old)
+    store.record_failure("mtg", recent)  # write prunes the aged-out entry
+    failed = store.read_manifest("mtg").get("failed", {})
+    assert old not in failed
+    assert recent in failed
+
+
+def test_prune_failures_drops_unparseable_frame_ids():
+    assert store._prune_failures({"not-a-frame-id": 3}) == {}

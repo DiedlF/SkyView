@@ -50,25 +50,16 @@ _CHUNK_RE = re.compile(r"_(\d{3,4})\.nc$", re.IGNORECASE)
 class MtgSource:
     def __init__(self, cfg: MtgConfig):
         self.cfg = cfg
-        self._token = None
         self._datastore = None
 
     def _connect(self):
         if self._datastore is not None:
             return
-        import eumdac
+        from .eumdac_client import get_datastore
 
-        if not (self.cfg.consumer_key and self.cfg.consumer_secret):
-            raise RuntimeError(
-                "Missing EUMETSAT credentials. Set EUMETSAT_CONSUMER_KEY and "
-                "EUMETSAT_CONSUMER_SECRET, or run `eumdac set-credentials`. "
-                "Verify with: python3 scripts/eumetsat_auth.py"
-            )
-        self._token = eumdac.AccessToken(
-            (self.cfg.consumer_key, self.cfg.consumer_secret)
+        self._datastore = get_datastore(
+            self.cfg.consumer_key, self.cfg.consumer_secret
         )
-        self._datastore = eumdac.DataStore(self._token)
-        log.info("Connected to EUMETSAT Data Store (MTG)")
 
     def search_latest(self):
         """Return the most recent FCI product (metadata only; no body download)."""

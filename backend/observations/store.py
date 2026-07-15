@@ -33,6 +33,13 @@ log = logging.getLogger("skyview.observations.store")
 MANIFEST_NAME = "manifest.json"
 FRAME_ID_FMT = "%Y%m%d%H%M"  # minute resolution
 
+# Consecutive-failure cap: after this many failed ingest attempts for the same
+# frame id, skip re-fetching/rendering it until it ages out of the source's
+# search window (env-overridable). Stops one broken upstream product from being
+# re-downloaded and re-rendered every 2-min tick — cf. the 2026-07-14 MSG "HRV
+# scene has no finite pixels" storm that re-fetched the same product 13×.
+FRAME_FAILURE_LIMIT = int(os.environ.get("EUCOMP_FRAME_FAILURE_LIMIT", "3"))
+
 
 # -- time/path helpers (pure) ---------------------------------------------
 def frame_id(when: dt.datetime) -> str:
@@ -123,6 +130,11 @@ def record_frame(
         entry["attrs"] = merged_attrs
     frames[fid] = entry
     manifest["frames"] = [frames[k] for k in sorted(frames)]
+    # A successful frame write clears any prior failure memo for that frame.
+    failed = manifest.get("failed")
+    if failed and fid in failed:
+        del failed[fid]
+        manifest["failed"] = failed
     write_manifest(source, manifest)
     return manifest
 
@@ -138,6 +150,44 @@ def latest_frame(source: str) -> Optional[dict]:
 
 def has_frame(source: str, fid: str) -> bool:
     return any(f["frame_id"] == fid for f in list_frames(source))
+
+
+# -- consecutive-failure memo ---------------------------------------------
+def failure_count(source: str, fid: str) -> int:
+    """How many times ingesting ``fid`` has failed since it last succeeded."""
+    return int(read_manifest(source).get("failed", {}).get(fid, 0))
+
+
+def record_failure(source: str, fid: str) -> int:
+    """Record one failed ingest attempt for ``fid``; return the new count.
+
+    Persisted in the manifest so the count survives across cron ticks (each tick
+    is a fresh process). Entries whose frame id is older than the retention
+    window are dropped on write so the memo can never grow without bound.
+    """
+    manifest = read_manifest(source)
+    failed = _prune_failures(dict(manifest.get("failed") or {}))
+    count = int(failed.get(fid, 0)) + 1
+    failed[fid] = count
+    manifest["failed"] = failed
+    write_manifest(source, manifest)
+    return count
+
+
+def _prune_failures(failed: dict, *, now: Optional[dt.datetime] = None) -> dict:
+    """Drop failure entries whose frame id is older than the retention window."""
+    if RETENTION_SECONDS is None:
+        return dict(failed)
+    now = _as_utc(now or dt.datetime.now(dt.timezone.utc))
+    cutoff = now - dt.timedelta(seconds=RETENTION_SECONDS)
+    kept: dict = {}
+    for fid, count in failed.items():
+        try:
+            if parse_frame_id(fid) >= cutoff:
+                kept[fid] = count
+        except ValueError:
+            continue
+    return kept
 
 
 def render_file_for_frame(source: str, fid: str, product: str) -> Path:

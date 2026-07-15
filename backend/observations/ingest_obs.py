@@ -27,6 +27,22 @@ from .config import Config, TMP_DIR, ensure_dirs
 log = logging.getLogger("skyview.observations.ingest")
 
 
+def _skip_failed(source: str, fid: str) -> bool:
+    """True if ``fid`` has already failed too many times to retry this tick.
+
+    Guards the download+render of a frame that keeps failing (e.g. a broken
+    upstream product) so it is not re-fetched every tick until it ages out.
+    """
+    count = store.failure_count(source, fid)
+    if count >= store.FRAME_FAILURE_LIMIT:
+        log.warning(
+            "%s: frame %s failed %d× already; skipping until it ages out",
+            source, fid, count,
+        )
+        return True
+    return False
+
+
 def ingest_radar(cfg: Config) -> Optional[str]:
     """Fetch the newest OPERA composite, render, and store. Returns frame id."""
     from .radar_ord import (
@@ -74,7 +90,13 @@ def ingest_radar(cfg: Config) -> Optional[str]:
 
 
 def ingest_satellite(cfg: Config) -> Optional[str]:
-    """Fetch the newest MSG RSS product, render HRV, and store. Returns frame id."""
+    """Fetch the newest MSG RSS product, render HRV, and store. Returns frame id.
+
+    De-duplicates against the manifest using the product id's nominal time BEFORE
+    downloading the (large) body, and skips frames that have already failed
+    ``store.FRAME_FAILURE_LIMIT`` times — so a single broken product is not
+    re-downloaded and re-rendered on every 2-min tick until it ages out.
+    """
     from .render import render_satellite_hrv_png
     from .satellite_eumetsat import (
         SatelliteSource,
@@ -83,37 +105,44 @@ def ingest_satellite(cfg: Config) -> Optional[str]:
     )
 
     src = SatelliteSource(cfg.satellite)
+    product = src.search_latest()
+    if product is None:
+        log.info("satellite: no new product available")
+        return None
+
+    when = read_msg_valid_time(str(product))
+    if when is None:
+        log.warning("satellite: could not determine valid time for %s", product)
+        return None
+    fid = store.frame_id(when)
+    if store.has_frame("satellite", fid):
+        log.info("satellite: frame %s already ingested; skipping download", fid)
+        return None
+    if _skip_failed("satellite", fid):
+        return None
+
     TMP_DIR.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(prefix="satellite-", dir=str(TMP_DIR)) as tmp:
-        product = src.fetch_latest(Path(tmp))
-        if product is None:
-            log.info("satellite: no new product available")
-            return None
-
-        native = extract_native_file(product, Path(tmp))
-        when = read_msg_valid_time(native) or read_msg_valid_time(product)
-        if when is None:
-            when = dt.datetime.fromtimestamp(native.stat().st_mtime, dt.timezone.utc)
-
-        fid = store.frame_id(when)
-        if store.has_frame("satellite", fid):
-            log.info("satellite: frame %s already ingested; skipping", fid)
-            return None
-
-        tmp_png = Path(tmp) / "satellite_hrv.png"
-        render_satellite_hrv_png(native, tmp_png, bbox=cfg.satellite.roi_bbox)
-        store.write_frame_render(
-            "satellite",
-            when,
-            "hrv",
-            tmp_png,
-            attrs={
-                "channel": "HRV",
-                "collection_id": cfg.satellite.collection_id,
-                "cache": "derived_render",
-            },
-            cadence_seconds=cfg.satellite.cadence_seconds,
-        )
+        try:
+            product_path = src.download_product(product, Path(tmp))
+            native = extract_native_file(product_path, Path(tmp))
+            tmp_png = Path(tmp) / "satellite_hrv.png"
+            render_satellite_hrv_png(native, tmp_png, bbox=cfg.satellite.roi_bbox)
+            store.write_frame_render(
+                "satellite",
+                when,
+                "hrv",
+                tmp_png,
+                attrs={
+                    "channel": "HRV",
+                    "collection_id": cfg.satellite.collection_id,
+                    "cache": "derived_render",
+                },
+                cadence_seconds=cfg.satellite.cadence_seconds,
+            )
+        except Exception:
+            store.record_failure("satellite", fid)
+            raise
         return fid
 
 
@@ -146,6 +175,8 @@ def ingest_mtg(cfg: Config) -> Optional[str]:
     if store.has_frame("mtg", fid):
         log.info("mtg: frame %s already ingested; skipping download", fid)
         return None
+    if _skip_failed("mtg", fid):
+        return None
 
     entries = src.product_entries(product)
     selected = select_europe_chunks(
@@ -160,27 +191,31 @@ def ingest_mtg(cfg: Config) -> Optional[str]:
 
     TMP_DIR.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(prefix="mtg-", dir=str(TMP_DIR)) as tmp:
-        chunks = src.download_entries(product, selected, Path(tmp))
-        if not chunks:
-            log.warning("mtg: no chunk files downloaded for %s", product)
-            return None
+        try:
+            chunks = src.download_entries(product, selected, Path(tmp))
+            if not chunks:
+                log.warning("mtg: no chunk files downloaded for %s", product)
+                return None
 
-        tmp_png = Path(tmp) / "mtg_vis06.png"
-        render_fci_vis_png(chunks, tmp_png, bbox=cfg.mtg.roi_bbox, channel=cfg.mtg.channel)
-        store.write_frame_render(
-            "mtg",
-            when,
-            cfg.mtg.channel,
-            tmp_png,
-            attrs={
-                "channel": cfg.mtg.channel,
-                "collection_id": cfg.mtg.collection_id,
-                "satellite": "MTG-I1",
-                "chunk_count": len(chunks),
-                "cache": "derived_render",
-            },
-            cadence_seconds=cfg.mtg.cadence_seconds,
-        )
+            tmp_png = Path(tmp) / "mtg_vis06.png"
+            render_fci_vis_png(chunks, tmp_png, bbox=cfg.mtg.roi_bbox, channel=cfg.mtg.channel)
+            store.write_frame_render(
+                "mtg",
+                when,
+                cfg.mtg.channel,
+                tmp_png,
+                attrs={
+                    "channel": cfg.mtg.channel,
+                    "collection_id": cfg.mtg.collection_id,
+                    "satellite": "MTG-I1",
+                    "chunk_count": len(chunks),
+                    "cache": "derived_render",
+                },
+                cadence_seconds=cfg.mtg.cadence_seconds,
+            )
+        except Exception:
+            store.record_failure("mtg", fid)
+            raise
         return fid
 
 
@@ -209,35 +244,41 @@ def ingest_li(cfg: Config) -> Optional[str]:
     if store.has_frame("li", fid):
         log.info("li: frame %s already ingested; skipping download", fid)
         return None
+    if _skip_failed("li", fid):
+        return None
 
     TMP_DIR.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(prefix="li-", dir=str(TMP_DIR)) as tmp:
-        bodies: list[Path] = []
-        for product in products:
-            bodies.extend(src.download_body(product, Path(tmp)))
-        if not bodies:
-            log.warning("li: cycle %s had no NetCDF bodies to read", fid)
-            return None
+        try:
+            bodies: list[Path] = []
+            for product in products:
+                bodies.extend(src.download_body(product, Path(tmp)))
+            if not bodies:
+                log.warning("li: cycle %s had no NetCDF bodies to read", fid)
+                return None
 
-        flashes = extract_li_flashes(bodies, bbox=cfg.li.roi_bbox, dataset=cfg.li.dataset)
-        log.info("li: extracted %d flashes for frame %s", len(flashes), fid)
-        store.write_frame_points(
-            "li",
-            when,
-            "flashes",
-            flashes,
-            attrs={
-                "product": "lightning_flashes",
-                "dataset": cfg.li.dataset,
-                "collection_id": cfg.li.collection_id,
-                "satellite": "MTG-I1",
-                "instrument": "LI",
-                "granules": len(products),
-                "count": len(flashes),
-                "cache": "derived_points",
-            },
-            cadence_seconds=cfg.li.cadence_seconds,
-        )
+            flashes = extract_li_flashes(bodies, bbox=cfg.li.roi_bbox, dataset=cfg.li.dataset)
+            log.info("li: extracted %d flashes for frame %s", len(flashes), fid)
+            store.write_frame_points(
+                "li",
+                when,
+                "flashes",
+                flashes,
+                attrs={
+                    "product": "lightning_flashes",
+                    "dataset": cfg.li.dataset,
+                    "collection_id": cfg.li.collection_id,
+                    "satellite": "MTG-I1",
+                    "instrument": "LI",
+                    "granules": len(products),
+                    "count": len(flashes),
+                    "cache": "derived_points",
+                },
+                cadence_seconds=cfg.li.cadence_seconds,
+            )
+        except Exception:
+            store.record_failure("li", fid)
+            raise
         return fid
 
 
@@ -281,19 +322,28 @@ def fresh_within_cadence(
     return (now - when).total_seconds() < cadence_seconds
 
 
-def run_once(source: str, cfg: Optional[Config] = None) -> dict:
+def run_once(
+    source: str, cfg: Optional[Config] = None, *, report: Optional[dict] = None
+) -> dict:
     """Ingest one cycle for ``source`` in {radar, satellite, mtg, li, both, all}.
 
     ``both`` = radar + satellite (legacy); ``all`` = every source. Returns a
     dict of ``{source: frame_id_or_None}``; never raises for a single source
     failure (errors are logged and recorded as None). Sources whose latest frame
     is still within its cadence window are skipped without an upstream request.
+
+    A ``None`` result is ambiguous on its own — it covers both "nothing new
+    upstream" (benign) and "this source raised". When a ``report`` dict is
+    passed it is populated with ``attempted`` and ``errored`` source-name sets so
+    the caller (``main``) can tell a genuinely failed run from a quiet one.
     """
     ensure_dirs()
     cfg = cfg or Config()
     cadences = _source_cadences(cfg)
     now = dt.datetime.now(dt.timezone.utc)
     results: dict[str, Optional[str]] = {}
+    attempted: set[str] = set()
+    errored: set[str] = set()
     if source == "both":
         targets = ["radar", "satellite"]
     elif source == "all":
@@ -305,16 +355,23 @@ def run_once(source: str, cfg: Optional[Config] = None) -> dict:
         if ingest is None:
             log.error("unknown source: %s", tgt)
             results[tgt] = None
+            attempted.add(tgt)
+            errored.add(tgt)
             continue
         if fresh_within_cadence(store.latest_frame(tgt), cadences.get(tgt), now):
             log.debug("%s: latest frame within cadence; skipping fetch", tgt)
             results[tgt] = None
             continue
+        attempted.add(tgt)
         try:
             results[tgt] = ingest(cfg)
         except Exception as exc:  # noqa: BLE001 - isolate per-source failures
             log.error("%s ingest failed: %s", tgt, exc)
             results[tgt] = None
+            errored.add(tgt)
+    if report is not None:
+        report["attempted"] = attempted
+        report["errored"] = errored
     return results
 
 
@@ -330,12 +387,23 @@ def main(argv: Optional[list[str]] = None) -> int:
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
 
-    results = run_once(args.source)
+    report: dict = {}
+    results = run_once(args.source, report=report)
     new = {k: v for k, v in results.items() if v}
     if new:
         log.info("ingested new frames: %s", new)
-    # Exit non-zero only if every requested source errored AND produced nothing.
-    return 0 if any(v is not None for v in results.values()) or not results else 0
+
+    # Exit non-zero only when every source we actually tried raised. A quiet run
+    # (nothing new upstream, or every source skipped inside its cadence window)
+    # is a success, and a partial failure still leaves the served frames current
+    # — but a run where nothing worked should be visible in systemd rather than
+    # reported as OK.
+    attempted: set = report.get("attempted", set())
+    errored: set = report.get("errored", set())
+    if attempted and errored == attempted:
+        log.error("all attempted sources failed: %s", ", ".join(sorted(errored)))
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

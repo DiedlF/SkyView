@@ -29,50 +29,54 @@ log = logging.getLogger("skyview.observations.satellite")
 class SatelliteSource:
     def __init__(self, cfg: SatelliteConfig):
         self.cfg = cfg
-        self._token = None
         self._datastore = None
 
     def _connect(self):
         if self._datastore is not None:
             return
-        import eumdac
+        from .eumdac_client import get_datastore
 
-        if not (self.cfg.consumer_key and self.cfg.consumer_secret):
-            raise RuntimeError(
-                "Missing EUMETSAT credentials. Set EUMETSAT_CONSUMER_KEY and "
-                "EUMETSAT_CONSUMER_SECRET, or run `eumdac set-credentials`. "
-                "Verify with: python3 scripts/eumetsat_auth.py"
-            )
-        self._token = eumdac.AccessToken(
-            (self.cfg.consumer_key, self.cfg.consumer_secret)
+        self._datastore = get_datastore(
+            self.cfg.consumer_key, self.cfg.consumer_secret
         )
-        self._datastore = eumdac.DataStore(self._token)
-        log.info("Connected to EUMETSAT Data Store")
 
-    def fetch_latest(self, dest_dir: Path = SAT_DIR) -> Optional[Path]:
-        """Download the most recent product in the configured collection."""
+    def search_latest(self):
+        """Return the most recent product (metadata only; no body download).
+
+        Split from the download so ``ingest_satellite`` can derive the frame time
+        from the product id and de-duplicate against the manifest *before* pulling
+        the (large) body — matching the MTG/LI cost guards.
+        """
         self._connect()
-        dest_dir.mkdir(parents=True, exist_ok=True)
-
         collection = self._datastore.get_collection(self.cfg.collection_id)
         # Search the last 30 minutes, newest first, take one.
         now = dt.datetime.now(dt.timezone.utc)
-        products = collection.search(
-            dtstart=now - dt.timedelta(minutes=30),
-            dtend=now,
+        products = sorted(
+            collection.search(dtstart=now - dt.timedelta(minutes=30), dtend=now),
+            key=lambda p: str(p),
+            reverse=True,
         )
-        products = sorted(products, key=lambda p: str(p), reverse=True)
         if not products:
             log.info("No satellite products in the last 30 min")
             return None
+        return products[0]
 
-        product = products[0]
+    def download_product(self, product, dest_dir: Path = SAT_DIR) -> Path:
+        """Download one product's body as a ZIP. Call after dedup/selection."""
+        dest_dir.mkdir(parents=True, exist_ok=True)
         out = dest_dir / f"{product}.zip"
         with product.open() as src, open(out, "wb") as dst:
             while chunk := src.read(1 << 16):
                 dst.write(chunk)
         log.info("Saved satellite product -> %s", out)
         return out
+
+    def fetch_latest(self, dest_dir: Path = SAT_DIR) -> Optional[Path]:
+        """Search + download the most recent product (one-shot; poller path)."""
+        product = self.search_latest()
+        if product is None:
+            return None
+        return self.download_product(product, dest_dir)
 
 
 def extract_native_file(product_path: Path, dest_dir: Optional[Path] = None) -> Path:
