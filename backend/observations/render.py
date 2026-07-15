@@ -9,6 +9,28 @@ from __future__ import annotations
 
 from pathlib import Path
 
+_DASK_SINGLE_THREADED = False
+
+
+def _force_single_threaded_dask() -> None:
+    """Pin dask to the synchronous scheduler for all satpy computation.
+
+    satpy reads HDF5/NetCDF via h5py/netCDF4, and the underlying HDF5 library is
+    not thread-safe. Under dask's default threaded scheduler, loading/resampling
+    a multi-file FCI scene decodes chunks concurrently and intermittently corrupts
+    the HDF5 heap — observed live as ~4 ingest segfaults/day (once "corrupted
+    double-linked list") right after satpy computes ``vis_06``. The synchronous
+    scheduler serialises those reads; a full ingest run is ~22s of a 300s budget,
+    so losing render parallelism is a non-issue. Idempotent and process-global.
+    """
+    global _DASK_SINGLE_THREADED
+    if _DASK_SINGLE_THREADED:
+        return
+    import dask
+
+    dask.config.set(scheduler="synchronous")
+    _DASK_SINGLE_THREADED = True
+
 
 def render_radar_dbz_png(field, out_png: Path) -> Path:
     """Render a reprojected OPERA dBZ field as a north-up RGBA PNG."""
@@ -86,6 +108,7 @@ def render_satellite_hrv_png(
 
     from .reproject import web_mercator_area_definition
 
+    _force_single_threaded_dask()
     scn = Scene(reader="seviri_l1b_native", filenames=[str(native_file)])
     scn.load(["HRV"], upper_right_corner="NE")
     cropped = scn.crop(ll_bbox=bbox)
@@ -120,6 +143,7 @@ def extract_li_flashes(
     import numpy as np
     from satpy import Scene
 
+    _force_single_threaded_dask()
     lon_min, lat_min, lon_max, lat_max = bbox
     scn = Scene(reader="li_l2_nc", filenames=[str(f) for f in nc_files])
     try:
@@ -189,6 +213,7 @@ def render_fci_vis_png(
 
     from .reproject import web_mercator_area_definition
 
+    _force_single_threaded_dask()
     body_files = [str(f) for f in chunk_files if "-TRAIL-" not in str(f).upper()]
     scn = Scene(reader="fci_l1c_nc", filenames=body_files)
     scn.load([channel], upper_right_corner="NE")
