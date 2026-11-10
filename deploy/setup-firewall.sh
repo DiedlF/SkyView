@@ -1,24 +1,25 @@
 #!/usr/bin/env bash
-# Restrict the Skyview origin port to the IPv64 CDN64 edge servers.
+# Restrict the Skyview origin ports to the IPv64 CDN64 edge servers.
 #
-# Without this the app on :8501 is reachable by anyone who knows the VPS
-# address: plain HTTP, bypassing the CDN's TLS, WAF and per-IP limits.
+# Without this the app is reachable by anyone who knows the VPS address,
+# bypassing the CDN's TLS, WAF and per-IP limits.
 #
 # What it does (idempotent, safe to re-run):
 #   1. allows SSH first, on every port sshd is actually listening on
-#   2. allows tcp/8501 from the addresses in cdn64-edge-ips.txt
-#   3. removes any "allow 8501 from anywhere" rule
+#   2. allows each origin port (SKYVIEW_ORIGIN_PORTS, default "8501 8443")
+#      from the addresses in cdn64-edge-ips.txt
+#   3. removes any "allow <origin port> from anywhere" rule
 #   4. sets "deny incoming / allow outgoing" and enables ufw
-#   5. removes origin rules for addresses no longer in that file
+#   5. removes origin rules for addresses or ports no longer configured
 #
 # Loopback is never filtered by ufw, so the deploy health check and local
 # curl against 127.0.0.1:8501 keep working.
 #
-# Usage:  sudo bash deploy/setup-firewall.sh [path/to/cdn64-edge-ips.txt]
+# Usage:  sudo [SKYVIEW_ORIGIN_PORTS="8443"] bash deploy/setup-firewall.sh [path/to/cdn64-edge-ips.txt]
 # Undo:   sudo ufw disable
 set -euo pipefail
 
-PORT="${SKYVIEW_PORT:-8501}"
+read -r -a PORTS <<< "${SKYVIEW_ORIGIN_PORTS:-8501 8443}"
 TAG="skyview-origin"
 IPS_FILE="${1:-$(cd "$(dirname "$0")" && pwd)/cdn64-edge-ips.txt}"
 
@@ -30,6 +31,8 @@ command -v ufw >/dev/null || die "ufw is not installed (apt-get install ufw)"
 
 mapfile -t EDGE_IPS < <(sed 's/#.*//' "$IPS_FILE" | awk 'NF {print $1}')
 [ "${#EDGE_IPS[@]}" -gt 0 ] || die "no addresses in $IPS_FILE - refusing to lock the origin out"
+[ "${#PORTS[@]}" -gt 0 ] || die "SKYVIEW_ORIGIN_PORTS is empty"
+for p in "${PORTS[@]}"; do [[ "$p" =~ ^[0-9]+$ ]] || die "bad origin port: $p"; done
 
 # --- 1. SSH, before anything that could block it --------------------------
 # Ask sshd for its configured ports and add whatever is listening right now;
@@ -46,17 +49,21 @@ for p in "${SSH_PORTS[@]}"; do
   echo "[firewall] ssh allowed on tcp/${p}"
 done
 
-# --- 2. origin port: edge servers only ------------------------------------
-for ip in "${EDGE_IPS[@]}"; do
-  ufw allow proto tcp from "$ip" to any port "$PORT" comment "$TAG" >/dev/null
+# --- 2. origin ports: edge servers only -----------------------------------
+for port in "${PORTS[@]}"; do
+  for ip in "${EDGE_IPS[@]}"; do
+    ufw allow proto tcp from "$ip" to any port "$port" comment "$TAG" >/dev/null
+  done
+  echo "[firewall] tcp/${port} allowed from ${#EDGE_IPS[@]} edge addresses"
 done
-echo "[firewall] tcp/${PORT} allowed from ${#EDGE_IPS[@]} edge addresses"
 
-# --- 3. no blanket rule for the origin port --------------------------------
-# An "allow 8501 from anywhere" rule would defeat the allowlist. Deleting by
+# --- 3. no blanket rule for an origin port ---------------------------------
+# An "allow <port> from anywhere" rule would defeat the allowlist. Deleting by
 # rule text works whether or not ufw is active; a missing rule is not an error.
-for spec in "${PORT}/tcp" "${PORT}"; do
-  ufw delete allow "$spec" >/dev/null 2>&1 || true
+for port in 8501 8443 "${PORTS[@]}"; do
+  for spec in "${port}/tcp" "${port}"; do
+    ufw delete allow "$spec" >/dev/null 2>&1 || true
+  done
 done
 
 # --- 4. policy + enable -----------------------------------------------------
@@ -64,21 +71,22 @@ ufw default deny incoming >/dev/null
 ufw default allow outgoing >/dev/null
 ufw --force enable >/dev/null
 
-# --- 5. drop origin rules whose source is no longer listed -----------------
+# --- 5. drop origin rules whose source or port is no longer configured ------
 # Done last: "ufw status numbered" only lists rules while ufw is active, and
 # the current edge addresses were already allowed above, so the edge is never
 # cut off. Delete from the highest rule number down (numbers shift on delete).
-while read -r num src; do
-  keep=0
-  for ip in "${EDGE_IPS[@]}"; do [ "$ip" = "$src" ] && keep=1 && break; done
-  if [ "$keep" -eq 0 ]; then
+while read -r num port src; do
+  ip_ok=0; port_ok=0
+  for ip in "${EDGE_IPS[@]}"; do [ "$ip" = "$src" ] && ip_ok=1 && break; done
+  for p in "${PORTS[@]}"; do [ "$p" = "$port" ] && port_ok=1 && break; done
+  if [ "$ip_ok" -eq 0 ] || [ "$port_ok" -eq 0 ]; then
     ufw --force delete "$num" >/dev/null
-    echo "[firewall] removed stale origin rule for $src"
+    echo "[firewall] removed stale origin rule tcp/${port} from $src"
   fi
 done < <(
   ufw status numbered 2>/dev/null \
     | grep -F "# $TAG" \
-    | sed -E 's/^\[ *([0-9]+)\] .* ALLOW IN +([^ ]+).*/\1 \2/' \
+    | sed -E 's/^\[ *([0-9]+)\] +([0-9]+)(\/tcp)? +ALLOW IN +([^ ]+).*/\1 \2 \4/' \
     | sort -rn
 )
 

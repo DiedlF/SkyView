@@ -3,7 +3,7 @@
 ## Production setup: IPv64 CDN64 (mode 3, "direct to target")
 
 The public site is served by the IPv64 CDN64 edge servers, which connect to the
-app on the VPS at plain HTTP `:8501`. The edge terminates TLS (HTTP/2 + HTTP/3),
+app on the VPS (see "Edge -> origin encryption" below). The edge terminates TLS (HTTP/2 + HTTP/3),
 redirects HTTP to HTTPS and compresses text responses, so the app does neither.
 
 **The edge caches only what the app marks cacheable** (`max-age` / `s-maxage` /
@@ -37,6 +37,20 @@ The same file is the list of proxies whose `X-Forwarded-*` headers the app
 trusts (`backend/trusted_proxies.py`), which is what makes `request.client` the
 real visitor for rate limits and visit statistics. If IPv64 changes its servers
 (<https://ipv64.net/cdn64-server.php>), edit that one file and deploy.
+
+**Edge -> origin encryption.** The app listens on HTTP `:8501` (local tools)
+and HTTPS `:8443` (the edge servers) in one process, see `backend/serve.py`.
+The certificate is self-signed (`deploy/ensure-origin-cert.sh`, 10 years) and the
+CDN target has "verify certificate" off: the point is encrypting the hop, not
+proving identity. CDN target: `scheme https`, `port 8443`. Rollback: switch the
+target back to `http`/`8501` (the HTTP listener is kept for exactly that until
+it is bound to 127.0.0.1).
+
+**Monitoring.** `GET /api/health/data` returns 200 while model runs and
+observation frames keep arriving and 503 (with the stale streams named) when one
+stops - limits in `backend/health_checks.py`. Point an HTTP check at it through
+the public hostname: that one check covers CDN, app, box and ingest. `/api/health`
+alone stayed green during the 2026-07 ingest stall.
 
 **Check after a deploy**
 

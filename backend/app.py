@@ -84,6 +84,7 @@ from feedback_ops import make_feedback_entry, append_feedback, read_feedback_lis
 from model_caps import get_models_payload
 from response_headers import build_overlay_headers, build_tile_headers, tile_cache_control_for
 from usage_stats import record_visit, get_usage_stats, get_marker_stats, is_automated_agent
+from health_checks import OBSERVATION_MAX_AGE_SECONDS, data_freshness
 from airport_lookup import curated_matches, item_icao, normalize_icao_query
 import marker_auth as _marker_auth
 from services.model_select import resolve_eu_time_strict as svc_resolve_eu_time_strict, load_eu_data_strict as svc_load_eu_data_strict
@@ -96,6 +97,10 @@ from routers.domain import build_domain_router
 from routers.weather import build_weather_router
 from routers.overlay import build_overlay_router
 from routers.observations import build_observations_router, observations_summary
+try:
+    from observations import store as observation_store
+except ImportError:  # pragma: no cover - package launch style
+    from backend.observations import store as observation_store
 from routers.ops import build_ops_router
 from routers.admin import build_admin_router
 from constants import (
@@ -483,7 +488,11 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 async def unhandled_exception_handler(request: Request, exc: Exception):
     rid = getattr(request.state, "request_id", None) or uuid.uuid4().hex[:12]
     logger.exception(f"Unhandled error rid={rid}: {exc}")
-    return JSONResponse(status_code=500, content={"detail": "Internal server error", "requestId": rid}, headers={"X-Request-Id": rid})
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "requestId": rid},
+        headers={"X-Request-Id": rid, "CDN64-Error-Page": "off"},
+    )
 
 
 @app.middleware("http")
@@ -501,6 +510,10 @@ async def log_requests(request: Request, call_next):
     # edge) says so via X-Forwarded-Proto; direct plain-HTTP hits never get it.
     if HSTS_MAX_AGE > 0 and request.url.scheme == "https":
         response.headers.setdefault("Strict-Transport-Security", f"max-age={HSTS_MAX_AGE}")
+    # Ask the CDN64 edge to pass our own 5xx bodies through instead of its
+    # generic error page: the frontend reads {detail, requestId} from them.
+    if response.status_code >= 500:
+        response.headers.setdefault("CDN64-Error-Page", "off")
     
     if 400 <= response.status_code < 500:
         api_error_counters["4xx"] += 1
@@ -690,6 +703,29 @@ def _ingest_pulse_payload() -> Dict[str, Any]:
         "latest": latest_by_model,
         "serverTime": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
+
+
+@app.get("/api/health/data")
+async def api_health_data():
+    """Data freshness for external monitors: 200 while every stream updates, 503 when one stalls.
+
+    Point an HTTP check at this URL (through the public hostname) to be alerted
+    when model or observation ingest stops, the app is down, or the box is
+    unreachable - see health_checks.py for the limits.
+    """
+    latest = {}
+    for source in OBSERVATION_MAX_AGE_SECONDS:
+        try:
+            frame = await asyncio.to_thread(observation_store.latest_frame, source)
+        except Exception:
+            frame = None
+        latest[source] = (frame or {}).get("valid_time")
+    payload = data_freshness(runs=get_available_runs(), latest_observation_times=latest)
+    return JSONResponse(
+        status_code=200 if payload["status"] == "ok" else 503,
+        content=payload,
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/api/ingest_pulse")
@@ -2972,14 +3008,16 @@ if os.path.isdir(FRONTEND_DIR):
 
 if __name__ == "__main__":
     _acquire_single_instance_or_exit(PID_FILE)
-    import uvicorn
-    # The CDN edge servers are the only public clients (see deploy/setup-firewall.sh);
-    # trust their X-Forwarded-For / X-Forwarded-Proto so request.client is the
-    # real visitor and request.url.scheme reflects the visitor's HTTPS.
-    uvicorn.run(
+    import serve
+
+    # HTTP on :8501 always, HTTPS on :8443 when a certificate is configured
+    # (see serve.py). The CDN edge servers are the only public clients (see
+    # deploy/setup-firewall.sh); trust their X-Forwarded-For / X-Forwarded-Proto
+    # so request.client is the real visitor and request.url.scheme reflects the
+    # visitor's HTTPS.
+    serve.run(
         app,
-        host="0.0.0.0",
-        port=8501,
+        serve.listeners_from_env(),
         proxy_headers=True,
         forwarded_allow_ips=load_trusted_proxies(),
     )

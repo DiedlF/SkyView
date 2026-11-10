@@ -14,6 +14,12 @@ Environment=SKYVIEW_TILE_CACHE_MAX_DESKTOP=700
 Environment=SKYVIEW_TILE_CACHE_MAX_MOBILE=350
 Environment=SKYVIEW_COMPUTED_CACHE_MAX_ITEMS=64
 Environment=SKYVIEW_SYMBOLS_CACHE_MAX_ITEMS=128
+# Listeners (backend/serve.py): HTTP :8501 for local tools, HTTPS :8443 for the
+# CDN64 edge servers. deploy/ensure-origin-cert.sh creates the certificate.
+# Once the CDN talks HTTPS, :8501 is only needed locally.
+Environment=SKYVIEW_HTTP_HOST=0.0.0.0
+Environment=SKYVIEW_TLS_CERT=/etc/skyview/tls/origin.crt
+Environment=SKYVIEW_TLS_KEY=/etc/skyview/tls/origin.key
 ExecStart=/opt/skyview/venv/bin/python /opt/skyview/backend/app.py
 Restart=always
 RestartSec=5
