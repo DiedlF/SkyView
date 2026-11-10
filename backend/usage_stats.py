@@ -46,6 +46,37 @@ def _fingerprint_hash(ip: str, user_agent: str, accept_lang: str, salt: str) -> 
     return hashlib.sha256(raw).hexdigest()[:20]
 
 
+# User-Agent fragments of non-human clients that load "/" (lower-case).
+# "node64" is IPv64's own availability probe: it requests the page through the
+# CDN about twice a minute and otherwise dominates the visit counter.
+_AUTOMATED_AGENT_MARKERS = (
+    "node64",
+    "bot",
+    "crawler",
+    "spider",
+    "monitor",
+    "uptime",
+    "healthcheck",
+    "curl/",
+    "wget/",
+    "python-requests",
+    "python-httpx",
+    "go-http-client",
+    "headlesschrome",
+)
+
+
+def is_automated_agent(user_agent: str) -> bool:
+    """True for probes/crawlers that should not count as page visits.
+
+    An empty User-Agent counts as automated: every real browser sends one.
+    """
+    ua = str(user_agent or "").strip().lower()
+    if not ua:
+        return True
+    return any(marker in ua for marker in _AUTOMATED_AGENT_MARKERS)
+
+
 def record_visit(stats_file: str, *, ip: str, user_agent: str, accept_lang: str, salt: str, path: str = "/"):
     """Record a page visit for current UTC day."""
     now = _utc_now()

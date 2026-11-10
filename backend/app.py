@@ -57,7 +57,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from static_cache import CachedStaticFiles
+from trusted_proxies import load_trusted_proxies
 from fastapi.responses import FileResponse, Response, JSONResponse
 import threading
 
@@ -77,12 +78,12 @@ from weather_codes import ww_to_symbol
 from services.symbol_ops import seed_symbols_cache_from_disk as _seed_symbols_cache_from_disk_svc
 from point_data import build_overlay_values, POINT_KEYS, POINT_KEYS_MINIMAL
 from classify import classify_point as classify_point_core
-from time_contract import get_available_runs as tc_get_available_runs, get_merged_timeline as tc_get_merged_timeline, resolve_time as tc_resolve_time
+from time_contract import get_available_runs as tc_get_available_runs, get_merged_timeline as tc_get_merged_timeline, resolve_time as tc_resolve_time, timeline_version as tc_timeline_version
 from status_ops import build_status_payload, build_perf_payload
 from feedback_ops import make_feedback_entry, append_feedback, read_feedback_list, update_feedback_status
 from model_caps import get_models_payload
-from response_headers import build_overlay_headers, build_tile_headers
-from usage_stats import record_visit, get_usage_stats, get_marker_stats
+from response_headers import build_overlay_headers, build_tile_headers, tile_cache_control_for
+from usage_stats import record_visit, get_usage_stats, get_marker_stats, is_automated_agent
 from airport_lookup import curated_matches, item_icao, normalize_icao_query
 import marker_auth as _marker_auth
 from services.model_select import resolve_eu_time_strict as svc_resolve_eu_time_strict, load_eu_data_strict as svc_load_eu_data_strict
@@ -199,6 +200,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Strict-Transport-Security lifetime in seconds (0 disables). 30 days: long
+# enough to protect returning visitors, short enough to back out of.
+try:
+    HSTS_MAX_AGE = int(os.environ.get("SKYVIEW_HSTS_MAX_AGE", "2592000"))
+except ValueError:
+    HSTS_MAX_AGE = 2592000
 
 api_error_counters = {"4xx": 0, "5xx": 0}
 
@@ -489,6 +497,10 @@ async def log_requests(request: Request, call_next):
 
     duration_ms = (time.time() - start_time) * 1000
     response.headers["X-Request-Id"] = request_id
+    # HSTS only over HTTPS. The scheme is "https" when a trusted proxy (the CDN
+    # edge) says so via X-Forwarded-Proto; direct plain-HTTP hits never get it.
+    if HSTS_MAX_AGE > 0 and request.url.scheme == "https":
+        response.headers.setdefault("Strict-Transport-Security", f"max-age={HSTS_MAX_AGE}")
     
     if 400 <= response.status_code < 500:
         api_error_counters["4xx"] += 1
@@ -506,11 +518,13 @@ async def log_requests(request: Request, call_next):
             f"{request.method} {request.url.path} - {response.status_code} - {duration_ms:.2f}ms - rid={request_id}"
         )
 
-    # Usage tracking: count real page loads only (avoid inflating with API/static requests).
+    # Usage tracking: count real page loads only (avoid inflating with API/static
+    # requests, uptime probes such as IPv64's "node64" checker, and crawlers).
     if (
         request.method == "GET"
         and response.status_code < 400
         and request.url.path in ("/", "/index.html")
+        and not is_automated_agent(request.headers.get("user-agent", ""))
     ):
         try:
             client_ip = request.client.host if request.client else "unknown"
@@ -629,6 +643,11 @@ def get_merged_timeline():
     return tc_get_merged_timeline(DATA_DIR)
 
 
+def get_tile_version() -> str:
+    """Cache-busting token for overlay tile URLs (see time_contract.timeline_version)."""
+    return tc_timeline_version(get_available_runs())
+
+
 def resolve_time(time_str: str, model: Optional[str] = None) -> tuple[str, int, str]:
     return tc_resolve_time(DATA_DIR, time_str, model)
 
@@ -674,8 +693,14 @@ def _ingest_pulse_payload() -> Dict[str, Any]:
 
 
 @app.get("/api/ingest_pulse")
-async def api_ingest_pulse():
-    """Lightweight ingest/timeline change signal for frontend auto-refresh."""
+async def api_ingest_pulse(response: Response):
+    """Lightweight ingest/timeline change signal for frontend auto-refresh.
+
+    Every open tab polls this every 12 s. A 10 s shared TTL lets the CDN answer
+    all tabs from one origin request per interval while still being fresh on
+    each client's next poll.
+    """
+    response.headers["Cache-Control"] = "public, max-age=10"
     return _ingest_pulse_payload()
 
 
@@ -746,6 +771,7 @@ app.include_router(build_core_router(
     get_merged_timeline=get_merged_timeline,
     get_models_payload=get_models_payload,
     data_cache=data_cache,
+    get_tile_version=get_tile_version,
 ))
 app.include_router(build_domain_router(
     get_merged_timeline=get_merged_timeline,
@@ -977,9 +1003,9 @@ async def api_marker_profile_set(request: Request):
 
 
 def _location_search_client_key(request: Request) -> str:
-    xff = request.headers.get("x-forwarded-for", "")
-    if xff:
-        return xff.split(",")[0].strip()[:128]
+    # request.client is already the real visitor: uvicorn resolves it from
+    # X-Forwarded-For for trusted proxies only (see trusted_proxies.py). Reading
+    # the header here would let any client pick its own rate-limit bucket.
     client = request.client.host if request.client else "unknown"
     return str(client)[:128]
 
@@ -1713,6 +1739,7 @@ async def api_overlay_tile(
     model: Optional[str] = Query(None),
     clientClass: str = Query("desktop"),
     substep: int = Query(0, ge=0, le=45),
+    v: Optional[str] = Query(None, max_length=32),
 ):
     t0 = perf_counter()
     t_load_ms = 0.0
@@ -1745,7 +1772,9 @@ async def api_overlay_tile(
                 valid_time="unknown",
                 model=model or "unknown",
                 cache=status_hint,
-                extra={"X-Overlay-Status": reason},
+                # Transient (step not ingested yet / bad time): a cached copy
+                # would keep showing a hole after the data arrives.
+                extra={"X-Overlay-Status": reason, "Cache-Control": "no-store"},
             ),
         )
 
@@ -1769,6 +1798,7 @@ async def api_overlay_tile(
     # no data, regardless of the cause (irregular boundary, relaxation zone, etc.).
     _eu_raw_tile = None
     eu_fb = None
+    needs_eu_fill = False
     d2_lat_res = abs(float(lat[1] - lat[0])) if len(lat) > 1 else 0.02
     d2_lon_res = abs(float(lon[1] - lon[0])) if len(lon) > 1 else 0.02
     if model_used == "icon_d2":
@@ -1817,6 +1847,14 @@ async def api_overlay_tile(
             _maybe_warmup_overlay_context(layer, cfg, eu_fb["data"], eu_fb["model"], eu_fb["run"], eu_fb["step"])
         except Exception:
             pass
+    tile_cache_control = tile_cache_control_for(
+        version=v,
+        current_version=get_tile_version(),
+        time_str=time,
+        model=model,
+        substep_minutes=substep_minutes,
+        eu_fill_missing=bool(needs_eu_fill and eu_fb is None),
+    )
     eu_key = f"|eu:{eu_fb['run']}:{eu_fb['step']}" if eu_fb else ""
     substep_key = f"|sub:{substep_minutes}" if substep_minutes else ""
     cache_key = f"{client_class}|{model_used}|{run}|{step}{eu_key}{substep_key}|{layer}|{z}|{x}|{y}"
@@ -1844,6 +1882,7 @@ async def api_overlay_tile(
                 model=model_used,
                 cache="HIT",
                 extra={
+                    "Cache-Control": tile_cache_control,
                     "X-Source-Model": source_model_hdr,
                     "X-Fallback-Decision": "blended_d2_eu" if source_model_hdr == "blended" else "primary_model_only",
                     "X-Data-Freshness-Minutes": str(_freshness_minutes_from_run(run)),
@@ -1890,6 +1929,7 @@ async def api_overlay_tile(
                     model=model_used,
                     cache="MISS",
                     extra={
+                        "Cache-Control": tile_cache_control,
                         "X-Source-Model": model_used,
                         "X-Fallback-Decision": "primary_model_only",
                         "X-Data-Freshness-Minutes": str(_freshness_minutes_from_run(run)),
@@ -1988,6 +2028,7 @@ async def api_overlay_tile(
             model=model_used,
             cache="MISS",
             extra={
+                "Cache-Control": tile_cache_control,
                 "X-Source-Model": source_model_hdr,
                 "X-Fallback-Decision": "blended_d2_eu" if source_model_hdr == "blended" else "primary_model_only",
                 "X-Data-Freshness-Minutes": str(_freshness_minutes_from_run(run)),
@@ -2926,10 +2967,19 @@ app.include_router(build_admin_router(
 # ─── Static Frontend (must be LAST) ───
 # html=True serves index.html for directory requests
 if os.path.isdir(FRONTEND_DIR):
-    app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
+    app.mount("/", CachedStaticFiles(directory=FRONTEND_DIR, html=True), name="static")
 
 
 if __name__ == "__main__":
     _acquire_single_instance_or_exit(PID_FILE)
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8501)
+    # The CDN edge servers are the only public clients (see deploy/setup-firewall.sh);
+    # trust their X-Forwarded-For / X-Forwarded-Proto so request.client is the
+    # real visitor and request.url.scheme reflects the visitor's HTTPS.
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8501,
+        proxy_headers=True,
+        forwarded_allow_ips=load_trusted_proxies(),
+    )

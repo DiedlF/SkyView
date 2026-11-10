@@ -870,6 +870,7 @@ async function loadTimesteps() {
     const res = await fetch('/api/timesteps');
     if (!res.ok) throw new Error('Failed to fetch timesteps');
     const data = await res.json();
+    overlayTileVersion = data.tileVersion || '';
     
     // Use merged timeline (D2 for first 48h + EU for extended range)
     const merged = data.merged;
@@ -915,6 +916,11 @@ function buildTimelineSignature(source) {
   const stepBits = source.steps.map((step) => `${step.validTime || ''}|${step.model || ''}|${step.run || ''}|${step.step ?? ''}`);
   return `${runBits.join('|')}::${stepBits.join(',')}`;
 }
+
+// Server token for the current set of ingested model steps (/api/timesteps).
+// Sent as `v=` on overlay tile URLs so a new run changes the URLs: no mix of
+// old and new tiles from browser/CDN caches, and matching tiles cache longer.
+let overlayTileVersion = '';
 
 function timelineStepsWithContext(source) {
   if (!source || !Array.isArray(source.steps)) return [];
@@ -1643,14 +1649,15 @@ async function loadOverlay() {
 
     try {
       const overlayStep = timesteps[currentTimeIndex];
-      const clientClass = window.innerWidth <= 768 ? 'mobile' : 'desktop';
 
+      // No clientClass: tiles are identical for every device, and a per-device
+      // URL would split the browser/CDN cache in two for nothing.
       const params = new URLSearchParams({
         layer: effectiveOverlay,
         time,
-        clientClass,
       });
       if (overlayStep && overlayStep.model) params.append('model', overlayStep.model);
+      if (overlayTileVersion) params.append('v', overlayTileVersion);
       const substepMinutes = currentRequestSubstepMinutes();
       if (overlaySupportsSubsteps(effectiveOverlay) && substepMinutes > 0) params.append('substep', String(substepMinutes));
 
@@ -3973,6 +3980,7 @@ async function refreshTimelineIfChanged() {
     const res = await fetch('/api/timesteps');
     if (!res.ok) return;
     const data = await res.json();
+    overlayTileVersion = data.tileVersion || '';
 
     const merged = data.merged;
     const source = merged && merged.steps.length ? merged : (data.runs && data.runs[0]);
@@ -4056,7 +4064,9 @@ async function refreshTimelineIfChanged() {
   }
 }
 
-setInterval(async () => {
+async function pollIngestPulse() {
+  // A background tab does not need fresh data; it catches up on return.
+  if (document.hidden) return;
   try {
     const res = await fetch('/api/ingest_pulse');
     if (!res.ok) return;
@@ -4077,8 +4087,17 @@ setInterval(async () => {
   } catch (_) {
     // ignore pulse errors
   }
-}, 12000);
+}
+
+setInterval(pollIngestPulse, 12000);
 
 setInterval(() => {
+  if (document.hidden) return;
   pollObservationFrames();
 }, 60000);
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  pollIngestPulse();
+  pollObservationFrames();
+});

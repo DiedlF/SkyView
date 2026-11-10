@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import threading
 import time
@@ -102,6 +103,22 @@ def _build_merged_timeline(runs: list):
         "d2Run": d2_run["run"] if d2_run else None,
         "euRun": eu_run["run"] if eu_run else None,
     }
+
+
+def timeline_version(runs: list) -> str:
+    """Short token identifying the exact set of ingested model steps.
+
+    ``resolve_time`` picks a run/step purely from this set, so for a fixed
+    token a request for a given ``time`` + ``model`` always resolves to the same
+    data. Clients put the token into tile URLs (``v=``); when a run or a single
+    step lands the token changes, the URLs change with it, and stale tiles are
+    never served from a browser or CDN cache under the new URL.
+    """
+    h = hashlib.sha1()
+    for r in runs or []:
+        steps = ",".join(str(s.get("step")) for s in r.get("steps", []))
+        h.update(f"{r.get('model')}|{r.get('run')}|{steps};".encode("utf-8"))
+    return h.hexdigest()[:10]
 
 
 def get_merged_timeline(data_dir: str):

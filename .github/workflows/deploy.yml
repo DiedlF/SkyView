@@ -82,11 +82,17 @@ jobs:
             echo "[deploy] installing logrotate config"
             sudo cp deploy/skyview.logrotate /etc/logrotate.d/skyview
 
+            # Origin firewall: only the CDN64 edge servers may reach :8501, SSH
+            # stays open (the script allows SSH before anything else). Idempotent;
+            # keeps the box in sync with deploy/cdn64-edge-ips.txt.
+            echo "[deploy] applying origin firewall"
+            sudo bash deploy/setup-firewall.sh || echo "[deploy] WARNING: firewall setup failed - origin may be exposed"
+
             # Restart only when relevant files changed (or first deploy)
             NEED_RESTART=1
             if [ -n "${CHANGED}" ]; then
               NEED_RESTART=0
-              echo "${CHANGED}" | grep -Eq '^(backend/|deploy/skyview\.service|\.github/workflows/deploy\.yml)' && NEED_RESTART=1 || true
+              echo "${CHANGED}" | grep -Eq '^(backend/|deploy/skyview\.service|deploy/cdn64-edge-ips\.txt|\.github/workflows/deploy\.yml)' && NEED_RESTART=1 || true
             fi
 
             if [ "${NEED_RESTART}" -eq 1 ]; then

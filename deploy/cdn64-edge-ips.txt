@@ -1,0 +1,22 @@
+# IPv64 CDN64 edge servers that may connect to the Skyview origin (port 8501).
+# Source: https://ipv64.net/cdn64-server.php (checked 2026-11-10).
+#
+# Single source of truth for two things:
+#   * deploy/setup-firewall.sh   - only these hosts may reach port 8501
+#   * backend/trusted_proxies.py - only these hosts' X-Forwarded-* headers are trusted
+#
+# One address per line; "#" starts a comment. After editing, re-run
+# deploy/setup-firewall.sh on the VPS and restart the skyview service.
+
+# srv07.cdn64.de (Nuremberg)
+91.99.98.96
+2a01:4f8:1c18:5887::1
+# srv08.cdn64.de (Falkenstein)
+2.28.6.30
+2a01:4f8:c015:bca8::1
+# srv09.cdn64.de (Falkenstein)
+91.98.90.234
+2a01:4f8:c010:9a3d::1
+# srv10.cdn64.de (Nuremberg)
+116.203.146.186
+2a01:4f8:1c19:6003::1
