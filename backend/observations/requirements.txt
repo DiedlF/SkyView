@@ -4,9 +4,11 @@
 #
 #    pip-compile --no-emit-index-url --output-file=requirements.txt --strip-extras requirements.in
 #
-boto3==1.43.127
-    # via -r requirements.in
-botocore==1.43.127
+asciitree==1.0.0
+    # via zarr
+boto3==1.44.0
+    # via -r observations/requirements.in
+botocore==1.44.0
     # via
     #   boto3
     #   s3transfer
@@ -15,7 +17,7 @@ certifi==2026.10.23
     #   netcdf4
     #   pyproj
     #   requests
-cftime==1.6.5
+cftime==1.6.6.1
     # via netcdf4
 charset-normalizer==3.4.7
     # via requests
@@ -25,7 +27,7 @@ cloudpickle==3.1.2
     # via dask
 configobj==5.0.9
     # via pyresample
-dask==2026.6.0
+dask==2026.8.0
     # via satpy
 defusedxml==0.7.1
     # via pyorbital
@@ -34,17 +36,16 @@ donfig==0.8.1.post1
     #   pyorbital
     #   pyresample
     #   satpy
-    #   zarr
 eumdac==3.1.1
-    # via -r requirements.in
+    # via -r observations/requirements.in
+fasteners==0.20
+    # via zarr
 fsspec==2026.9.0
     # via
     #   dask
     #   universal-pathlib
-google-crc32c==1.8.0
-    # via zarr
 h5py==3.16.0
-    # via -r requirements.in
+    # via -r observations/requirements.in
 idna==3.18
     # via requests
 jmespath==1.1.0
@@ -54,12 +55,12 @@ jmespath==1.1.0
 locket==1.0.0
     # via partd
 netcdf4==1.7.5.1.post1
-    # via -r requirements.in
-numcodecs==0.16.5
+    # via -r observations/requirements.in
+numcodecs==0.12.1
     # via zarr
 numpy==2.5.4
     # via
-    #   -r requirements.in
+    #   -r observations/requirements.in
     #   cftime
     #   dask
     #   h5py
@@ -82,8 +83,7 @@ packaging==26.2
     #   pooch
     #   satpy
     #   xarray
-    #   zarr
-paho-mqtt==2.1.0
+paho-mqtt==2.2.0
     # via eumdac
 pandas==3.0.3
     # via xarray
@@ -93,10 +93,10 @@ pathlib-abc==0.5.2
     # via universal-pathlib
 pillow==13.0.0
     # via
-    #   -r requirements.in
+    #   -r observations/requirements.in
     #   satpy
     #   trollimage
-platformdirs==4.10.0
+platformdirs==4.14.5
     # via
     #   pooch
     #   pyresample
@@ -107,17 +107,17 @@ pykdtree==1.4.3
     # via
     #   pyresample
     #   satpy
-pyorbital==1.12.1
+pyorbital==1.14.0
     # via satpy
 pyproj==3.8.0
     # via
-    #   -r requirements.in
+    #   -r observations/requirements.in
     #   pyorbital
     #   pyresample
     #   satpy
 pyresample==1.35.0
     # via
-    #   -r requirements.in
+    #   -r observations/requirements.in
     #   satpy
 python-dateutil==2.9.0.post0
     # via
@@ -132,32 +132,28 @@ pyyaml==6.0.3
     #   satpy
 requests==2.34.2
     # via
-    #   -r requirements.in
+    #   -r observations/requirements.in
     #   eumdac
     #   pooch
     #   pyorbital
-s3transfer==0.19.1
+s3transfer==0.19.3
     # via boto3
 satpy==0.60.0
-    # via -r requirements.in
-scipy==1.17.1
+    # via -r observations/requirements.in
+scipy==1.18.1
     # via pyorbital
-shapely==2.1.2
+shapely==2.2.0
     # via pyresample
 six==1.17.0
     # via python-dateutil
-toolz==1.1.0
+toolz==1.2.0
     # via
     #   dask
     #   partd
-trollimage==1.28.0
+trollimage==1.29.0
     # via satpy
-trollsift==1.0.1
+trollsift==1.0.2
     # via satpy
-typing-extensions==4.15.0
-    # via
-    #   numcodecs
-    #   zarr
 universal-pathlib==0.3.10
     # via satpy
 urllib3==2.8.0
@@ -165,7 +161,7 @@ urllib3==2.8.0
     #   botocore
     #   eumdac
     #   requests
-xarray==2026.4.0
+xarray==2026.9.0
     # via satpy
-zarr==3.2.1
+zarr==2.18.7
     # via satpy

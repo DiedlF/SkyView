@@ -3,7 +3,7 @@
 #   cd backend && pip-compile --no-emit-index-url --strip-extras --output-file=requirements.txt requirements.in
 # Use Python 3.12 (as on the server). Dependabot does this automatically.
 
-cfgrib==0.9.14.1
+cfgrib==0.9.15.1
 eccodes>=1.6.0
 scipy
 numpy
@@ -15,5 +15,5 @@ Pillow>=10.0.0
 PyYAML>=6.0.1
 # Pinned: stored ICON data is zarr v2; zarr 3 / newer numcodecs need a data
 # migration first. Dependabot is told to skip them (.github/dependabot.yml).
-zarr==2.17.0
+zarr==2.18.7
 numcodecs==0.12.1

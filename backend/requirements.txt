@@ -22,7 +22,7 @@ certifi==2026.10.23
     # via requests
 cffi==2.0.0
     # via eccodes
-cfgrib==0.9.14.1
+cfgrib==0.9.15.1
     # via -r requirements.in
 charset-normalizer==3.4.4
     # via requests
@@ -113,5 +113,5 @@ uvicorn==0.54.0
     # via -r requirements.in
 xarray==2026.9.0
     # via -r requirements.in
-zarr==2.17.0
+zarr==2.18.7
     # via -r requirements.in
