@@ -14,7 +14,7 @@ anyio==4.16.0
     #   starlette
 asciitree==0.3.3
     # via zarr
-attrs==25.4.0
+attrs==26.1.0
     # via
     #   cfgrib
     #   eccodes

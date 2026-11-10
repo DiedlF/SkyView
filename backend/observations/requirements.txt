@@ -4,168 +4,110 @@
 #
 #    pip-compile --no-emit-index-url --output-file=requirements.txt --strip-extras requirements.in
 #
-boto3==1.43.127
-    # via -r requirements.in
-botocore==1.43.127
+annotated-doc==0.0.6
+    # via fastapi
+annotated-types==0.8.0
+    # via pydantic
+anyio==4.14.2
     # via
-    #   boto3
-    #   s3transfer
+    #   fastapi
+    #   starlette
+asciitree==1.0.0
+    # via zarr
+attrs==26.1.0
+    # via
+    #   cfgrib
+    #   eccodes
 certifi==2026.10.23
-    # via
-    #   netcdf4
-    #   pyproj
-    #   requests
-cftime==1.6.5
-    # via netcdf4
+    # via requests
+cffi==2.1.1
+    # via eccodes
+cfgrib==0.9.14.1
+    # via -r requirements.in
 charset-normalizer==3.4.7
     # via requests
 click==8.4.1
-    # via dask
-cloudpickle==3.1.2
-    # via dask
-configobj==5.0.9
-    # via pyresample
-dask==2026.6.0
-    # via satpy
-defusedxml==0.7.1
-    # via pyorbital
-donfig==0.8.1.post1
     # via
-    #   pyorbital
-    #   pyresample
-    #   satpy
-    #   zarr
-eumdac==3.1.1
+    #   cfgrib
+    #   uvicorn
+eccodes==2.50.0
+    # via
+    #   -r requirements.in
+    #   cfgrib
+eccodeslib==2.50.0.34
+    # via eccodes
+eckitlib==2.5.0.34
+    # via eccodeslib
+fastapi==0.162.4
     # via -r requirements.in
-fsspec==2026.9.0
-    # via
-    #   dask
-    #   universal-pathlib
-google-crc32c==1.8.0
+fasteners==0.20
     # via zarr
-h5py==3.16.0
-    # via -r requirements.in
+findlibs==0.1.5
+    # via eccodes
+h11==0.16.0
+    # via uvicorn
 idna==3.18
-    # via requests
-jmespath==1.1.0
     # via
-    #   boto3
-    #   botocore
-locket==1.0.0
-    # via partd
-netcdf4==1.7.5.1.post1
-    # via -r requirements.in
-numcodecs==0.16.5
-    # via zarr
+    #   anyio
+    #   requests
+numcodecs==0.12.1
+    # via
+    #   -r requirements.in
+    #   zarr
 numpy==2.5.4
     # via
     #   -r requirements.in
-    #   cftime
-    #   dask
-    #   h5py
-    #   netcdf4
+    #   cfgrib
+    #   eccodes
     #   numcodecs
     #   pandas
-    #   pykdtree
-    #   pyorbital
-    #   pyresample
-    #   satpy
     #   scipy
-    #   shapely
-    #   trollimage
     #   xarray
     #   zarr
+opentelemetry-api==1.45.2
+    # via fastapi
 packaging==26.2
-    # via
-    #   dask
-    #   netcdf4
-    #   pooch
-    #   satpy
-    #   xarray
-    #   zarr
-paho-mqtt==2.1.0
-    # via eumdac
+    # via xarray
 pandas==3.0.3
     # via xarray
-partd==1.4.2
-    # via dask
-pathlib-abc==0.5.2
-    # via universal-pathlib
 pillow==13.0.0
-    # via
-    #   -r requirements.in
-    #   satpy
-    #   trollimage
-platformdirs==4.10.0
-    # via
-    #   pooch
-    #   pyresample
-    #   satpy
-pooch==1.9.0
-    # via satpy
-pykdtree==1.4.3
-    # via
-    #   pyresample
-    #   satpy
-pyorbital==1.12.1
-    # via satpy
-pyproj==3.8.0
-    # via
-    #   -r requirements.in
-    #   pyorbital
-    #   pyresample
-    #   satpy
-pyresample==1.35.0
-    # via
-    #   -r requirements.in
-    #   satpy
+    # via -r requirements.in
+pycparser==3.12
+    # via cffi
+pydantic==2.13.5
+    # via fastapi
+pydantic-core==2.46.5
+    # via pydantic
 python-dateutil==2.9.0.post0
-    # via
-    #   botocore
-    #   pandas
+    # via pandas
 pyyaml==6.0.3
-    # via
-    #   dask
-    #   donfig
-    #   eumdac
-    #   pyresample
-    #   satpy
+    # via -r requirements.in
 requests==2.34.2
-    # via
-    #   -r requirements.in
-    #   eumdac
-    #   pooch
-    #   pyorbital
-s3transfer==0.19.1
-    # via boto3
-satpy==0.60.0
     # via -r requirements.in
 scipy==1.17.1
-    # via pyorbital
-shapely==2.1.2
-    # via pyresample
+    # via -r requirements.in
 six==1.17.0
     # via python-dateutil
-toolz==1.1.0
-    # via
-    #   dask
-    #   partd
-trollimage==1.28.0
-    # via satpy
-trollsift==1.0.1
-    # via satpy
+starlette==1.10.0
+    # via fastapi
 typing-extensions==4.15.0
     # via
-    #   numcodecs
-    #   zarr
-universal-pathlib==0.3.10
-    # via satpy
-urllib3==2.8.0
+    #   anyio
+    #   fastapi
+    #   opentelemetry-api
+    #   pydantic
+    #   pydantic-core
+    #   starlette
+    #   typing-inspection
+typing-inspection==0.4.5
     # via
-    #   botocore
-    #   eumdac
-    #   requests
+    #   fastapi
+    #   pydantic
+urllib3==2.8.0
+    # via requests
+uvicorn==0.54.0
+    # via -r requirements.in
 xarray==2026.4.0
-    # via satpy
-zarr==3.2.1
-    # via satpy
+    # via -r requirements.in
+zarr==2.17.0
+    # via -r requirements.in
