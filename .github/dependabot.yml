@@ -5,30 +5,41 @@ updates:
   # Python: pip-tools layout. requirements.in = direct dependencies,
   # requirements.txt = lock compiled by pip-compile. Dependabot re-runs
   # pip-compile, so every PR is a consistent, fully resolved set.
+  #
+  # One entry per environment on purpose: a group spanning both directories
+  # forces one version of a package into both (it once downgraded the ingest
+  # environment's zarr 3 to the web app's zarr 2).
   - package-ecosystem: pip
-    directories:
-      - "/backend"
-      - "/backend/observations"
-    schedule:
+    directory: "/backend"
+    schedule: &weekly
       interval: weekly
       day: monday
       time: "06:00"
       timezone: Europe/Berlin
     open-pull-requests-limit: 5
     groups:
-      # One PR per directory for all minor/patch bumps; major versions
-      # arrive as separate PRs so they can be reviewed on their own.
+      # All minor/patch bumps in one PR; major versions arrive as separate
+      # PRs so they can be reviewed on their own.
       minor-and-patch:
         update-types: ["minor", "patch"]
     ignore:
-      # The web app reads ICON data stored in the zarr v2 format; zarr 3 and
-      # newer numcodecs need a data migration first (see backend/requirements.in).
+      # The web app reads ICON data stored in the zarr v2 format with
+      # zarr 2.17 / numcodecs 0.12 (deliberate pins in requirements.in).
+      # Changing them needs a data-compatibility check first.
       - dependency-name: "zarr"
-        update-types: ["version-update:semver-major"]
       - dependency-name: "numcodecs"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     commit-message:
-      prefix: "deps"
+      prefix: "deps(web)"
+
+  - package-ecosystem: pip
+    directory: "/backend/observations"
+    schedule: *weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "deps(ingest)"
 
   - package-ecosystem: github-actions
     directory: "/"
