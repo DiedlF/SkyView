@@ -21,7 +21,7 @@ charset-normalizer==3.4.4
 click==8.3.1
 eccodes==2.50.0
 eccodeslib==2.45.4.11
-eckitlib==1.32.4.11
+eckitlib==2.5.0.34
 fastapi==0.162.4
 fasteners==0.20
 fckitlib==0.14.1.11
