@@ -5,8 +5,10 @@
 #   * deploy/setup-firewall.sh   - only these hosts may reach port 8501
 #   * backend/trusted_proxies.py - only these hosts' X-Forwarded-* headers are trusted
 #
-# One address per line; "#" starts a comment. After editing, re-run
-# deploy/setup-firewall.sh on the VPS and restart the skyview service.
+# One address per line; "#" starts a comment. After editing, deploy (re-runs
+# deploy/setup-firewall.sh, restarts the service) AND update the matching
+# "tcp dport 8443" rule in /etc/nftables.conf on the VPS - that second
+# firewall is not managed from this repo.
 
 # srv07.cdn64.de (Nuremberg)
 91.99.98.96

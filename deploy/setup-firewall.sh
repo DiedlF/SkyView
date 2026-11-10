@@ -90,5 +90,17 @@ done < <(
     | sort -rn
 )
 
+# --- 6. warn about a second, independent nftables firewall -----------------
+# The box also has /etc/nftables.conf (policy drop, own port list). nftables
+# evaluates every base chain, so a port must be allowed there too, and its
+# "flush ruleset" wipes ufw's rules if nftables.service loads after ufw at boot.
+if systemctl is-enabled nftables >/dev/null 2>&1 && grep -q "flush ruleset" /etc/nftables.conf 2>/dev/null; then
+  echo "[firewall] WARNING: nftables.service is enabled and /etc/nftables.conf flushes the ruleset;"
+  echo "[firewall]          origin ports must also be allowed there, and a reboot may drop ufw's rules."
+  for port in "${PORTS[@]}"; do
+    grep -Eq "dport ${port}( |$)" /etc/nftables.conf || echo "[firewall] WARNING: tcp/${port} is not allowed in /etc/nftables.conf"
+  done
+fi
+
 echo "[firewall] active:"
 ufw status verbose | sed 's/^/[firewall]   /'

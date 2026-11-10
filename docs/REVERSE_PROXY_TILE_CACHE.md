@@ -42,9 +42,15 @@ real visitor for rate limits and visit statistics. If IPv64 changes its servers
 and HTTPS `:8443` (the edge servers) in one process, see `backend/serve.py`.
 The certificate is self-signed (`deploy/ensure-origin-cert.sh`, 10 years) and the
 CDN target has "verify certificate" off: the point is encrypting the hop, not
-proving identity. CDN target: `scheme https`, `port 8443`. Rollback: switch the
-target back to `http`/`8501` (the HTTP listener is kept for exactly that until
-it is bound to 127.0.0.1).
+proving identity. CDN target: `scheme https`, `port 8443`, cache 256 MB, idle eviction 1440 min.
+`:8501` is bound to 127.0.0.1, so the CDN cannot be pointed back at it without
+setting `SKYVIEW_HTTP_HOST=0.0.0.0` and re-allowing the port first.
+
+**Two firewalls on the VPS.** ufw (managed by `deploy/setup-firewall.sh`) and a
+separate `/etc/nftables.conf` table (policy drop, not in this repo). A port
+must be open in both - plus the Hetzner Cloud Firewall in front of the VM. The
+nftables file starts with `flush ruleset`; if it loads after ufw at boot it
+wipes ufw's rules. The deploy log warns about this.
 
 **Monitoring.** `GET /api/health/data` returns 200 while model runs and
 observation frames keep arriving and 503 (with the stale streams named) when one

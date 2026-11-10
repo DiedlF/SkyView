@@ -90,7 +90,7 @@ jobs:
             # ports, SSH stays open (the script allows SSH before anything else).
             # Idempotent; keeps the box in sync with deploy/cdn64-edge-ips.txt.
             echo "[deploy] applying origin firewall"
-            sudo SKYVIEW_ORIGIN_PORTS="8501 8443" bash deploy/setup-firewall.sh || echo "[deploy] WARNING: firewall setup failed - origin may be exposed"
+            sudo SKYVIEW_ORIGIN_PORTS="8443" bash deploy/setup-firewall.sh || echo "[deploy] WARNING: firewall setup failed - origin may be exposed"
 
             # Restart only when relevant files changed (or first deploy)
             NEED_RESTART=1
