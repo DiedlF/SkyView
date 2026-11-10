@@ -1,0 +1,33 @@
+# Weekly dependency update pull requests. CI runs the tests on each one;
+# merging deploys it (see docs/UPDATES.md).
+version: 2
+updates:
+  # Python: the pinned lock files the deploy installs
+  # (backend/requirements-lock.txt, backend/observations/requirements-lock.txt).
+  - package-ecosystem: pip
+    directories:
+      - "/backend"
+      - "/backend/observations"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Berlin
+    open-pull-requests-limit: 5
+    groups:
+      # One PR per directory for all minor/patch bumps; major versions
+      # arrive as separate PRs so they can be reviewed on their own.
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "deps"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"

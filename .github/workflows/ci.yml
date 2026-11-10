@@ -44,7 +44,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -r backend/requirements.txt
+          pip install -r backend/requirements-lock.txt
           pip install pytest pytest-cov pytest-asyncio
       - name: Run pytest
         run: pytest ${{ matrix.pytest-args }}
@@ -53,6 +53,36 @@ jobs:
       - uses: codecov/codecov-action@v5
         if: matrix.name == 'unit'
 
+  # Observation ingest code against the ingest lock file (satpy, h5py, ...),
+  # so Dependabot bumps of those packages are tested before they deploy.
+  ingest-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install ingest dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r backend/observations/requirements-lock.txt pytest
+      - name: Run observation tests
+        run: pytest $(ls tests/test_observations_*.py | grep -v _api)
+        env:
+          PYTHONPATH: backend/
+
+  # Known vulnerabilities in the exact versions production runs.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install pip-audit
+      - run: pip-audit --no-deps --disable-pip -r backend/requirements-lock.txt
+      - run: pip-audit --no-deps --disable-pip -r backend/observations/requirements-lock.txt
+
   qa:
     runs-on: ubuntu-latest
     steps:
@@ -60,7 +90,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - run: pip install -r backend/requirements.txt
+      - run: pip install -r backend/requirements-lock.txt
       - name: Start server and run QA checks
         run: |
           python3 backend/app.py &
@@ -98,7 +128,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -r backend/requirements.txt
+          pip install -r backend/requirements-lock.txt
           pip install pytest pytest-asyncio
       - name: Run perf tests
         run: pytest tests/ -m perf

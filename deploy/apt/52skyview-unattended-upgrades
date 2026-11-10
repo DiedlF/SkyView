@@ -1,0 +1,23 @@
+// Skyview: automatic OS security updates, including the reboot they need.
+// Installed by .github/workflows/deploy.yml to /etc/apt/apt.conf.d/; loads
+// after Ubuntu's 50unattended-upgrades, so these values win.
+//
+// Ubuntu's defaults install security updates daily (06:00-07:00 UTC) but never
+// reboot - the box once ran a 17-week-old kernel with newer ones installed.
+
+// Run the daily package-list refresh and unattended-upgrade (Ubuntu default,
+// repeated here so a freshly provisioned box behaves the same).
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+
+// Reboot only when an update requires it (/var/run/reboot-required), at a
+// quiet hour. The box runs on UTC: 02:30 UTC = 03:30 Berlin (winter), 04:30
+// (summer). Visitors see ~30 s of "reconnecting"; every service comes back
+// on its own, and the IPv64 data-freshness check alerts if one does not.
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
+Unattended-Upgrade::Automatic-Reboot-Time "02:30";
+
+// Keep /boot and the 38 GB disk from filling with old kernels.
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
