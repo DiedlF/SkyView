@@ -24,10 +24,13 @@ let windEnabled = false;
 let windLevel = '10m';
 let modelCapabilities = {};  // Store model capabilities from API
 const OBS_CONFIG = {
-  radar: { product: 'radar_dbz', checkboxId: 'layer-obs-radar', pane: 'skyviewObsRadarPane', opacity: 0.72, label: 'Radar' },
-  satellite: { product: 'hrv', checkboxId: 'layer-obs-satellite', pane: 'skyviewObsSatellitePane', opacity: 0.68, label: 'Sat' },
-  mtg: { product: 'vis_06', checkboxId: 'layer-obs-mtg', pane: 'skyviewObsMtgPane', opacity: 0.68, label: 'MTG' },
-  li: { product: 'flashes', kind: 'points', checkboxId: 'layer-obs-li', pane: 'skyviewObsLightningPane', opacity: 0.95, label: 'LI', color: '#ff2a2a', baseRadius: 2.5, maxRadius: 11 },
+  // staleAfterS: frame age beyond which the label is flagged. Each source has
+  // its own delivery delay (radar ~15 min, MTG/LI ~20-25 min, MSG ~5-10 min), so
+  // one shared limit would flag perfectly current MTG and radar frames.
+  radar: { product: 'radar_dbz', checkboxId: 'layer-obs-radar', pane: 'skyviewObsRadarPane', opacity: 0.72, label: 'Radar', staleAfterS: 1800 },
+  satellite: { product: 'hrv', checkboxId: 'layer-obs-satellite', pane: 'skyviewObsSatellitePane', opacity: 0.68, label: 'Sat', staleAfterS: 1200 },
+  mtg: { product: 'vis_06', checkboxId: 'layer-obs-mtg', pane: 'skyviewObsMtgPane', opacity: 0.68, label: 'MTG', staleAfterS: 2400 },
+  li: { product: 'flashes', kind: 'points', checkboxId: 'layer-obs-li', pane: 'skyviewObsLightningPane', opacity: 0.95, label: 'LI', color: '#ff2a2a', baseRadius: 2.5, maxRadius: 11, staleAfterS: 2400 },
 };
 const obsState = {
   radar: { enabled: false, frames: [], bbox: null, layer: null },
@@ -171,6 +174,11 @@ function updateFallbackBanner(data) {
 
 window.addEventListener('unhandledrejection', (event) => {
   console.error('Unhandled promise rejection:', event.reason);
+  if (isServerUnreachableError(event.reason)) {
+    enterReconnectMode();
+    return;
+  }
+  if (reconnectActive) return;
   showGlobalError('Network/API error. Please retry or reload.');
 });
 
@@ -233,6 +241,7 @@ const I18N = {
     'layer.marker': 'Marker',
     'marker.trackGps': 'Track GPS',
     'legal.dwd': 'Weather: DWD Open Data, CC BY 4.0; observations: EUMETNET/EUMETSAT. Basemap: Esri.',
+    'net.reconnecting': 'Server is restarting or unreachable – reconnecting…',
     'legal.legal': 'Legal',
     'legal.privacy': 'Privacy',
     'legal.terms': 'Terms',
@@ -366,6 +375,7 @@ const I18N = {
     'layer.marker': 'Markierung',
     'marker.trackGps': 'GPS folgen',
     'legal.dwd': 'Wetter: DWD Open Data, CC BY 4.0; Beobachtungen: EUMETNET/EUMETSAT. Basiskarte: Esri.',
+    'net.reconnecting': 'Server startet neu oder ist nicht erreichbar – verbinde neu …',
     'legal.legal': 'Rechtliches',
     'legal.privacy': 'Datenschutz',
     'legal.terms': 'Nutzung',
@@ -500,7 +510,7 @@ function ensureHealthBadge() {
 
 function updateHealthIndicator() {
   const el = ensureHealthBadge();
-  if (apiFailureStreak >= 3) {
+  if (apiFailureStreak >= 3 && !reconnectActive) {
     el.textContent = `Data degraded (${apiFailureStreak} failures)`;
     el.style.display = 'block';
   } else {
@@ -515,7 +525,86 @@ function markApiSuccess() {
   }
 }
 
+// ─── Server unreachable: keep the map, say so, reconnect by ourselves ───
+// During a deploy/restart the CDN answers with its own 502/503 page for a few
+// seconds. Instead of a red "please reload" banner, show a calm notice, probe
+// /api/health with backoff, and reload the visible layers once it answers.
+let reconnectActive = false;
+let reconnectTimer = null;
+let reconnectAttempt = 0;
+let reconnectCooldownUntil = 0;
+
+function isServerUnreachableError(err) {
+  if (!err || err.name === 'AbortError') return false;
+  const status = Number(err.status);
+  if (status === 502 || status === 503 || status === 504) return !err.fromApp;
+  // fetch() itself rejects with a TypeError when the network or server is gone.
+  return err instanceof TypeError && /fetch|network|load failed/i.test(String(err.message || ''));
+}
+
+function setReconnectBanner(visible) {
+  let el = document.getElementById('reconnect-banner');
+  if (!el) {
+    if (!visible) return;
+    el = document.createElement('div');
+    el.id = 'reconnect-banner';
+    el.setAttribute('role', 'status');
+    el.style.cssText = 'position:fixed;left:50%;bottom:12px;transform:translateX(-50%);'
+      + 'background:rgba(40,60,90,0.95);color:#fff;padding:8px 12px;border-radius:8px;'
+      + 'font-size:12px;z-index:9999;max-width:85vw;text-align:center;';
+    document.body.appendChild(el);
+  }
+  el.textContent = t('net.reconnecting');
+  el.style.display = visible ? 'block' : 'none';
+}
+
+function enterReconnectMode() {
+  // Cooldown: if the app is up but one request keeps failing, do not loop.
+  if (reconnectActive || Date.now() < reconnectCooldownUntil) return;
+  reconnectActive = true;
+  reconnectAttempt = 0;
+  setReconnectBanner(true);
+  const probe = async () => {
+    reconnectTimer = null;
+    let ok = false;
+    try {
+      const res = await fetch('/api/health', { cache: 'no-store' });
+      ok = res.ok;
+    } catch (_e) {
+      ok = false;
+    }
+    if (ok) {
+      leaveReconnectMode();
+      return;
+    }
+    reconnectAttempt += 1;
+    reconnectTimer = setTimeout(probe, Math.min(20000, 3000 * (1.5 ** reconnectAttempt)));
+  };
+  reconnectTimer = setTimeout(probe, 3000);
+}
+
+function leaveReconnectMode() {
+  reconnectActive = false;
+  reconnectCooldownUntil = Date.now() + 30000;
+  clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  setReconnectBanner(false);
+  apiFailureStreak = 0;
+  updateHealthIndicator();
+  // Bring back whatever the user was looking at.
+  if (!timesteps.length) {
+    loadTimesteps();
+    return;
+  }
+  refreshTimelineIfChanged();
+  loadSymbols();
+  loadOverlay();
+  loadWind();
+  pollObservationFrames();
+}
+
 function markApiFailure(context, err) {
+  if (isServerUnreachableError(err)) enterReconnectMode();
   apiFailureStreak += 1;
   updateHealthIndicator();
   if (err && err.requestId) {
@@ -581,9 +670,10 @@ async function ensureMarkerAuthToken(force = false) {
 async function throwHttpError(res, context = 'request') {
   let detail = `HTTP ${res.status}`;
   let requestId = res.headers.get('X-Request-Id') || null;
+  let fromApp = false;
   try {
     const j = await res.json();
-    if (j && j.detail) detail = j.detail;
+    if (j && j.detail) { detail = j.detail; fromApp = true; }
     if (j && j.requestId) requestId = j.requestId;
   } catch (_e) {
     // ignore non-JSON body
@@ -591,6 +681,9 @@ async function throwHttpError(res, context = 'request') {
   const err = new Error(`${context}: ${detail}`);
   err.status = res.status;
   err.requestId = requestId;
+  // The app answers errors with JSON {detail}; an HTML error page instead
+  // means the CDN could not reach the app (restart, deploy, outage).
+  err.fromApp = fromApp;
   throw err;
 }
 
@@ -1986,7 +2079,7 @@ function updateObservationTimebar() {
   const age = Number(frame?.age_s);
   const ageText = Number.isFinite(age) ? ` · ${Math.round(age / 60)} min` : '';
   label.textContent = `${OBS_CONFIG[source]?.label || source} ${hh}:${mm} UTC${ageText}`;
-  label.classList.toggle('stale', Number.isFinite(age) && age > 600);
+  label.classList.toggle('stale', Number.isFinite(age) && age > (OBS_CONFIG[source]?.staleAfterS || 1200));
   playBtn.textContent = obsState.playing ? 'Ⅱ' : '▶';
   bar.style.display = 'flex';
 }
@@ -4066,10 +4159,13 @@ async function refreshTimelineIfChanged() {
 
 async function pollIngestPulse() {
   // A background tab does not need fresh data; it catches up on return.
-  if (document.hidden) return;
+  if (document.hidden || reconnectActive) return;
   try {
     const res = await fetch('/api/ingest_pulse');
-    if (!res.ok) return;
+    if (!res.ok) {
+      if (res.status >= 502 && res.status <= 504) enterReconnectMode();
+      return;
+    }
     const pulse = await res.json();
 
     const rev = pulse?.revision || null;
@@ -4084,8 +4180,8 @@ async function pollIngestPulse() {
     if (revChanged || justFinished) {
       await refreshTimelineIfChanged();
     }
-  } catch (_) {
-    // ignore pulse errors
+  } catch (e) {
+    if (isServerUnreachableError(e)) enterReconnectMode();
   }
 }
 

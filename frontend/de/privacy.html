@@ -39,6 +39,11 @@
     </section>
 
     <section>
+      <h2>Hosting und Auslieferung</h2>
+      <p>Skyview läuft auf einem gemieteten virtuellen Server und wird über CDN64 ausgeliefert, den Content-Delivery-Dienst von IPv64.net, dessen Edge-Server in Deutschland stehen. Die Edge-Server beenden die verschlüsselte Verbindung und leiten deine Anfragen an den Skyview-Server weiter. Dabei verarbeiten sie im Auftrag des Betreibers deine IP-Adresse und Anfragemetadaten. Inhalte, die für alle Besucher gleich sind, etwa Skripte, Overlay-Kacheln und Beobachtungsbilder, können vorübergehend auf den Edge-Servern zwischengespeichert werden.</p>
+    </section>
+
+    <section>
       <h2>Nutzungsstatistiken</h2>
       <p>Skyview erfasst aggregierte Seitenaufrufstatistiken. Geschätzte eindeutige Besucher werden aus einem gesalzenen Hash von IP-Adresse, User-Agent und akzeptierter Sprache berechnet. Roh-IP-Adressen werden nicht in der Nutzungsstatistikdatei gespeichert, können aber weiterhin in Server- oder Hosting-Logs vorkommen.</p>
     </section>
@@ -60,7 +65,7 @@
 
     <section>
       <h2>Drittanbieteranfragen</h2>
-      <p>Das aktuelle Frontend lädt Leaflet und uPlot von unpkg.com sowie Kartenkacheln von Esri ArcGIS-Diensten. Dein Browser kann dabei Anfragemetadaten einschließlich deiner IP-Adresse an diese Anbieter senden. Für einen kostenpflichtigen öffentlichen Start sollte Self-Hosting der Frontend-Bibliotheken geprüft werden.</p>
+      <p>Die Frontend-Bibliotheken Leaflet und uPlot werden von Skyview selbst ausgeliefert; es geht keine Anfrage an einen Bibliotheks-Host. Die Basiskartenkacheln werden von Esri ArcGIS-Diensten geladen. Dein Browser sendet deshalb beim Anzeigen der Karte Anfragemetadaten einschließlich deiner IP-Adresse an Esri. Wenn du die Ortssuche nutzt, leitet der Skyview-Server den Suchtext, nicht aber deine IP-Adresse, an den Dienst OpenStreetMap Nominatim weiter.</p>
     </section>
 
     <section>
@@ -73,7 +78,7 @@
       <p>Je nach anwendbarem Recht können dir Rechte auf Auskunft, Berichtigung, Löschung, Einschränkung, Widerspruch, Datenübertragbarkeit und Beschwerde bei einer Aufsichtsbehörde zustehen. Kontaktdaten stehen im <a href="/de/impressum.html">Impressum</a>.</p>
     </section>
 
-    <p class="meta">Zuletzt aktualisiert: 2026-05-05</p>
+    <p class="meta">Zuletzt aktualisiert: 2026-11-10</p>
   </main>
 </body>
 </html>

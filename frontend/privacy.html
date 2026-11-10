@@ -39,6 +39,11 @@
     </section>
 
     <section>
+      <h2>Hosting and content delivery</h2>
+      <p>Skyview runs on a rented virtual server and is delivered through CDN64, the content delivery service of IPv64.net, whose edge servers are located in Germany. The edge servers terminate the encrypted connection and forward your requests to the Skyview server. In doing so they process your IP address and request metadata on behalf of the operator. Content that is the same for every visitor, such as scripts, map overlay tiles and observation images, may be stored temporarily on the edge servers.</p>
+    </section>
+
+    <section>
       <h2>Usage statistics</h2>
       <p>Skyview records aggregate page-load statistics. Estimated unique visitors are calculated from a salted hash of IP address, user agent, and accepted language. Raw IP addresses are not stored in the usage statistics file, but they may still appear in server or hosting logs.</p>
     </section>
@@ -60,7 +65,7 @@
 
     <section>
       <h2>Third-party requests</h2>
-      <p>The current frontend loads Leaflet and uPlot from unpkg.com and map tiles from Esri ArcGIS services. Your browser may send request metadata, including your IP address, to those providers. For a paid public launch, self-hosting frontend libraries should be considered.</p>
+      <p>The frontend libraries Leaflet and uPlot are served by Skyview itself; no request is sent to a library host. The basemap tiles are loaded from Esri ArcGIS services, so your browser sends request metadata, including your IP address, to Esri when the map is displayed. When you use the location search, the Skyview server forwards the search text, but not your IP address, to the OpenStreetMap Nominatim service.</p>
     </section>
 
     <section>
@@ -73,7 +78,7 @@
       <p>Depending on applicable law, you may have rights to access, correction, deletion, restriction, objection, portability, and complaint to a supervisory authority. Contact details are provided in the <a href="/impressum.html">Impressum</a>.</p>
     </section>
 
-    <p class="meta">Last updated: 2026-05-05</p>
+    <p class="meta">Last updated: 2026-11-10</p>
   </main>
 </body>
 </html>
