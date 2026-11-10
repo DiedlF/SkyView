@@ -42,7 +42,7 @@ pykdtree==1.4.3
 pyorbital==1.12.1
 pyproj==3.8.0
 pyresample==1.35.0
-python-dateutil==2.9.0.post0
+python-dateutil==4.0.0
 PyYAML==6.0.3
 requests==2.34.2
 s3transfer==0.19.1
