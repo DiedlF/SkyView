@@ -52,14 +52,15 @@ jobs:
               echo "[deploy] creating venv"
               python3 -m venv venv
             fi
-            # Exact versions from the lock files (tested in CI, updated via
-            # Dependabot PRs). Never --upgrade here: that pulled untested
+            # Exact versions from the compiled lock files (requirements.txt,
+            # generated from requirements.in by pip-compile; tested in CI,
+            # updated via Dependabot PRs). Never --upgrade here: that pulled untested
             # versions into production on every deploy.
             echo "[deploy] installing python deps from lock file (with pip cache)"
             export PIP_CACHE_DIR="$HOME/.cache/pip"
             mkdir -p "$PIP_CACHE_DIR"
             venv/bin/pip install --upgrade pip
-            venv/bin/pip install -r backend/requirements-lock.txt
+            venv/bin/pip install -r backend/requirements.txt
             venv/bin/pip check || echo "[deploy] WARNING: web venv has inconsistent dependencies"
 
             # Observation ingest venv: geo/satellite dependencies are kept out of
@@ -70,7 +71,7 @@ jobs:
             fi
             echo "[deploy] installing observation ingest deps (with pip cache)"
             .venv-obs/bin/pip install --upgrade pip
-            .venv-obs/bin/pip install -r backend/observations/requirements-lock.txt
+            .venv-obs/bin/pip install -r backend/observations/requirements.txt
             .venv-obs/bin/pip check || echo "[deploy] WARNING: observation venv has inconsistent dependencies"
 
             # Always refresh systemd unit (safe, cheap)

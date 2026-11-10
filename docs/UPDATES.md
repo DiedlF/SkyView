@@ -5,7 +5,7 @@
 | Ubuntu security updates | `unattended-upgrades`, daily 06:00-07:00 UTC | nothing |
 | Reboots they require | automatic at **02:30 UTC** (03:30 Berlin winter / 04:30 summer), only when `/var/run/reboot-required` exists | nothing; the IPv64 "Skyview data freshness" check alerts if the site does not come back |
 | Other Ubuntu updates | by hand, monthly (below) | ~5 min |
-| Python packages | pinned in `backend/requirements-lock.txt` and `backend/observations/requirements-lock.txt`; Dependabot opens PRs every Monday | review + merge the PR when CI is green |
+| Python packages | direct deps in `requirements.in`, exact versions in the compiled `requirements.txt` (`backend/`, `backend/observations/`); Dependabot opens PRs every Monday | review + merge the PR when CI is green |
 | Known vulnerabilities | CI job `audit` (pip-audit) on every push/PR and nightly | fix = merge the Dependabot PR, or bump the pin by hand |
 | GitHub Actions versions | Dependabot PR, monthly | merge |
 | Leaflet / uPlot (`frontend/vendor/`) | by hand when needed | see below |
@@ -34,9 +34,14 @@ start/stop actions flush ufw's firewall rules.
 - Dependabot groups minor/patch bumps into one PR per environment and sends
   major versions separately. CI runs the web tests (`test`), the ingest tests
   against the ingest lock (`ingest-tests`) and `pip-audit` (`audit`).
-- Changing a direct dependency by hand: edit `requirements.txt`, install it into
-  a clean Python 3.12 venv, run the tests, and replace the lock file with
-  `pip freeze` (without pip/setuptools/wheel).
+- Changing a direct dependency by hand: edit `requirements.in`, then in that
+  folder run `pip-compile --no-emit-index-url --strip-extras --output-file=requirements.txt requirements.in`
+  (Python 3.12, `pip install pip-tools`). `pip-compile --upgrade-package NAME`
+  bumps one package; the existing pins are kept otherwise.
+- `zarr`/`numcodecs` in the web app are pinned on purpose (zarr v2 data format)
+  and excluded from Dependabot's major updates.
+- Dependabot PRs whose CI fails at "pip install" are conflicting sets; close them
+  or comment `@dependabot recreate`.
 
 ## Frontend libraries
 

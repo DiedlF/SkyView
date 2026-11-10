@@ -2,8 +2,9 @@
 # merging deploys it (see docs/UPDATES.md).
 version: 2
 updates:
-  # Python: the pinned lock files the deploy installs
-  # (backend/requirements-lock.txt, backend/observations/requirements-lock.txt).
+  # Python: pip-tools layout. requirements.in = direct dependencies,
+  # requirements.txt = lock compiled by pip-compile. Dependabot re-runs
+  # pip-compile, so every PR is a consistent, fully resolved set.
   - package-ecosystem: pip
     directories:
       - "/backend"
@@ -19,6 +20,13 @@ updates:
       # arrive as separate PRs so they can be reviewed on their own.
       minor-and-patch:
         update-types: ["minor", "patch"]
+    ignore:
+      # The web app reads ICON data stored in the zarr v2 format; zarr 3 and
+      # newer numcodecs need a data migration first (see backend/requirements.in).
+      - dependency-name: "zarr"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "numcodecs"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     commit-message:
       prefix: "deps"
 
