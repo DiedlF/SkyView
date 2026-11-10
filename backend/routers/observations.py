@@ -4,7 +4,7 @@ import datetime as dt
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 
 try:
@@ -134,10 +134,32 @@ def frame_payload(source: str, frame: dict, *, now: Optional[dt.datetime] = None
                 f"/api/observations/points/{source}/{product}/{fid}.json"
             )
         else:
+            suffix = Path(str(filename)).suffix.lower()
+            if suffix not in _RENDER_MEDIA_TYPES:
+                suffix = ".png"
             out.setdefault("render_urls", {})[product] = (
-                f"/api/observations/render/{source}/{product}/{fid}.png"
+                f"/api/observations/render/{source}/{product}/{fid}{suffix}"
             )
     return out
+
+
+# Raster render formats -> content type. The URL suffix is advisory (older
+# frames are PNG, newer satellite frames WebP); the stored file decides.
+_RENDER_MEDIA_TYPES = {".png": "image/png", ".webp": "image/webp"}
+
+# A frame is written exactly once per frame id (ingest dedups on it), so a URL
+# that names the id is immutable and may be cached for as long as the ring
+# buffer keeps it. ``latest`` / nearest-time lookups resolve to a different
+# frame as new data arrives and must stay short-lived.
+_FRAME_CACHE_IMMUTABLE = "public, max-age=21600, immutable"
+_FRAME_CACHE_FLOATING = "public, max-age=60"
+# Frame listings are polled once a minute by every open tab; a short shared TTL
+# lets the CDN answer most of those polls without reaching the app.
+_FRAME_LIST_CACHE = "public, max-age=20"
+
+
+def _frame_cache_control(time_str: str, fid: str) -> str:
+    return _FRAME_CACHE_IMMUTABLE if fid and str(time_str).strip() == fid else _FRAME_CACHE_FLOATING
 
 
 def observations_summary() -> dict:
@@ -165,7 +187,10 @@ def build_observations_router():
     router = APIRouter()
 
     @router.get("/api/observations/frames")
-    async def api_observation_frames(source: str = Query(...), product: Optional[str] = Query(None)):
+    async def api_observation_frames(
+        response: Response, source: str = Query(...), product: Optional[str] = Query(None)
+    ):
+        response.headers["Cache-Control"] = _FRAME_LIST_CACHE
         source_v = _validate_source(source)
         product_v = _validate_product(source_v, product)
         manifest = store.read_manifest(source_v)
@@ -191,6 +216,7 @@ def build_observations_router():
         return observations_summary()
 
     @router.get("/api/observations/render/{source}/{product}/{time_str}.png")
+    @router.get("/api/observations/render/{source}/{product}/{time_str}.webp", include_in_schema=False)
     async def api_observation_render(source: str, product: str, time_str: str):
         source_v = _validate_source(source)
         product_v = _validate_product(source_v, product)
@@ -205,7 +231,7 @@ def build_observations_router():
 
         valid_time = str(frame.get("valid_time") or "")
         headers = {
-            "Cache-Control": "public, max-age=240",
+            "Cache-Control": _frame_cache_control(time_str, fid),
             "X-Observation-Source": source_v,
             "X-Observation-Product": product_v,
             "X-Frame-Id": fid,
@@ -215,7 +241,8 @@ def build_observations_router():
                 "X-Observation-Source, X-Observation-Product, X-Frame-Id, X-ValidTime, X-Bbox"
             ),
         }
-        return FileResponse(path, media_type="image/png", headers=headers)
+        media_type = _RENDER_MEDIA_TYPES.get(Path(path).suffix.lower(), "image/png")
+        return FileResponse(path, media_type=media_type, headers=headers)
 
     @router.get("/api/observations/points/{source}/{product}/{time_str}.json")
     async def api_observation_points(source: str, product: str, time_str: str):
@@ -232,7 +259,7 @@ def build_observations_router():
 
         valid_time = str(frame.get("valid_time") or "")
         headers = {
-            "Cache-Control": "public, max-age=240",
+            "Cache-Control": _frame_cache_control(time_str, fid),
             "X-Observation-Source": source_v,
             "X-Observation-Product": product_v,
             "X-Frame-Id": fid,

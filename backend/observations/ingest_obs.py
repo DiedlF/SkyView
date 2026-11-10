@@ -126,7 +126,7 @@ def ingest_satellite(cfg: Config) -> Optional[str]:
         try:
             product_path = src.download_product(product, Path(tmp))
             native = extract_native_file(product_path, Path(tmp))
-            tmp_png = Path(tmp) / "satellite_hrv.png"
+            tmp_png = Path(tmp) / "satellite_hrv.webp"
             render_satellite_hrv_png(native, tmp_png, bbox=cfg.satellite.roi_bbox)
             store.write_frame_render(
                 "satellite",
@@ -197,7 +197,7 @@ def ingest_mtg(cfg: Config) -> Optional[str]:
                 log.warning("mtg: no chunk files downloaded for %s", product)
                 return None
 
-            tmp_png = Path(tmp) / "mtg_vis06.png"
+            tmp_png = Path(tmp) / "mtg_vis06.webp"
             render_fci_vis_png(chunks, tmp_png, bbox=cfg.mtg.roi_bbox, channel=cfg.mtg.channel)
             store.write_frame_render(
                 "mtg",

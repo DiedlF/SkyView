@@ -12,6 +12,10 @@ from pathlib import Path
 _DASK_SINGLE_THREADED = False
 
 
+# WebP quality for the grayscale satellite renders (see _save_grayscale_png).
+GRAYSCALE_WEBP_QUALITY = 82
+
+
 def _force_single_threaded_dask() -> None:
     """Pin dask to the synchronous scheduler for all satpy computation.
 
@@ -35,7 +39,6 @@ def _force_single_threaded_dask() -> None:
 def render_radar_dbz_png(field, out_png: Path) -> Path:
     """Render a reprojected OPERA dBZ field as a north-up RGBA PNG."""
     import numpy as np
-    from PIL import Image
 
     data = np.asarray(field, dtype="float32")
     if data.ndim != 2:
@@ -68,12 +71,38 @@ def render_radar_dbz_png(field, out_png: Path) -> Path:
     rgba[~valid | (data < 0.0)] = (0, 0, 0, 0)
 
     out_png.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(rgba, mode="RGBA").save(out_png, optimize=True)
+    _save_rgba_png(rgba, out_png)
     return out_png
 
 
+def _save_rgba_png(rgba, out_png: Path) -> None:
+    """Write an RGBA array as a palette PNG when it has at most 256 colours.
+
+    The dBZ colour ramp only ever produces ~120 distinct RGBA values, so an
+    indexed PNG with a per-entry alpha (tRNS) table is pixel-identical to the
+    truecolour one at roughly a third of the size (1.6 MB -> 0.5 MB per frame).
+    Falls back to plain RGBA if the image is unexpectedly colour-rich.
+    """
+    import numpy as np
+    from PIL import Image
+
+    rgba = np.ascontiguousarray(rgba, dtype="uint8")
+    packed = rgba.view(np.uint32).reshape(rgba.shape[:2])
+    colours, index = np.unique(packed, return_inverse=True)
+    if colours.size > 256:
+        Image.fromarray(rgba, mode="RGBA").save(out_png, optimize=True)
+        return
+    palette = colours.view(np.uint8).reshape(-1, 4)
+    img = Image.fromarray(index.reshape(rgba.shape[:2]).astype("uint8"), mode="P")
+    img.putpalette(palette[:, :3].tobytes())
+    img.save(out_png, optimize=True, transparency=bytes(palette[:, 3].tolist()))
+
+
 def _save_grayscale_png(data, out_png: Path, *, label: str) -> Path:
-    """Percentile-stretch a reflectance field to an 8-bit grayscale PNG.
+    """Percentile-stretch a reflectance field to an 8-bit grayscale image.
+
+    The output format follows ``out_png``'s suffix: ``.webp`` (lossy, what the
+    ingest uses) or anything else for a lossless PNG.
 
     ``data`` is the resampled, north-up SkyView-grid array (NaN off-disk). The
     0.5/99.8 percentile stretch matches across both visible products so MSG HRV
@@ -93,7 +122,15 @@ def _save_grayscale_png(data, out_png: Path, *, label: str) -> Path:
     scaled[~finite] = 0.0
 
     out_png.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray((scaled * 255.0).astype("uint8"), mode="L").save(out_png, optimize=True)
+    img = Image.fromarray((scaled * 255.0).astype("uint8"), mode="L")
+    if out_png.suffix.lower() == ".webp":
+        # Lossy WebP: ~0.2 MB per 1701x1588 frame instead of ~1.2 MB as PNG.
+        # Cloud imagery has no sharp synthetic edges, so quality 82 is visually
+        # indistinguishable at map zoom while a 59-frame loop drops from ~75 MB
+        # to ~12 MB of transfer.
+        img.save(out_png, format="WEBP", quality=GRAYSCALE_WEBP_QUALITY, method=4)
+    else:
+        img.save(out_png, optimize=True)
     return out_png
 
 

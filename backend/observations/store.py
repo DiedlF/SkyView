@@ -67,9 +67,14 @@ def frame_zarr_path(source: str, fid: str) -> Path:
     return source_dir(source) / f"{fid}.zarr"
 
 
-def frame_render_path(source: str, fid: str, product: str) -> Path:
+# Raster render formats the ingest may write and the API may serve.
+RENDER_SUFFIXES = (".png", ".webp")
+
+
+def frame_render_path(source: str, fid: str, product: str, suffix: str = ".png") -> Path:
     safe_product = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in product)
-    return source_dir(source) / f"{fid}_{safe_product}.png"
+    suffix = suffix.lower() if suffix.lower() in RENDER_SUFFIXES else ".png"
+    return source_dir(source) / f"{fid}_{safe_product}{suffix}"
 
 
 def _as_utc(when: dt.datetime) -> dt.datetime:
@@ -261,7 +266,7 @@ def _remove_frame_dir(source: str, fid: str) -> None:
             path.unlink()
         except OSError:
             pass
-    for pattern in (f"{fid}_*.png", f"{fid}_*.json"):
+    for pattern in (f"{fid}_*.png", f"{fid}_*.webp", f"{fid}_*.json"):
         for render_path in source_dir(source).glob(pattern):
             try:
                 render_path.unlink()
@@ -280,9 +285,13 @@ def write_frame_render(
     cadence_seconds: Optional[int] = None,
     prune_after: bool = True,
 ) -> Path:
-    """Commit a derived PNG render and index it in the manifest."""
+    """Commit a derived raster render (PNG or WebP) and index it in the manifest.
+
+    The stored file keeps ``png_path``'s suffix, so the manifest records the
+    real format and the API can serve it with the matching content type.
+    """
     fid = frame_id(when)
-    dest = frame_render_path(source, fid, product)
+    dest = frame_render_path(source, fid, product, suffix=Path(png_path).suffix)
     dest.parent.mkdir(parents=True, exist_ok=True)
     if Path(png_path).resolve() != dest.resolve():
         shutil.copyfile(png_path, dest)
