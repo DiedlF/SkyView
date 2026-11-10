@@ -57,4 +57,4 @@ typing_extensions==4.15.0
 universal_pathlib==0.3.10
 urllib3==2.8.0
 xarray==2026.4.0
-zarr==3.2.1
+zarr==3.4.2
