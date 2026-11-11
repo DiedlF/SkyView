@@ -58,6 +58,16 @@ stops - limits in `backend/health_checks.py`. Point an HTTP check at it through
 the public hostname: that one check covers CDN, app, box and ingest. `/api/health`
 alone stayed green during the 2026-07 ingest stall.
 
+**Admin page.** `/admin` (HTTP Basic auth) shows the same verdict: its Status
+tab lists one row per thing that can break - both models, the four observation
+sources, the two ingest pipelines, disk, memory, 5xx errors - each with its
+current value and limit. The data rows are computed by the function behind
+`/api/health/data`, so the page and the external check cannot disagree; the
+extra limits (disk, memory, hung ingest) are in `backend/admin_ops.py`. Request
+counters, latencies and cache figures on the page count from the last app start
+and cover origin requests only - what the edge answers from its cache never
+reaches the app.
+
 **Check after a deploy**
 
 ```bash

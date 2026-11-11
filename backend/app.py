@@ -45,7 +45,6 @@ import atexit
 import uuid
 import json
 import glob
-import subprocess
 import requests
 from email.utils import parsedate_to_datetime
 from time import perf_counter
@@ -85,6 +84,7 @@ from model_caps import get_models_payload
 from response_headers import build_overlay_headers, build_tile_headers, tile_cache_control_for
 from usage_stats import record_visit, get_usage_stats, get_marker_stats, is_automated_agent
 from health_checks import OBSERVATION_MAX_AGE_SECONDS, data_freshness
+import admin_ops
 from airport_lookup import curated_matches, item_icao, normalize_icao_query
 import marker_auth as _marker_auth
 from services.model_select import resolve_eu_time_strict as svc_resolve_eu_time_strict, load_eu_data_strict as svc_load_eu_data_strict
@@ -214,6 +214,12 @@ except ValueError:
     HSTS_MAX_AGE = 2592000
 
 api_error_counters = {"4xx": 0, "5xx": 0}
+# Every counter below lives in this process and starts at zero on each restart
+# (deploy, nightly reboot); the admin page shows this time next to them.
+PROCESS_STARTED_AT = datetime.now(timezone.utc)
+# Timestamps of recent 5xx responses, so health can judge "errors in the last
+# hour" instead of a since-start total that never recovers.
+recent_server_errors: deque = deque(maxlen=2000)
 
 # Admin overview telemetry (in-process rolling windows)
 REQUEST_METRICS_WINDOW = int(os.environ.get("SKYVIEW_REQUEST_METRICS_WINDOW", "400"))
@@ -519,8 +525,15 @@ async def log_requests(request: Request, call_next):
         api_error_counters["4xx"] += 1
     elif response.status_code >= 500:
         api_error_counters["5xx"] += 1
+        recent_server_errors.append(time.time())
 
-    _record_request_metric(request.url.path, response.status_code, duration_ms)
+    _record_request_metric(
+        admin_ops.metric_key(
+            getattr(request.scope.get("route"), "path", None), request.url.path, response.status_code
+        ),
+        response.status_code,
+        duration_ms,
+    )
     feat = _classify_feature(request.url.path)
     feature_usage_counters[feat] = feature_usage_counters.get(feat, 0) + 1
 
@@ -2099,10 +2112,24 @@ app.include_router(build_observations_router())
 
 
 def _tail_lines(path: str, limit: int = 300) -> list[str]:
+    """Last ``limit`` lines of a file, reading only as much of its end as needed (logs reach 10 MB)."""
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
-        return [ln.rstrip("\n") for ln in lines[-limit:]]
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            window = max(4096, limit * 200)
+            while True:
+                start = max(0, size - window)
+                f.seek(start)
+                chunk = f.read()
+                # One extra newline: the first line of the window is cut off mid-way.
+                if start == 0 or chunk.count(b"\n") > limit:
+                    break
+                window *= 4
+        lines = chunk.decode("utf-8", errors="replace").splitlines()
+        if start > 0 and lines:
+            lines = lines[1:]
+        return lines[-limit:]
     except Exception:
         return []
 
@@ -2395,16 +2422,9 @@ async def api_admin_storage():
         except Exception:
             pass
 
-    running = []
-    try:
-        def _find_ingest_procs():
-            pr = subprocess.run(["pgrep", "-af", "ingest.py"], capture_output=True, text=True, timeout=2)
-            if pr.returncode == 0 and pr.stdout.strip():
-                return [ln.strip() for ln in pr.stdout.strip().splitlines() if ln.strip()]
-            return []
-        running = await asyncio.to_thread(_find_ingest_procs)
-    except Exception:
-        pass
+    pipelines = await asyncio.to_thread(admin_ops.read_pipelines)
+    forecast_pipeline = pipelines.get("forecast", {})
+    running = [p["command"] for p in forecast_pipeline.get("processes", [])]
 
     out["tmp"] = {
         "path": tmp_dir,
@@ -2414,16 +2434,45 @@ async def api_admin_storage():
     out["ingest"] = {
         "lock": lock_info,
         "runningProcesses": running,
-        "isRunning": bool(running) or bool(lock_info.get("exists")),
+        "isRunning": bool(forecast_pipeline.get("running")),
     }
+    out["pipelines"] = pipelines
 
     return out
+
+
+# Logs written outside backend/logs/ that the admin page should also show. The
+# observation ingest runs as its own systemd unit and logs here.
+ADMIN_EXTRA_LOG_FILES = [
+    p.strip()
+    for p in os.environ.get("SKYVIEW_ADMIN_EXTRA_LOGS", "/var/log/skyview-observations.log").split(",")
+    if p.strip()
+]
+
+
+def _admin_log_source(path: str) -> str:
+    b = os.path.basename(path).lower()
+    if "obs" in b:
+        return "observations"
+    if b.startswith("ingest"):
+        return "ingest"
+    if b.endswith(".out"):
+        return "stdout"
+    return "backend"
+
+
+def _admin_log_files() -> list[tuple[str, str]]:
+    """(path, source) of every log the admin page reads, existing files only."""
+    logs_dir = os.path.join(SCRIPT_DIR, "logs")
+    files = sorted(glob.glob(os.path.join(logs_dir, "*.log")) + glob.glob(os.path.join(logs_dir, "*.out")))
+    files += [p for p in ADMIN_EXTRA_LOG_FILES if os.path.isfile(p) and p not in files]
+    return [(p, _admin_log_source(p)) for p in files]
 
 
 async def api_admin_logs(
     limit: int = Query(5000, ge=50, le=5000),
     level: str = Query("all", description="all|error|warn|info|debug"),
-    source: str = Query("all", description="all|backend|ingest|stdout"),
+    source: str = Query("all", description="all|backend|ingest|observations|stdout"),
 ):
     """Recent backend and ingest logs for admin/status view.
 
@@ -2432,20 +2481,8 @@ async def api_admin_logs(
     query param filters to one group.
     """
 
-    def _source_for_file(basename: str) -> str:
-        b = basename.lower()
-        if b.startswith("ingest"):
-            return "ingest"
-        if b.endswith(".out"):
-            return "stdout"
-        return "backend"
-
     def _collect_logs_payload():
         logs_dir = os.path.join(SCRIPT_DIR, "logs")
-        all_files = sorted(
-            glob.glob(os.path.join(logs_dir, "*.log"))
-            + glob.glob(os.path.join(logs_dir, "*.out"))
-        )
 
         lvl = (level or "all").strip().lower()
         needles = {
@@ -2458,9 +2495,8 @@ async def api_admin_logs(
         src_filter = (source or "all").strip().lower()
 
         payload: list[dict[str, Any]] = []
-        for fp in all_files:
+        for fp, file_source in _admin_log_files():
             basename = os.path.basename(fp)
-            file_source = _source_for_file(basename)
 
             if src_filter != "all" and file_source != src_filter:
                 continue
@@ -2477,8 +2513,8 @@ async def api_admin_logs(
                 "tail": lines,
             })
 
-        # Sort: backend first, then ingest, then stdout
-        _order = {"backend": 0, "ingest": 1, "stdout": 2}
+        # Sort: backend first, then ingest, observations, stdout
+        _order = {"backend": 0, "ingest": 1, "observations": 2, "stdout": 3}
         payload.sort(key=lambda e: (_order.get(e["source"], 9), e["file"]))
 
         ingest_artifacts = [
@@ -2583,17 +2619,11 @@ def _extract_log_timestamp(line: str) -> Optional[datetime]:
 
 
 def _collect_recent_error_groups(limit_per_file: int = 1200, max_groups: int = 20) -> list[dict[str, Any]]:
-    logs_dir = os.path.join(SCRIPT_DIR, 'logs')
-    files = sorted(glob.glob(os.path.join(logs_dir, '*.log')) + glob.glob(os.path.join(logs_dir, '*.out')))
     groups: dict[str, dict[str, Any]] = {}
     now = datetime.now(timezone.utc)
-    keywords = ('error', 'exception', 'traceback', 'critical', 'failed')
-    for fp in files:
-        basename = os.path.basename(fp)
-        source = 'ingest' if basename.lower().startswith('ingest') else ('stdout' if basename.lower().endswith('.out') else 'backend')
+    for fp, source in _admin_log_files():
         for line in _tail_lines(fp, limit=limit_per_file):
-            lo = line.lower()
-            if not any(k in lo for k in keywords):
+            if not admin_ops.is_error_line(line):
                 continue
             ts = _extract_log_timestamp(line)
             bucket = _human_error_fingerprint(line)
@@ -2783,6 +2813,30 @@ def _summarize_data_integrity(storage: dict[str, Any], status: dict[str, Any], r
     }
 
 
+_deployed_commit_cache: Optional[dict] = None
+
+
+def _deployed_commit() -> Optional[dict]:
+    """Checked-out commit; read once, since a deploy always restarts the app."""
+    global _deployed_commit_cache
+    if _deployed_commit_cache is None:
+        _deployed_commit_cache = admin_ops.deployed_commit(os.path.join(SCRIPT_DIR, "..")) or {}
+    return _deployed_commit_cache or None
+
+
+def _observations_admin() -> dict[str, Any]:
+    """Per-source ring-buffer state and disk use for the admin page."""
+    summary = observations_summary().get("sources", {})
+    sources = []
+    total = 0
+    for source, meta in summary.items():
+        buffer = admin_ops.observation_buffer(observation_store.read_manifest(source))
+        size = _dir_size_bytes(str(observation_store.source_dir(source)))
+        total += size
+        sources.append({"source": source, "label": meta.get("label"), "bytes": size, **buffer})
+    return {"sources": sources, "totalBytes": int(total)}
+
+
 def _pct(values: List[float], p: float) -> Optional[float]:
     if not values:
         return None
@@ -2801,23 +2855,27 @@ async def api_admin_overview_metrics():
     storage = await api_admin_storage()
     status = await api_status()
 
-    endpoint_rows = []
+    # One row per route with traffic, errors and latency together.
+    endpoints = []
     for path, m in request_metrics.items():
+        lats = list(m.get("latencyMs", []))
         total = int(m.get("count", 0))
         e4 = int(m.get("errors4xx", 0))
         e5 = int(m.get("errors5xx", 0))
-        err_total = e4 + e5
-        endpoint_rows.append({
+        endpoints.append({
             "path": path,
             "requests": total,
             "errors4xx": e4,
             "errors5xx": e5,
-            "errorTotal": err_total,
-            "errorRate": (err_total / total) if total else None,
+            "errorRate": ((e4 + e5) / total) if total else None,
+            "p50Ms": _pct(lats, 0.5),
+            "p95Ms": _pct(lats, 0.95),
+            "p99Ms": _pct(lats, 0.99),
+            "slowOver1s": int(m.get("slowOver1s", 0)),
+            "slowOver2s": int(m.get("slowOver2s", 0)),
             "lastSeen": m.get("lastSeen"),
         })
-    top_failing = sorted(endpoint_rows, key=lambda r: (r["errorTotal"], r["errors5xx"], r["requests"]), reverse=True)[:10]
-    traffic_errors = sorted(endpoint_rows, key=lambda r: (r["requests"], r["errorTotal"], r["errors5xx"]), reverse=True)[:15]
+    endpoints.sort(key=lambda r: r["requests"], reverse=True)
 
     streak = 0
     expected_steps = {"icon_d2": 48, "icon_eu": 92}
@@ -2828,20 +2886,6 @@ async def api_admin_overview_metrics():
             if steps >= expected_steps[mk]:
                 break
             streak += 1
-
-    endpoint_perf = []
-    for path, m in request_metrics.items():
-        lats = list(m.get("latencyMs", []))
-        endpoint_perf.append({
-            "path": path,
-            "requests": int(m.get("count", 0)),
-            "p50Ms": _pct(lats, 0.5),
-            "p95Ms": _pct(lats, 0.95),
-            "p99Ms": _pct(lats, 0.99),
-            "slowOver1s": int(m.get("slowOver1s", 0)),
-            "slowOver2s": int(m.get("slowOver2s", 0)),
-        })
-    endpoint_perf.sort(key=lambda r: r["requests"], reverse=True)
 
     overlay_phase_series = [{
         "ts": datetime.fromtimestamp(float(r.get("ts", time.time())), tz=timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -2899,8 +2943,34 @@ async def api_admin_overview_metrics():
     def _phase_pct(field: str, pct: float):
         return _pct([float(r.get(field, 0.0)) for r in phase_recent], pct)
 
-    recent_errors = _collect_recent_error_groups()
+    recent_errors = await asyncio.to_thread(_collect_recent_error_groups)
     symbol_diag = _summarize_symbol_diagnostics(storage, status)
+
+    # Health verdict: the monitor's freshness check plus host and app state.
+    observations = await asyncio.to_thread(_observations_admin)
+    freshness = data_freshness(
+        runs=get_available_runs(),
+        latest_observation_times={s["source"]: s["latestValidTime"] for s in observations["sources"]},
+    )
+    for row in observations["sources"]:
+        check = freshness["checks"].get(row["source"]) or {}
+        row["status"] = check.get("status")
+        row["maxAgeSeconds"] = check.get("maxAgeSeconds")
+    server_health = _read_server_health()
+    disk = admin_ops.disk_usage(DATA_DIR)
+    hour_ago = time.time() - 3600
+    errors_last_hour = sum(1 for ts in recent_server_errors if ts >= hour_ago)
+    health = admin_ops.build_health(
+        freshness=freshness,
+        model_timings=storage.get("models"),
+        disk=disk,
+        server_health=server_health,
+        pipelines=storage.get("pipelines"),
+        server_errors_last_hour=errors_last_hour,
+        server_errors_since_start=int(api_error_counters.get("5xx", 0)),
+        active_log_error_groups=sum(1 for r in recent_errors if r.get("status") == "active"),
+    )
+    now_utc = datetime.now(timezone.utc)
     integrity = _summarize_data_integrity(storage, status, recent_errors)
 
     phase_totals = [r.get('totalMs') for r in overlay_phase_series if r.get('totalMs') is not None]
@@ -2908,16 +2978,30 @@ async def api_admin_overview_metrics():
     unique_series = [r.get('uniqueVisitors') for r in usage_series]
 
     return {
+        "health": health,
+        "freshness": freshness,
+        "process": {
+            "startedAt": _fmt_iso(PROCESS_STARTED_AT),
+            "uptimeSeconds": int((now_utc - PROCESS_STARTED_AT).total_seconds()),
+            "commit": _deployed_commit(),
+        },
+        "host": {
+            "disk": disk,
+            "swap": admin_ops.swap_usage(),
+            "reboot": admin_ops.reboot_required(),
+        },
+        "observations": observations,
+        "storage": storage,
+        "status": status,
+        "endpoints": endpoints,
         "reliability": {
             "globalErrors": dict(api_error_counters),
-            "topFailingEndpoints": top_failing,
-            "endpointTrafficErrors": traffic_errors,
+            "serverErrorsLastHour": errors_last_hour,
             "recentErrors": recent_errors,
             "ingestFailureStreak": streak,
             "fallback": dict(app_state.fallback_stats),
         },
         "performance": {
-            "endpointLatency": endpoint_perf[:20],
             "overlayPhaseSeries": overlay_phase_series,
             "overlayPhaseP95": {
                 "loadMs": _phase_pct("loadMs", 0.95),
@@ -2949,14 +3033,17 @@ async def api_admin_overview_metrics():
             "markerActive24h": markers.get("activeLast24h", 0),
             "markerActive7d": markers.get("activeLast7d", 0),
             "markerActive30d": markers.get("activeLast30d", 0),
-            "usageDaily": usage_series,
+            "markers": markers,
+            "usageDaily": usage30.get("daily", []),
+            "usageTodayUnique": (usage30.get("daily") or [{}])[-1].get("uniqueVisitors", 0),
+            "usageUpdatedAt": usage30.get("updatedAt"),
         },
         "engineering": {
             "symbolDiagnostics": symbol_diag,
             "dataIntegrity": integrity,
         },
-        "serverHealth": _read_server_health(),
-        "updatedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "serverHealth": server_health,
+        "updatedAt": now_utc.isoformat().replace("+00:00", "Z"),
     }
 
 

@@ -20,6 +20,8 @@
       --crit: #ef4444;
       --info: #38bdf8;
       --focus: #60a5fa;
+      --series-1: #3987e5;
+      --series-1-hover: #6aa6ee;
     }
     * { box-sizing: border-box; }
     body {
@@ -56,9 +58,10 @@
       border-color: transparent;
       color: var(--muted);
       border-radius: 6px;
+      white-space: nowrap;
     }
     button.tab.active { background: var(--surface-3); color: var(--text); border-color: var(--line); }
-    button:focus-visible, input:focus-visible, select:focus-visible {
+    button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, .bar-hit:focus-visible {
       outline: 2px solid var(--focus);
       outline-offset: 2px;
     }
@@ -70,6 +73,16 @@
       vertical-align: top;
     }
     th { color: var(--muted); font-weight: 600; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    tr.group th {
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: .04em;
+      padding-top: 14px;
+      text-transform: uppercase;
+    }
+    tr.group:first-child th { padding-top: 4px; }
     pre {
       background: #0a1020;
       border: 1px solid var(--line);
@@ -96,9 +109,24 @@
       overflow-x: auto;
       padding-bottom: 8px;
     }
+    .count {
+      border-radius: 999px;
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1;
+      margin-left: 5px;
+      min-width: 18px;
+      padding: 3px 6px;
+      text-align: center;
+    }
+    .count.warn { background: #302408; color: #fde68a; }
+    .count.crit { background: #331313; color: #fecaca; }
+    .count.info { background: #0b2742; color: #bfdbfe; }
     .panel { display: none; }
     .panel.active { display: block; }
     .grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 12px; }
+    .stack { display: grid; gap: 12px; align-content: start; min-width: 0; }
     .card {
       background: var(--surface);
       border: 1px solid var(--line);
@@ -106,11 +134,8 @@
       padding: 13px;
       min-width: 0;
     }
-    .span-3 { grid-column: span 3; }
     .span-4 { grid-column: span 4; }
-    .span-5 { grid-column: span 5; }
     .span-6 { grid-column: span 6; }
-    .span-7 { grid-column: span 7; }
     .span-8 { grid-column: span 8; }
     .span-12 { grid-column: 1 / -1; }
     .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
@@ -135,6 +160,7 @@
     .attention.ok { border-left-color: var(--ok); }
     .attention.warn { border-left-color: var(--warn); }
     .attention.crit { border-left-color: var(--crit); }
+    .attention ul { margin: 6px 0 0; padding-left: 18px; }
     .pill, .tag {
       border: 1px solid #334155;
       border-radius: 999px;
@@ -157,21 +183,38 @@
       color: var(--muted);
       padding: 12px;
     }
-    .issue {
-      background: var(--surface-2);
-      border: 1px solid var(--line-soft);
-      border-radius: 6px;
-      margin-bottom: 8px;
-      padding: 10px;
-    }
+    .note { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
     .compact th, .compact td { padding: 6px; }
-    .tight { margin: 0; padding-left: 18px; }
-    .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 0.55fr); gap: 12px; }
+    .kv td:first-child { color: var(--muted); width: 42%; }
     .status-line { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 8px; }
+    .scroll, .tabs { scrollbar-color: #334155 transparent; scrollbar-width: thin; }
     .scroll { overflow-x: auto; }
+    .chart { position: relative; }
+    .chart svg { display: block; width: 100%; }
+    .chart .axis { fill: var(--muted); font-size: 11px; }
+    .chart .grid-line { stroke: var(--line-soft); stroke-width: 1; }
+    .chart .base-line { stroke: var(--line); stroke-width: 1; }
+    .chart .bar { fill: var(--series-1); }
+    .chart .bar.hover { fill: var(--series-1-hover); }
+    .chart .bar-hit { fill: transparent; outline-offset: -2px; }
+    .chart .peak { fill: var(--text); font-size: 11px; }
+    .tip {
+      background: #020617;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      font-size: 12px;
+      left: 0;
+      padding: 6px 8px;
+      pointer-events: none;
+      position: absolute;
+      top: 0;
+      white-space: nowrap;
+      z-index: 2;
+    }
+    .tip strong { display: block; font-size: 14px; }
+    .tip span { color: var(--muted); }
     @media (max-width: 1100px) {
-      .span-3, .span-4, .span-5, .span-6, .span-7, .span-8 { grid-column: 1 / -1; }
-      .split { grid-template-columns: 1fr; }
+      .span-4, .span-6, .span-8 { grid-column: 1 / -1; }
       header { display: block; }
       header .toolbar { margin-top: 10px; }
     }
@@ -182,54 +225,75 @@
   <header>
     <div>
       <h1>Skyview Admin</h1>
-      <div class="muted">Last updated: <span id="lastUpdated">-</span> | Auto refresh in <span id="refreshCountdown">120</span>s</div>
+      <div class="muted">Updated <span id="lastUpdated">-</span> · next refresh in <span id="refreshCountdown">120</span>s</div>
     </div>
     <div class="toolbar">
       <button id="refresh">Refresh</button>
-      <button id="loadLogsTop" class="secondary">Load logs</button>
     </div>
   </header>
 
   <nav class="tabs" aria-label="Admin sections">
-    <button class="tab active" data-tab="overview">Overview</button>
-    <button class="tab" data-tab="ingest">Ingest</button>
-    <button class="tab" data-tab="reliability">Reliability</button>
+    <button class="tab active" data-tab="status">Status<span id="countStatus"></span></button>
+    <button class="tab" data-tab="data">Data</button>
+    <button class="tab" data-tab="users">Users<span id="countUsers"></span></button>
     <button class="tab" data-tab="performance">Performance</button>
-    <button class="tab" data-tab="storage">Storage</button>
-    <button class="tab" data-tab="diagnostics">Diagnostics</button>
+    <button class="tab" data-tab="system">System</button>
+    <button class="tab" data-tab="tools">Tools</button>
   </nav>
 
   <section id="attentionBanner" class="attention warn">Loading...</section>
 
   <main>
-    <section id="tab-overview" class="panel active">
+    <!-- Is anything wrong? -->
+    <section id="tab-status" class="panel active">
       <div class="grid">
-        <section class="card span-12"><h2>Current State</h2><div id="overviewMetrics" class="metric-grid">Loading...</div></section>
-        <section class="card span-7"><h2>Models</h2><div id="overviewModels">Loading...</div></section>
-        <section class="card span-5"><h2>Attention Queue</h2><div id="attentionQueue">Loading...</div></section>
-        <section class="card span-6"><h2>Traffic And Errors</h2><div id="overviewTraffic">Loading...</div></section>
-        <section class="card span-6"><h2>Users</h2><div id="usage">Loading...</div></section>
+        <section class="card span-8"><h2>Health checks</h2><div id="healthTable">Loading...</div></section>
+        <div class="stack span-4">
+          <section class="card"><h2>Running version</h2><div id="versionInfo">Loading...</div></section>
+          <section class="card"><h2>At a glance</h2><div id="glance" class="metric-grid">Loading...</div></section>
+        </div>
       </div>
     </section>
 
-    <section id="tab-ingest" class="panel">
+    <!-- Is the pipeline healthy? -->
+    <section id="tab-data" class="panel">
       <div class="grid">
-        <section class="card span-12"><h2>Ingest Runs</h2><div id="ingestModels">Loading...</div></section>
-        <section class="card span-6"><h2>Ingest Process</h2><div id="ingestProcess">Loading...</div></section>
-        <section class="card span-6"><h2>Data Integrity</h2><div id="dataIntegrity">Loading...</div></section>
+        <section class="card span-12"><h2>Forecast models</h2><div id="forecastModels">Loading...</div></section>
+        <section class="card span-12"><h2>Observations</h2><div id="observationSources">Loading...</div></section>
+        <section class="card span-6"><h2>Ingest processes</h2><div id="ingestProcesses">Loading...</div></section>
+        <section class="card span-6"><h2>Model fallbacks</h2><div id="fallbacks">Loading...</div></section>
       </div>
     </section>
 
-    <section id="tab-reliability" class="panel">
+    <!-- Who uses it, and for what? -->
+    <section id="tab-users" class="panel">
       <div class="grid">
-        <section class="card span-12"><h2>Incidents</h2><div id="incidentQueue">Loading...</div></section>
+        <section class="card span-12"><h2>Visitors</h2><div id="usageSummary" class="metric-grid">Loading...</div></section>
+        <section class="card span-6">
+          <h2>Unique visitors per day</h2>
+          <p class="note">Last 30 days (UTC). Uptime probes and crawlers are not counted.</p>
+          <div id="chartUnique" class="chart"></div>
+        </section>
+        <section class="card span-6">
+          <h2>Page loads per day</h2>
+          <p class="note">Last 30 days (UTC). One visitor reloading counts each time.</p>
+          <div id="chartVisits" class="chart"></div>
+        </section>
+        <section class="card span-12">
+          <details style="border-top:0;margin-top:0;padding-top:0">
+            <summary>Daily numbers as a table</summary>
+            <div id="usageTable" style="margin-top:10px"></div>
+          </details>
+        </section>
+        <section class="card span-6"><h2>What gets used</h2><div id="featureUsage">Loading...</div></section>
+        <section class="card span-6"><h2>Markers</h2><div id="markers">Loading...</div></section>
         <section class="card span-12">
           <div class="status-line">
-            <h2>Feedback Inbox</h2>
+            <h2>Feedback inbox</h2>
             <div id="feedbackSummary" class="toolbar"></div>
           </div>
           <div class="toolbar">
-            <select id="fbStatus">
+            <select id="fbStatus" aria-label="Feedback status">
               <option value="">all statuses</option>
               <option>new</option>
               <option>triaged</option>
@@ -243,31 +307,62 @@
       </div>
     </section>
 
+    <!-- Is it fast? -->
     <section id="tab-performance" class="panel">
+      <p class="note" id="perfNote"></p>
       <div class="grid">
-        <section class="card span-12"><h2>Performance Summary</h2><div id="performanceSummary" class="metric-grid">Loading...</div></section>
-        <section class="card span-8"><h2>Endpoint Latency</h2><div id="endpointLatency">Loading...</div></section>
-        <section class="card span-4"><h2>Cache Efficiency</h2><div id="cacheEfficiency">Loading...</div></section>
-        <section class="card span-12"><h2>Endpoint Traffic And Errors</h2><div id="endpointTraffic">Loading...</div></section>
+        <section class="card span-12"><h2>Tile rendering</h2><div id="performanceSummary" class="metric-grid">Loading...</div></section>
+        <section class="card span-12"><h2>Endpoints</h2><div id="endpoints">Loading...</div></section>
+        <section class="card span-6"><h2>Tile layers</h2><div id="tileLayers">Loading...</div></section>
+        <section class="card span-6"><h2>In-memory caches</h2><div id="caches">Loading...</div></section>
       </div>
     </section>
 
-    <section id="tab-storage" class="panel">
+    <!-- Is the box OK? -->
+    <section id="tab-system" class="panel">
       <div class="grid">
-        <section class="card span-12"><h2>Storage Summary</h2><div id="storageSummary" class="metric-grid">Loading...</div></section>
-        <section class="card span-6"><h2>Forecast Data</h2><div id="forecastStorage">Loading...</div></section>
-        <section class="card span-6"><h2>Disk Caches</h2><div id="diskCacheStorage">Loading...</div></section>
-        <section class="card span-12"><h2>Storage Details</h2><div id="storageDetails">Loading...</div></section>
+        <section class="card span-12"><h2>Server</h2><div id="systemSummary" class="metric-grid">Loading...</div></section>
+        <section class="card span-6"><h2>What uses the disk</h2><div id="diskBreakdown">Loading...</div></section>
+        <section class="card span-6"><h2>Storage details</h2><div id="storageDetails">Loading...</div></section>
       </div>
     </section>
 
-    <section id="tab-diagnostics" class="panel">
+    <!-- Let me dig -->
+    <section id="tab-tools" class="panel">
       <div class="grid">
-        <section class="card span-7"><h2>Symbol Diagnostics</h2><div id="symbolDiagnostics">Loading...</div></section>
-        <section class="card span-5"><h2>Server Health</h2><div id="serverHealth">Loading...</div></section>
+        <section class="card span-12"><h2>Recent errors in logs</h2><div id="logErrors">Loading...</div></section>
         <section class="card span-12">
+          <div class="status-line">
+            <h2>Logs</h2>
+            <button id="loadLogs" class="secondary">Load logs</button>
+          </div>
+          <div class="toolbar" id="logsSummary"></div>
+          <div class="toolbar">
+            <select id="logSource" aria-label="Log source">
+              <option value="all">all sources</option>
+              <option value="backend">backend</option>
+              <option value="ingest">forecast ingest</option>
+              <option value="observations">observation ingest</option>
+              <option value="stdout">stdout</option>
+            </select>
+            <select id="logLevel" aria-label="Log level">
+              <option value="all">all levels</option>
+              <option value="error">error</option>
+              <option value="warn">warn</option>
+              <option value="info">info</option>
+              <option value="debug">debug</option>
+            </select>
+            <input id="logFilter" placeholder="filter lines" style="min-width:220px">
+            <select id="logFile" aria-label="Log file"><option value="all">all files</option></select>
+            <label class="row"><input type="checkbox" id="logNewest" checked> newest first</label>
+            <button id="logApply">Apply</button>
+          </div>
+          <div id="logs" class="empty">Logs are loaded on demand.</div>
+        </section>
+        <section class="card span-12">
+          <h2>Point queries</h2>
           <details>
-            <summary>Meteogram debug</summary>
+            <summary>Meteogram</summary>
             <div class="toolbar" style="margin-top:10px">
               <label>Lat <input id="mgLat" type="number" step="0.01" value="47.5" style="width:90px"></label>
               <label>Lon <input id="mgLon" type="number" step="0.01" value="11.0" style="width:90px"></label>
@@ -277,7 +372,7 @@
             <div id="mgResult"></div>
           </details>
           <details>
-            <summary>Emagram debug</summary>
+            <summary>Emagram</summary>
             <div class="toolbar" style="margin-top:10px">
               <label>Lat <input id="emLat" type="number" step="0.01" value="47.5" style="width:90px"></label>
               <label>Lon <input id="emLon" type="number" step="0.01" value="11.0" style="width:90px"></label>
@@ -288,42 +383,17 @@
             <div id="emResult"></div>
           </details>
         </section>
-        <section class="card span-12">
-          <div class="status-line">
-            <h2>Logs</h2>
-            <button id="loadLogs" class="secondary">Load logs</button>
-          </div>
-          <div class="toolbar" id="logsSummary"></div>
-          <div class="toolbar">
-            <select id="logSource">
-              <option value="all">all sources</option>
-              <option value="backend">backend</option>
-              <option value="ingest">ingest</option>
-              <option value="stdout">stdout</option>
-            </select>
-            <select id="logLevel">
-              <option value="all">all levels</option>
-              <option value="error">error</option>
-              <option value="warn">warn</option>
-              <option value="info">info</option>
-              <option value="debug">debug</option>
-            </select>
-            <input id="logFilter" placeholder="filter lines" style="min-width:220px">
-            <select id="logFile"><option value="all">all files</option></select>
-            <label class="row"><input type="checkbox" id="logNewest" checked> newest first</label>
-            <button id="logApply">Apply</button>
-          </div>
-          <div id="logsArtifacts"></div>
-          <div id="logs" class="empty">Logs are loaded on demand.</div>
-        </section>
+        <section class="card span-6"><h2>Symbol diagnostics</h2><div id="symbolDiagnostics">Loading...</div></section>
+        <section class="card span-6"><h2>Static grid</h2><div id="staticGrid">Loading...</div></section>
       </div>
     </section>
   </main>
 </div>
 
 <script>
-const esc = value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-const num = value => Number.isFinite(Number(value)) ? Number(value) : null;
+const $ = id => document.getElementById(id);
+const esc = value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const num = value => (value !== null && value !== '' && Number.isFinite(Number(value))) ? Number(value) : null;
 const fmtBytes = value => {
   let n = num(value);
   if (n == null) return '-';
@@ -335,15 +405,36 @@ const fmtBytes = value => {
   }
   return `${n.toFixed(i ? 1 : 0)} ${units[i]}`;
 };
+const fmtInt = value => num(value) == null ? '-' : Math.round(num(value)).toLocaleString('en-US');
 const fmtMs = value => num(value) == null ? '-' : `${Math.round(num(value))} ms`;
-const fmtMin = value => num(value) == null ? '-' : `${num(value).toFixed(1)} min`;
 const fmtPct = value => num(value) == null ? '-' : `${(num(value) * 100).toFixed(1)}%`;
-const cleanTime = value => value ? String(value).replace(/\.\d+(?=Z|$)/g, '') : '-';
-const yesNo = value => value === true ? 'yes' : value === false ? 'no' : '-';
-const minutesSince = iso => {
+const fmtPct100 = value => num(value) == null ? '-' : `${num(value).toFixed(0)}%`;
+const fmtDur = seconds => {
+  const s = num(seconds);
+  if (s == null) return '-';
+  if (s < 90) return `${Math.max(0, Math.round(s))} s`;
+  if (s < 90 * 60) return `${Math.round(s / 60)} min`;
+  if (s < 48 * 3600) return `${(s / 3600).toFixed(1)} h`;
+  return `${(s / 86400).toFixed(1)} d`;
+};
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const pad2 = n => String(n).padStart(2, '0');
+// Data timestamps are shown in UTC, like the model runs and frame ids they belong to.
+const fmtUtc = iso => {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return String(iso);
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())} UTC`;
+};
+const secondsSince = iso => {
   if (!iso) return null;
   const t = new Date(iso).getTime();
-  return Number.isFinite(t) ? (Date.now() - t) / 60000 : null;
+  return Number.isFinite(t) ? (Date.now() - t) / 1000 : null;
+};
+const ago = iso => secondsSince(iso) == null ? '-' : `${fmtDur(secondsSince(iso))} ago`;
+const fmtDay = day => {
+  const [, m, d] = String(day).split('-').map(Number);
+  return `${d} ${MONTHS[(m || 1) - 1]}`;
 };
 const j = async (url, options) => {
   const response = await fetch(url, options);
@@ -351,8 +442,9 @@ const j = async (url, options) => {
   return response.json();
 };
 
+const TAB_ALIASES = {overview: 'status', ingest: 'data', reliability: 'users', storage: 'system', diagnostics: 'tools'};
 const state = {
-  tab: 'overview',
+  tab: 'status',
   fbStatus: '',
   fbSearch: '',
   logLevel: 'all',
@@ -362,8 +454,6 @@ const state = {
   logNewest: true,
 };
 const data = {
-  status: null,
-  storage: null,
   overview: null,
   feedback: [],
   logs: [],
@@ -371,12 +461,12 @@ const data = {
 };
 const refreshEvery = 120;
 let refreshLeft = refreshEvery;
+let lastLoaded = 0;
 
-function clsForState(value) {
-  return value === 'OK' ? 'pill-ok' : value === 'Warning' ? 'pill-warn' : value === 'Critical' ? 'pill-crit' : 'pill-info';
-}
-function badge(value) {
-  return `<span class="pill ${clsForState(value)}">${esc(value)}</span>`;
+const STATUS_LABEL = {ok: 'OK', warn: 'Warning', crit: 'Critical', info: 'Info', stale: 'Stale', absent: 'Not set up'};
+const STATUS_CLASS = {ok: 'pill-ok', warn: 'pill-warn', crit: 'pill-crit', stale: 'pill-crit', info: 'pill-info', absent: 'pill-info'};
+function badge(status) {
+  return `<span class="pill ${STATUS_CLASS[status] || 'pill-info'}">${esc(STATUS_LABEL[status] || status || '-')}</span>`;
 }
 function tag(value) {
   return `<span class="tag ${esc(value || 'new')}">${esc(value || 'new')}</span>`;
@@ -387,24 +477,20 @@ function empty(message) {
 function metric(label, value, sub = '') {
   return `<div class="metric"><div class="label">${esc(label)}</div><div class="value">${esc(value ?? '-')}</div>${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</div>`;
 }
+// headers: plain strings, or [label, 'num'] for right-aligned numeric columns.
 function table(headers, rows, className = '') {
-  if (!rows.length) return empty('No rows available.');
-  return `<div class="scroll"><table class="${className}"><thead><tr>${headers.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
+  if (!rows.length) return empty('Nothing to show.');
+  const head = headers.map(h => Array.isArray(h) ? `<th class="${h[1]}">${esc(h[0])}</th>` : `<th>${esc(h)}</th>`).join('');
+  return `<div class="scroll"><table class="${className}"><thead><tr>${head}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
+}
+function kv(rows) {
+  return table(['', ''], rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v}</td></tr>`), 'compact kv').replace('<thead><tr><th></th><th></th></tr></thead>', '');
 }
 function modelName(key) {
   return key === 'icon_d2' ? 'ICON-D2' : key === 'icon_eu' ? 'ICON-EU' : key;
 }
-function modelExpected(key) {
-  return key === 'icon_eu' ? 92 : 48;
-}
-function modelState(model, expected) {
-  const steps = num(model?.latestRunFullyIngestedSteps);
-  const fresh = num(model?.freshnessMinutesSinceFullIngest);
-  if (!model?.latestRun) return ['Critical', 'no run'];
-  if (steps == null || steps <= 0) return ['Critical', 'no completed ingest'];
-  if (steps < expected) return ['Warning', `${steps}/${expected} steps`];
-  if (fresh != null && fresh > 180) return ['Warning', `${fresh.toFixed(1)} min old`];
-  return ['OK', `${steps}/${expected} steps`];
+function healthRow(key) {
+  return (data.overview?.health?.rows || []).find(r => r.key === key) || {};
 }
 function feedbackCounts() {
   const rows = data.feedback || [];
@@ -414,196 +500,308 @@ function feedbackCounts() {
     resolved: rows.filter(x => (x.status || 'new') === 'resolved').length,
   };
 }
-function healthEval() {
-  const status = data.status || {};
-  const storage = data.storage || {};
-  const overview = data.overview || {};
-  const fresh = num(status?.ingest?.freshnessMinutes);
-  const p95 = num(status?.perf?.overlayTilePhases?.recentWindow?.p95?.totalMs);
-  const lockAge = num(storage?.ingest?.lock?.ageSeconds);
-  const running = !!storage?.ingest?.isRunning;
-  const activeErrors = (overview?.reliability?.recentErrors || []).filter(x => x.status === 'active').length;
-  const feedback = feedbackCounts();
-  const issues = [];
-  if (!running && lockAge && lockAge > 1800) issues.push({level: 'Critical', title: 'Stale ingest lock', detail: `${Math.round(lockAge / 60)} min old`});
-  if (fresh == null) issues.push({level: 'Warning', title: 'Freshness unknown', detail: 'No completed full ingest timestamp'});
-  else if (fresh > 180) issues.push({level: 'Warning', title: 'Data freshness degraded', detail: `${fresh.toFixed(1)} min since full ingest`});
-  if (p95 == null) issues.push({level: 'Warning', title: 'No tile latency samples', detail: 'No recent overlay tile telemetry'});
-  else if (p95 > 800) issues.push({level: 'Warning', title: 'Tile latency elevated', detail: `${Math.round(p95)} ms p95`});
-  if (activeErrors) issues.push({level: 'Critical', title: 'Active error groups', detail: `${activeErrors} groups active in logs`});
-  if (feedback.new) issues.push({level: 'Warning', title: 'New feedback', detail: `${feedback.new} inbox item(s)`});
-  for (const item of overview?.engineering?.dataIntegrity?.issues || []) {
-    issues.push({level: 'Warning', title: 'Data integrity', detail: item});
+function sinceStart() {
+  const p = data.overview?.process || {};
+  return p.startedAt ? `since the app started ${ago(p.startedAt)}` : 'since the app started';
+}
+
+/* ---------- Status ---------- */
+function renderBanner() {
+  const health = data.overview?.health || {};
+  const rows = health.rows || [];
+  const issues = rows.filter(r => r.status === 'warn' || r.status === 'crit');
+  const severity = health.status || 'warn';
+  const banner = $('attentionBanner');
+  banner.className = `attention ${severity}`;
+  if (!issues.length) {
+    banner.innerHTML = `<div class="status-line"><div><strong>Everything is working</strong><div class="muted">${rows.length} checks passed, same limits as the external monitor.</div></div>${badge('ok')}</div>`;
+  } else {
+    const title = `${issues.length} ${issues.length === 1 ? 'thing needs' : 'things need'} attention`;
+    banner.innerHTML = `<div class="status-line"><div><strong>${esc(title)}</strong><ul>${issues.slice(0, 5).map(r => `<li>${esc(r.label)}: ${esc(r.value)}</li>`).join('')}</ul></div>${badge(severity)}</div>`;
   }
-  return {issues, severity: issues.some(x => x.level === 'Critical') ? 'crit' : issues.length ? 'warn' : 'ok'};
+  $('countStatus').innerHTML = issues.length ? `<span class="count ${severity === 'crit' ? 'crit' : 'warn'}">${issues.length}</span>` : '';
+  const fresh = feedbackCounts().new;
+  $('countUsers').innerHTML = fresh ? `<span class="count info" title="new feedback">${fresh}</span>` : '';
 }
 
-function renderAttention() {
-  const h = healthEval();
-  const title = h.severity === 'crit' ? 'Needs attention' : h.severity === 'warn' ? 'Watch list' : 'Healthy right now';
-  const status = h.severity === 'crit' ? 'Critical' : h.severity === 'warn' ? 'Warning' : 'OK';
-  const items = h.issues.slice(0, 5);
-  document.getElementById('attentionBanner').className = `attention ${h.severity}`;
-  document.getElementById('attentionBanner').innerHTML = `
-    <div class="status-line">
-      <div><strong>${esc(title)}</strong><div class="muted">${items.length ? esc(items[0].detail) : 'No active error bursts, stale ingest lock, or obvious integrity gaps.'}</div></div>
-      ${badge(status)}
-    </div>
-  `;
-  document.getElementById('attentionQueue').innerHTML = items.length
-    ? items.map(x => `<div class="issue">${badge(x.level)} <strong>${esc(x.title)}</strong><div class="muted" style="margin-top:5px">${esc(x.detail)}</div></div>`).join('')
-    : empty('No operator action suggested right now.');
-}
-
-function renderOverview() {
-  const status = data.status || {};
-  const storage = data.storage || {};
+function renderStatus() {
   const overview = data.overview || {};
-  const perf = status?.perf?.overlayTilePhases?.recentWindow || {};
-  const feedback = feedbackCounts();
-  const activeErrors = (overview?.reliability?.recentErrors || []).filter(x => x.status === 'active').length;
-  document.getElementById('overviewMetrics').innerHTML = [
-    metric('Full ingest age', fmtMin(status?.ingest?.freshnessMinutes), cleanTime(status?.ingest?.latestFullIngestedAt)),
-    metric('Tile p95', fmtMs(perf?.p95?.totalMs), `${perf.size || 0}/${perf.maxSize || 0} samples`),
-    metric('Tile cache hit', fmtPct(status?.cache?.tile?.hitRate), `${status?.cache?.tile?.desktopItems || 0} desktop, ${status?.cache?.tile?.mobileItems || 0} mobile`),
-    metric('Active errors', activeErrors, `${overview?.reliability?.globalErrors?.['5xx'] || 0} HTTP 5xx total`),
-    metric('New feedback', feedback.new, `${feedback.triaged} triaged, ${feedback.resolved} resolved`),
-    metric('Runtime data', fmtBytes(storage?.totalBytes), `cache ${fmtBytes(storage?.cache?.totalBytes)}`),
-    metric('30d visits', overview?.product?.usage30dVisits ?? '-', `${overview?.product?.usage30dUnique ?? '-'} unique`),
-    metric('Server memory', num(overview?.serverHealth?.memoryPercent) == null ? '-' : `${num(overview.serverHealth.memoryPercent).toFixed(1)}%`, fmtBytes(overview?.serverHealth?.memoryUsedBytes)),
+  const rows = overview.health?.rows || [];
+  const out = [];
+  let group = null;
+  for (const r of rows) {
+    if (r.group !== group) {
+      group = r.group;
+      out.push(`<tr class="group"><th colspan="4">${esc(group)}</th></tr>`);
+    }
+    out.push(`<tr>
+      <td>${esc(r.label)}</td>
+      <td>${badge(r.status)}</td>
+      <td>${esc(r.value)}${r.detail ? `<div class="muted">${esc(r.detail)}</div>` : ''}</td>
+      <td class="muted">${esc(r.limit)}</td>
+    </tr>`);
+  }
+  $('healthTable').innerHTML = rows.length
+    ? `<div class="scroll"><table><thead><tr><th>Check</th><th>State</th><th>Now</th><th>Limit</th></tr></thead><tbody>${out.join('')}</tbody></table></div>`
+    : empty('No health data.');
+
+  const proc = overview.process || {};
+  const commit = proc.commit;
+  const reboot = overview.host?.reboot || {};
+  $('versionInfo').innerHTML = kv([
+    ['Commit', commit ? `<span class="mono">${esc(commit.sha)}</span> <span class="muted">${esc(fmtUtc(commit.committedAt))}</span><div>${esc(commit.subject)}</div>` : '-'],
+    ['App started', `${esc(ago(proc.startedAt))} <span class="muted">${esc(fmtUtc(proc.startedAt))}</span>`],
+    ['Server up for', esc(fmtDur(overview.serverHealth?.uptimeSeconds))],
+    ['Reboot pending', reboot.required ? `${badge('info')} <span class="muted">installed updates need it; happens automatically at 02:30 UTC</span>` : 'no'],
+  ]) + '<p class="note" style="margin:10px 0 0">Request counters, latencies and cache figures start at zero with each app start.</p>';
+
+  const product = overview.product || {};
+  const fb = feedbackCounts();
+  const requests = (overview.endpoints || []).reduce((sum, e) => sum + (num(e.requests) || 0), 0);
+  $('glance').innerHTML = [
+    metric('Visitors today', fmtInt(product.usageTodayUnique), `${fmtInt(product.usage7dUnique)} in 7 days`),
+    metric('New feedback', fmtInt(fb.new), `${fb.triaged} triaged`),
+    metric('Requests', fmtInt(requests), sinceStart()),
+    metric('Server errors', fmtInt(overview.reliability?.serverErrorsLastHour), 'in the last hour'),
   ].join('');
-  renderModelTable('overviewModels', true);
-  renderTrafficOverview();
-  renderUsage();
 }
 
-function renderModelTable(targetId, includeDetails) {
-  const storage = data.storage || {};
-  const rows = ['icon_d2', 'icon_eu'].map(key => {
-    const model = storage?.models?.[key] || {};
-    const expected = modelExpected(key);
-    const [state, detail] = modelState(model, expected);
-    const steps = num(model.latestRunFullyIngestedSteps);
-    return `<tr>
-      <td>${esc(modelName(key))}</td>
-      <td class="mono">${esc(model.latestRun || '-')}</td>
-      <td>${badge(state)} <span class="muted">${esc(detail)}</span></td>
-      <td>${steps == null ? '-' : `${steps}/${expected}`}</td>
-      <td>${fmtMin(model.freshnessMinutesSinceFullIngest)}</td>
-      <td>${fmtMin(model.modelCalculationMinutes)}</td>
-      <td>${fmtMin(model.ingestDurationMinutes)}</td>
-      <td>${cleanTime(model.latestRunFullyIngestedAt)}</td>
-    </tr>`;
-  });
-  let html = table(['Model', 'Run', 'State', 'Steps', 'Age', 'DWD calc', 'Ingest', 'Full ingest'], rows, 'compact');
-  if (includeDetails) {
-    html += '<details><summary>Run storage details</summary>' + renderRunTables() + '</details>';
-  }
-  document.getElementById(targetId).innerHTML = html;
-}
-
-function renderRunTables() {
-  const storage = data.storage || {};
+/* ---------- Data ---------- */
+function runTables() {
+  const models = data.overview?.storage?.models || {};
   return ['icon_d2', 'icon_eu'].map(key => {
-    const runs = storage?.models?.[key]?.runs || [];
-    const rows = runs.slice(0, 5).map(r => `<tr><td class="mono">${esc(r.run)}</td><td>${esc(r.steps ?? '-')}</td><td>${fmtBytes(r.bytes)}</td><td>${cleanTime(r.latestStorageUpdatedAt)}</td></tr>`);
-    return `<h3>${esc(modelName(key))}</h3>${table(['Run', 'Steps', 'Size', 'Updated'], rows, 'compact')}`;
+    const runs = models[key]?.runs || [];
+    const rows = runs.slice(0, 6).map(r => `<tr><td class="mono">${esc(r.run)}</td><td class="num">${esc(r.steps ?? '-')}</td><td class="num">${fmtBytes(r.bytes)}</td><td>${esc(fmtUtc(r.latestStorageUpdatedAt))}</td></tr>`);
+    return `<h3>${esc(modelName(key))}</h3>${table(['Run', ['Steps', 'num'], ['Size', 'num'], 'Last written'], rows, 'compact')}`;
   }).join('');
 }
 
-function renderIngest() {
-  renderModelTable('ingestModels', true);
-  const ingest = data.storage?.ingest || {};
-  const lock = ingest.lock || {};
-  const procRows = (ingest.runningProcesses || []).map(p => `<tr><td class="mono">${esc(p)}</td></tr>`);
-  document.getElementById('ingestProcess').innerHTML = `
-    ${table(['Metric', 'Value'], [
-      `<tr><td>Running</td><td>${esc(yesNo(ingest.isRunning))}</td></tr>`,
-      `<tr><td>Lock</td><td>${lock.exists ? `yes, ${esc(lock.ageSeconds)}s old` : 'no'}</td></tr>`,
-      `<tr><td>Lock path</td><td class="mono">${esc(lock.path || '-')}</td></tr>`,
-    ], 'compact')}
-    <h3>Processes</h3>${procRows.length ? table(['Command'], procRows, 'compact') : empty('No ingest processes detected.')}
-  `;
-  renderDataIntegrity();
-}
-
-function renderDataIntegrity() {
-  const integrity = data.overview?.engineering?.dataIntegrity || {};
-  const rows = (integrity.models || []).map(r => `<tr>
-    <td>${esc(modelName(r.model))}</td>
-    <td class="mono">${esc(r.latestRun || '-')}</td>
-    <td>${esc(r.actualSteps ?? '-')} / ${esc(r.expectedSteps ?? '-')}</td>
-    <td>${esc(r.missingSteps ?? '-')}</td>
-    <td>${fmtPct(r.coverage)}</td>
-    <td>${fmtMin(r.freshnessMinutesSinceFullIngest)}</td>
-  </tr>`);
-  const issues = integrity.issues || [];
-  document.getElementById('dataIntegrity').innerHTML = `
-    ${table(['Model', 'Run', 'Steps', 'Missing', 'Coverage', 'Age'], rows, 'compact')}
-    <h3>Issues</h3>${issues.length ? `<ul class="tight">${issues.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : empty('No obvious step coverage issues.')}
-    <h3>Notes</h3>${(integrity.notes || []).length ? `<ul class="tight">${integrity.notes.map(x => `<li class="muted">${esc(x)}</li>`).join('')}</ul>` : empty('No additional notes.')}
-  `;
-}
-
-function renderTrafficOverview() {
-  const rows = (data.overview?.reliability?.endpointTrafficErrors || []).slice(0, 8).map(r => `<tr>
-    <td class="mono">${esc(r.path)}</td>
-    <td>${esc(r.requests)}</td>
-    <td>${esc(r.errors5xx)}</td>
-    <td>${esc(r.errors4xx)}</td>
-    <td>${fmtPct(r.errorRate)}</td>
-  </tr>`);
-  document.getElementById('overviewTraffic').innerHTML = table(['Path', 'Req', '5xx', '4xx', 'Error rate'], rows, 'compact');
-}
-
-function renderUsage() {
-  const storage = data.storage || {};
+function renderData() {
   const overview = data.overview || {};
-  const usage = storage.usage || {};
-  const markers = storage.markers || {};
-  document.getElementById('usage').innerHTML = table(['Metric', 'Value'], [
-    `<tr><td>Visits 30d</td><td>${esc(usage.totalVisits ?? overview?.product?.usage30dVisits ?? '-')}</td></tr>`,
-    `<tr><td>Estimated unique 30d</td><td>${esc(usage.estimatedUniqueVisitors ?? overview?.product?.usage30dUnique ?? '-')}</td></tr>`,
-    `<tr><td>Markers stored</td><td>${esc(markers.totalMarkers ?? '-')}</td></tr>`,
-    `<tr><td>Markers active 24h</td><td>${esc(markers.activeLast24h ?? '-')}</td></tr>`,
-    `<tr><td>Usage updated</td><td>${cleanTime(usage.updatedAt)}</td></tr>`,
-  ], 'compact');
+  const storage = overview.storage || {};
+  const ingestHealth = overview.status?.ingestHealth?.models || {};
+  const checks = overview.freshness?.checks || {};
+  const missingNotes = [];
+  const modelRows = ['icon_d2', 'icon_eu'].map(key => {
+    const model = storage.models?.[key] || {};
+    const steps = ingestHealth[key] || {};
+    const check = checks[key] || {};
+    const row = healthRow(key);
+    const missing = steps.missingStepNumbers || [];
+    if (missing.length) missingNotes.push(`${modelName(key)} run ${steps.latestRun}: missing steps ${missing.slice(0, 30).join(', ')}${missing.length > 30 ? ', ...' : ''}`);
+    return `<tr>
+      <td>${esc(modelName(key))}</td>
+      <td>${badge(row.status)}${row.detail ? `<div class="muted">${esc(row.detail)}</div>` : ''}</td>
+      <td class="mono">${esc(check.run || '-')}</td>
+      <td class="num">${check.ageHours == null ? '-' : `${Number(check.ageHours).toFixed(1)} h`}</td>
+      <td class="num muted">${check.maxAgeHours == null ? '-' : `${check.maxAgeHours} h`}</td>
+      <td class="num">${esc(steps.availableSteps ?? '-')} / ${esc(steps.expectedSteps ?? '-')}</td>
+      <td class="num">${num(model.modelCalculationMinutes) == null ? '-' : fmtDur(model.modelCalculationMinutes * 60)}</td>
+      <td class="num">${num(model.ingestDurationMinutes) == null ? '-' : fmtDur(model.ingestDurationMinutes * 60)}</td>
+      <td>${esc(fmtUtc(model.latestRunFullyIngestedAt))}</td>
+    </tr>`;
+  });
+  $('forecastModels').innerHTML =
+    table(['Model', 'State', 'Newest run', ['Run age', 'num'], ['Limit', 'num'], ['Steps', 'num'], ['DWD published after', 'num'], ['Ingest took', 'num'], 'Complete since'], modelRows, 'compact')
+    + (missingNotes.length ? `<ul class="note" style="margin-top:10px">${missingNotes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : '')
+    + `<details><summary>Runs on disk</summary>${runTables()}</details>`;
+
+  const obsRows = (overview.observations?.sources || []).map(s => {
+    const label = healthRow(s.source).label || s.source;
+    const expected = num(s.expectedFrames);
+    const gaps = expected == null ? null : Math.max(0, expected - s.frameCount);
+    const span = s.oldestValidTime && s.latestValidTime ? (new Date(s.latestValidTime) - new Date(s.oldestValidTime)) / 1000 : null;
+    return `<tr>
+      <td>${esc(label)}<div class="muted">${esc(s.label || '')}</div></td>
+      <td>${badge(s.status)}</td>
+      <td>${esc(fmtUtc(s.latestValidTime))}</td>
+      <td class="num">${fmtDur(s.ageSeconds)}</td>
+      <td class="num muted">${fmtDur(s.maxAgeSeconds)}</td>
+      <td class="num">${esc(s.frameCount)}<div class="muted">over ${fmtDur(span)}</div></td>
+      <td class="num">${gaps == null ? '-' : gaps}<div class="muted">${expected ? `of ${expected} expected` : ''}</div></td>
+      <td class="num">${esc(s.failedAttempts ?? 0)}</td>
+      <td class="num">${fmtBytes(s.bytes)}</td>
+    </tr>`;
+  });
+  $('observationSources').innerHTML =
+    table(['Source', 'State', 'Newest frame', ['Age', 'num'], ['Limit', 'num'], ['Frames kept', 'num'], ['Missing frames', 'num'], ['Failed attempts', 'num'], ['Size', 'num']], obsRows, 'compact')
+    + '<p class="note" style="margin:10px 0 0">Missing frames are gaps between the oldest and newest frame kept, at the source\'s normal interval. Failed attempts are downloads or renders that were retried.</p>';
+
+  const pipelines = storage.pipelines || {};
+  const pipelineRows = [['forecast', 'Forecast ingest', 'forecast_ingest'], ['observations', 'Observation ingest', 'observation_ingest']].map(([key, label, rowKey]) => {
+    const p = pipelines[key] || {};
+    const row = healthRow(rowKey);
+    const procs = (p.processes || []).map(x => `<div class="mono muted">${esc(fmtDur(x.elapsedSeconds))} · ${esc(x.command)}</div>`).join('');
+    return `<tr><td>${esc(label)}</td><td>${badge(row.status)}</td><td>${esc(row.value || '-')}${procs}</td><td class="muted">${esc(row.limit || '')}</td></tr>`;
+  });
+  $('ingestProcesses').innerHTML = table(['Pipeline', 'State', 'Now', 'Limit'], pipelineRows, 'compact')
+    + '<p class="note" style="margin:10px 0 0">The forecast ingest checks for a new run every minute; the observation ingest runs every 2 minutes and is stopped after 5.</p>';
+
+  const fb = overview.status?.fallback || {};
+  const fallbackLabels = [
+    ['overlayTileFallback', 'Tiles served from ICON-EU instead of ICON-D2'],
+    ['symbolsBlended', 'Symbol responses blending both models'],
+    ['windBlended', 'Wind responses blending both models'],
+    ['pointFallback', 'Point queries answered from ICON-EU'],
+    ['euResolveAttempts', 'ICON-EU time lookups'],
+    ['euResolveSuccess', 'ICON-EU time lookups that found a step'],
+    ['strictTimeDenied', 'Lookups refused (no step close enough)'],
+  ];
+  $('fallbacks').innerHTML = table(['What', ['Count', 'num']], fallbackLabels.map(([key, label]) => `<tr><td>${esc(label)}</td><td class="num">${fmtInt(fb[key])}</td></tr>`), 'compact')
+    + '<p class="note" style="margin:10px 0 0">Running totals; unlike the other counters they survive restarts.</p>';
 }
 
-function renderReliability() {
+/* ---------- Users ---------- */
+function niceMax(value) {
+  if (value <= 4) return 4;
+  const pow = Math.pow(10, Math.floor(Math.log10(value)));
+  for (const m of [1, 2, 4, 5, 10]) if (value <= m * pow) return m * pow;
+  return 10 * pow;
+}
+const svgEl = (name, attrs = {}) => {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', name);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  return el;
+};
+// Column chart, one bar per day. `rows` = [{date, <key>}], oldest first.
+function barChart(container, rows, key, unit) {
+  container.textContent = '';
+  if (!rows.length) {
+    container.innerHTML = empty('No usage recorded yet.');
+    return;
+  }
+  const width = Math.max(300, container.clientWidth || 560);
+  const height = 190;
+  const m = {top: 18, right: 8, bottom: 24, left: 40};
+  const plotW = width - m.left - m.right;
+  const plotH = height - m.top - m.bottom;
+  const peak = Math.max(...rows.map(r => num(r[key]) || 0));
+  const max = niceMax(peak);
+  const band = plotW / rows.length;
+  const barW = Math.max(2, Math.min(24, band - 2));
+  const y = v => m.top + plotH - (v / max) * plotH;
+  const svg = svgEl('svg', {viewBox: `0 0 ${width} ${height}`, height, role: 'img', 'aria-label': `${unit} per day, last ${rows.length} days`});
+
+  for (const tick of [0, max / 2, max]) {
+    const ty = y(tick);
+    svg.append(svgEl('line', {x1: m.left, x2: width - m.right, y1: ty, y2: ty, class: tick === 0 ? 'base-line' : 'grid-line'}));
+    const label = svgEl('text', {x: m.left - 6, y: ty + 4, 'text-anchor': 'end', class: 'axis'});
+    label.textContent = fmtInt(tick);
+    svg.append(label);
+  }
+
+  const tip = document.createElement('div');
+  tip.className = 'tip';
+  tip.hidden = true;
+  const tipValue = document.createElement('strong');
+  const tipLabel = document.createElement('span');
+  tip.append(tipValue, tipLabel);
+  const show = (i, bar) => {
+    const r = rows[i];
+    tipValue.textContent = `${fmtInt(r[key])} ${unit}`;
+    tipLabel.textContent = fmtDay(r.date);
+    tip.hidden = false;
+    const cx = m.left + band * i + band / 2;
+    const tw = tip.offsetWidth;
+    tip.style.left = `${Math.min(Math.max(0, cx * (container.clientWidth / width) - tw / 2), Math.max(0, container.clientWidth - tw))}px`;
+    tip.style.top = `${Math.max(0, y(num(r[key]) || 0) - tip.offsetHeight - 8)}px`;
+    bar?.classList.add('hover');
+  };
+  const hide = bar => {
+    tip.hidden = true;
+    bar?.classList.remove('hover');
+  };
+
+  let peakIndex = -1;
+  rows.forEach((r, i) => {
+    const v = num(r[key]) || 0;
+    if (v === peak && peak > 0) peakIndex = i;
+    const x = m.left + band * i + (band - barW) / 2;
+    const top = y(v);
+    const base = m.top + plotH;
+    let bar = null;
+    if (v > 0) {
+      const h = Math.max(1, base - top);
+      const rad = Math.min(4, h, barW / 2);
+      bar = svgEl('path', {
+        class: 'bar',
+        d: `M${x},${base} V${base - h + rad} Q${x},${base - h} ${x + rad},${base - h} H${x + barW - rad} Q${x + barW},${base - h} ${x + barW},${base - h + rad} V${base} Z`,
+      });
+      svg.append(bar);
+    }
+    // The hit area is the whole day column, so small and empty days are reachable too.
+    const hit = svgEl('rect', {x: m.left + band * i, y: m.top, width: band, height: plotH, class: 'bar-hit', tabindex: '0', role: 'img', 'aria-label': `${fmtDay(r.date)}: ${fmtInt(v)} ${unit}`});
+    hit.addEventListener('pointerenter', () => show(i, bar));
+    hit.addEventListener('pointerleave', () => hide(bar));
+    hit.addEventListener('focus', () => show(i, bar));
+    hit.addEventListener('blur', () => hide(bar));
+    svg.append(hit);
+    // One date label per week, counted back from today.
+    if ((rows.length - 1 - i) % 7 === 0) {
+      const last = i === rows.length - 1;
+      const label = svgEl('text', {x: last ? width - m.right : m.left + band * i + band / 2, y: height - 6, 'text-anchor': last ? 'end' : 'middle', class: 'axis'});
+      label.textContent = fmtDay(r.date);
+      svg.append(label);
+    }
+  });
+  if (peakIndex >= 0) {
+    const px = Math.min(Math.max(m.left + band * peakIndex + band / 2, m.left + 16), width - m.right - 16);
+    const label = svgEl('text', {x: px, y: y(peak) - 5, 'text-anchor': 'middle', class: 'peak'});
+    label.textContent = fmtInt(peak);
+    svg.append(label);
+  }
+  container.append(svg, tip);
+}
+function renderUsageCharts() {
+  const days = data.overview?.product?.usageDaily || [];
+  barChart($('chartUnique'), days, 'uniqueVisitors', 'visitors');
+  barChart($('chartVisits'), days, 'visits', 'page loads');
+}
+
+function renderUsers() {
   const overview = data.overview || {};
-  const errors = overview?.reliability?.recentErrors || [];
-  const feedback = feedbackCounts();
-  const incidentRows = [];
-  for (const r of errors.slice(0, 10)) {
-    const level = r.status === 'active' ? 'Critical' : r.status === 'recent' ? 'Warning' : 'Info';
-    incidentRows.push(`<tr>
-      <td>${badge(level)}</td>
-      <td class="mono">${esc(r.fingerprint)}</td>
-      <td>${esc(r.count10m ?? 0)} / ${esc(r.count1h ?? 0)} / ${esc(r.count24h ?? 0)}</td>
-      <td>${cleanTime(r.latestSeen)}</td>
-      <td>${esc(r.sample || '-')}</td>
-    </tr>`);
-  }
-  if (feedback.new) {
-    incidentRows.unshift(`<tr><td>${badge('Warning')}</td><td>New feedback</td><td>${feedback.new}</td><td>-</td><td>${feedback.new} item(s) waiting in the inbox</td></tr>`);
-  }
-  document.getElementById('incidentQueue').innerHTML = incidentRows.length
-    ? table(['State', 'Issue', '10m / 1h / 24h', 'Latest', 'Sample'], incidentRows, 'compact')
-    : empty('No active incidents.');
+  const product = overview.product || {};
+  const markers = product.markers || {};
+  $('usageSummary').innerHTML = [
+    metric('Visitors today', fmtInt(product.usageTodayUnique), 'unique, UTC day'),
+    metric('Visitors, 7 days', fmtInt(product.usage7dUnique), `${fmtInt(product.usage7dVisits)} page loads`),
+    metric('Visitors, 30 days', fmtInt(product.usage30dUnique), `${fmtInt(product.usage30dVisits)} page loads`),
+    metric('Markers saved', fmtInt(markers.totalMarkers), `by ${fmtInt(markers.distinctClientIds)} browsers`),
+  ].join('');
+  renderUsageCharts();
+  const days = [...(product.usageDaily || [])].reverse();
+  $('usageTable').innerHTML = table(['Day (UTC)', ['Unique visitors', 'num'], ['Page loads', 'num']],
+    days.map(r => `<tr><td>${esc(r.date)}</td><td class="num">${fmtInt(r.uniqueVisitors)}</td><td class="num">${fmtInt(r.visits)}</td></tr>`), 'compact');
+
+  const featureLabels = {
+    page: 'Page loads', timesteps: 'Timeline refresh', overlay_tile: 'Map tiles', overlay_meta: 'Overlay info',
+    symbols: 'Weather symbols', wind: 'Wind barbs', point: 'Point details', meteogram: 'Meteogram', emagram: 'Emagram',
+    status: 'Status and health checks', observations: 'Radar, satellite, lightning', admin: 'Admin page',
+    ops: 'Markers, search, feedback', other_api: 'Everything else',
+  };
+  const features = (product.featureUsageSplit || []).filter(f => num(f.count));
+  $('featureUsage').innerHTML = (features.length
+    ? table(['Feature', ['Requests', 'num'], ['Share', 'num']], features.map(f => `<tr><td>${esc(featureLabels[f.feature] || f.feature)}</td><td class="num">${fmtInt(f.count)}</td><td class="num">${fmtPct(f.share)}</td></tr>`), 'compact')
+    : empty('No requests yet.'))
+    + `<p class="note" style="margin:10px 0 0">Requests that reached this server ${esc(sinceStart())}. Tiles and frames answered by the CDN cache are not in here.</p>`;
+
+  $('markers').innerHTML = kv([
+    ['Markers saved', esc(fmtInt(markers.totalMarkers))],
+    ['Browsers with markers', esc(fmtInt(markers.distinctClientIds))],
+    ['Added a marker in the last 24 h', esc(fmtInt(markers.activeLast24h))],
+    ['... in the last 7 days', esc(fmtInt(markers.activeLast7d))],
+    ['... in the last 30 days', esc(fmtInt(markers.activeLast30d))],
+  ]);
   renderFeedback();
 }
 
-function renderFeedbackSummary() {
-  const counts = feedbackCounts();
-  const ages = (data.feedback || []).filter(x => (x.status || 'new') === 'new').map(x => minutesSince(x.timestamp)).filter(Number.isFinite);
-  const avgAge = ages.length ? `${(ages.reduce((a, b) => a + b, 0) / ages.length).toFixed(1)} min` : '-';
-  document.getElementById('feedbackSummary').innerHTML = `${badge(counts.new ? 'Warning' : 'OK')} <span class="muted">new ${counts.new}</span> <span class="muted">triaged ${counts.triaged}</span> <span class="muted">resolved ${counts.resolved}</span> <span class="muted">avg new age ${avgAge}</span>`;
-}
 function renderFeedback() {
-  renderFeedbackSummary();
+  const counts = feedbackCounts();
+  const ages = (data.feedback || []).filter(x => (x.status || 'new') === 'new').map(x => secondsSince(x.timestamp)).filter(Number.isFinite);
+  const oldest = ages.length ? fmtDur(Math.max(...ages)) : '-';
+  $('feedbackSummary').innerHTML = `<span class="muted">new ${counts.new}</span> <span class="muted">triaged ${counts.triaged}</span> <span class="muted">resolved ${counts.resolved}</span> <span class="muted">oldest new ${esc(oldest)}</span>`;
   const rows = (data.feedback || []).map(f => `<tr>
-    <td>${cleanTime(f.timestamp)}</td>
+    <td>${esc(fmtUtc(f.timestamp))}</td>
     <td>${esc(f.type || '-')}</td>
     <td>${tag(f.status || 'new')}</td>
     <td>${esc(f.message || '-')}</td>
@@ -613,158 +811,169 @@ function renderFeedback() {
       <button class="secondary" onclick="setStatus(${Number(f.id)}, 'resolved')">resolved</button>
     </td>
   </tr>`);
-  document.getElementById('feedback').innerHTML = table(['Time', 'Type', 'Status', 'Message', 'Actions'], rows, 'compact');
+  const filtered = state.fbStatus || state.fbSearch;
+  $('feedback').innerHTML = rows.length ? table(['Time', 'Type', 'Status', 'Message', 'Set status'], rows, 'compact') : empty(filtered ? 'No feedback matches this filter.' : 'No feedback yet.');
 }
 
+/* ---------- Performance ---------- */
 function renderPerformance() {
-  const status = data.status || {};
   const overview = data.overview || {};
-  const perf = status?.perf?.overlayTilePhases?.recentWindow || {};
-  const cache = status?.cache?.tile || {};
-  document.getElementById('performanceSummary').innerHTML = [
-    metric('Tile p50', fmtMs(perf?.p50?.totalMs), `${perf.size || 0} recent samples`),
-    metric('Tile p95', fmtMs(perf?.p95?.totalMs), `${perf.maxSize || 0} sample window`),
-    metric('Load p95', fmtMs(perf?.p95?.loadMs), 'zarr/data load'),
-    metric('Encode p95', fmtMs(perf?.p95?.encodeMs), 'png encode'),
-    metric('Tile hit rate', fmtPct(cache.hitRate), `${cache.metrics?.hits || 0} hits`),
-    metric('Computed fields', status?.cache?.computedField?.items ?? '-', 'process memory'),
+  const status = overview.status || {};
+  const perf = status.perf?.overlayTilePhases?.recentWindow || {};
+  const cache = status.cache?.tile || {};
+  $('perfNote').textContent = `Counted ${sinceStart()}. Only requests that reached this server are measured: what the CDN answers from its cache never arrives here, so a busy site can show few tile samples.`;
+  const samples = perf.size || 0;
+  $('performanceSummary').innerHTML = [
+    metric('Tile render, median', fmtMs(perf.p50?.totalMs), `last ${samples} tiles rendered`),
+    metric('Tile render, 95th pct', fmtMs(perf.p95?.totalMs), samples ? 'slowest 1 in 20' : 'no tiles rendered yet'),
+    metric('Reading data, 95th pct', fmtMs(perf.p95?.loadMs), 'forecast file access'),
+    metric('Encoding, 95th pct', fmtMs(perf.p95?.encodeMs), 'PNG output'),
+    metric('Tiles from memory', fmtPct(cache.hitRate), `${fmtInt(cache.metrics?.hits)} hits, ${fmtInt(cache.metrics?.misses)} rendered`),
   ].join('');
 
-  const latencyRows = (overview?.performance?.endpointLatency || []).slice(0, 20).map(r => `<tr>
+  const endpointRows = (overview.endpoints || []).map(r => `<tr>
     <td class="mono">${esc(r.path)}</td>
-    <td>${esc(r.requests)}</td>
-    <td>${fmtMs(r.p50Ms)}</td>
-    <td>${fmtMs(r.p95Ms)}</td>
-    <td>${fmtMs(r.p99Ms)}</td>
-    <td>${esc(r.slowOver1s)}</td>
-    <td>${esc(r.slowOver2s)}</td>
+    <td class="num">${fmtInt(r.requests)}</td>
+    <td class="num">${fmtInt(r.errors4xx)}</td>
+    <td class="num">${fmtInt(r.errors5xx)}</td>
+    <td class="num">${fmtMs(r.p50Ms)}</td>
+    <td class="num">${fmtMs(r.p95Ms)}</td>
+    <td class="num">${fmtMs(r.p99Ms)}</td>
+    <td class="num">${fmtInt(r.slowOver1s)}</td>
+    <td>${esc(ago(r.lastSeen))}</td>
   </tr>`);
-  document.getElementById('endpointLatency').innerHTML = table(['Path', 'Req', 'p50', 'p95', 'p99', '>1s', '>2s'], latencyRows, 'compact');
+  $('endpoints').innerHTML = endpointRows.length
+    ? table(['Route', ['Requests', 'num'], ['4xx', 'num'], ['5xx', 'num'], ['Median', 'num'], ['95th pct', 'num'], ['99th pct', 'num'], ['Over 1 s', 'num'], 'Last request'], endpointRows, 'compact')
+    : empty('No requests yet.');
 
-  const layerRows = (overview?.performance?.cacheEfficiencyByLayer || []).slice(0, 12).map(r => `<tr>
+  const layerRows = (overview.performance?.cacheEfficiencyByLayer || []).slice(0, 15).map(r => `<tr>
     <td>${esc(r.layer)}</td>
-    <td>${esc(r.requests)}</td>
-    <td>${fmtPct(r.hitRate)}</td>
-    <td>${fmtMs(r.p95Ms)}</td>
+    <td class="num">${fmtInt(r.requests)}</td>
+    <td class="num">${fmtPct(r.hitRate)}</td>
+    <td class="num">${fmtMs(r.p95Ms)}</td>
   </tr>`);
-  document.getElementById('cacheEfficiency').innerHTML = `
-    ${table(['Layer', 'Req', 'Hit', 'p95'], layerRows, 'compact')}
-    <h3>Tile cache</h3>
-    ${table(['Pool', 'Items', 'Fill'], [
-      `<tr><td>Desktop</td><td>${esc(cache.desktopItems ?? '-')} / ${esc(cache.desktopMax ?? '-')}</td><td>${fmtPct(cache.desktopFillRatio)}</td></tr>`,
-      `<tr><td>Mobile</td><td>${esc(cache.mobileItems ?? '-')} / ${esc(cache.mobileMax ?? '-')}</td><td>${fmtPct(cache.mobileFillRatio)}</td></tr>`,
-    ], 'compact')}
-  `;
+  $('tileLayers').innerHTML = layerRows.length
+    ? table(['Layer', ['Tile requests', 'num'], ['From memory', 'num'], ['95th pct', 'num']], layerRows, 'compact')
+    : empty('No tiles requested yet.');
 
-  const trafficRows = (overview?.reliability?.endpointTrafficErrors || []).map(r => `<tr>
-    <td class="mono">${esc(r.path)}</td>
-    <td>${esc(r.requests)}</td>
-    <td>${esc(r.errors5xx)}</td>
-    <td>${esc(r.errors4xx)}</td>
-    <td>${fmtPct(r.errorRate)}</td>
-    <td>${cleanTime(r.lastSeen)}</td>
-  </tr>`);
-  document.getElementById('endpointTraffic').innerHTML = table(['Path', 'Req', '5xx', '4xx', 'Error rate', 'Last seen'], trafficRows, 'compact');
+  const symbols = status.cache?.symbols || {};
+  const lowZoom = status.symbolsLowZoomCache || {};
+  const server = status.cache?.server || {};
+  $('caches').innerHTML = table(['Cache', ['Filled', 'num'], ['Hit rate', 'num']], [
+    `<tr><td>Tiles, desktop</td><td class="num">${fmtInt(cache.desktopItems)} / ${fmtInt(cache.desktopMax)}</td><td class="num" rowspan="2">${fmtPct(cache.hitRate)}</td></tr>`,
+    `<tr><td>Tiles, mobile</td><td class="num">${fmtInt(cache.mobileItems)} / ${fmtInt(cache.mobileMax)}</td></tr>`,
+    `<tr><td>Symbols</td><td class="num">${fmtInt(symbols.items)} / ${fmtInt(symbols.maxItems)}</td><td class="num">${fmtPct(symbols.hitRate)}</td></tr>`,
+    `<tr><td>Symbols, low zoom</td><td class="num">-</td><td class="num">${fmtPct(lowZoom.hitRate)}</td></tr>`,
+    `<tr><td>Forecast steps in memory</td><td class="num">${fmtInt(server.zarrDataItems)} / ${fmtInt(server.zarrDataMax)}</td><td class="num">-</td></tr>`,
+    `<tr><td>Meteograms</td><td class="num">${fmtInt(server.meteogramItems)} / ${fmtInt(server.meteogramMax)}</td><td class="num">-</td></tr>`,
+    `<tr><td>Computed fields</td><td class="num">${fmtInt(status.cache?.computedField?.items)}</td><td class="num">-</td></tr>`,
+  ], 'compact') + `<p class="note" style="margin:10px 0 0">Tile cache holds about ${esc(fmtBytes(server.estTileBytes))} of images.</p>`;
 }
 
-function renderStorage() {
-  const storage = data.storage || {};
-  const cache = storage.cache || {};
-  const d2 = storage.models?.icon_d2 || {};
-  const eu = storage.models?.icon_eu || {};
-  const totalWithCache = (num(storage.totalBytes) || 0) + (num(cache.totalBytes) || 0);
-  document.getElementById('storageSummary').innerHTML = [
-    metric('Forecast data', fmtBytes(storage.totalBytes), `D2 ${fmtBytes(d2.totalBytes)}, EU ${fmtBytes(eu.totalBytes)}`),
-    metric('Disk cache', fmtBytes(cache.totalBytes), `${(cache.kinds || []).length} cache kinds`),
-    metric('Combined runtime', fmtBytes(totalWithCache), 'forecast data plus disk cache'),
-    metric('In-memory tile cache', fmtBytes(data.status?.cache?.server?.estTileBytes), 'estimated png bytes'),
-    metric('Disk growth/day', fmtBytes(data.overview?.capacity?.diskGrowthBytesPerDay), `${data.overview?.capacity?.sampleCount || 0} samples`),
-    metric('Cache growth/day', fmtBytes(data.overview?.capacity?.cacheGrowthBytesPerDay), 'in-memory tile estimate'),
+/* ---------- System ---------- */
+function renderSystem() {
+  const overview = data.overview || {};
+  const sh = overview.serverHealth || {};
+  const host = overview.host || {};
+  const disk = host.disk || {};
+  const swap = host.swap || {};
+  const storage = overview.storage || {};
+  const capacity = overview.capacity || {};
+  $('systemSummary').innerHTML = [
+    metric('Disk', fmtPct100(disk.usedPercent), `${fmtBytes(disk.freeBytes)} free of ${fmtBytes(disk.totalBytes)}`),
+    metric('Memory', fmtPct100(sh.memoryPercent), `${fmtBytes(sh.memoryUsedBytes)} of ${fmtBytes(sh.memoryTotalBytes)}`),
+    metric('Swap', fmtBytes(swap.usedBytes), `of ${fmtBytes(swap.totalBytes)}`),
+    metric('CPU', num(sh.cpuPercent) == null ? '-' : `${num(sh.cpuPercent).toFixed(0)}%`, 'since the last refresh'),
+    metric('Load', sh.loadAvg1m ?? '-', `${sh.loadAvg5m ?? '-'} (5 min), ${sh.loadAvg15m ?? '-'} (15 min)`),
+    metric('Server up for', fmtDur(sh.uptimeSeconds), host.reboot?.required ? 'reboot pending tonight' : 'no reboot pending'),
   ].join('');
 
-  document.getElementById('forecastStorage').innerHTML = table(['Model', 'Path', 'Size', 'Runs'], [
-    `<tr><td>ICON-D2</td><td class="mono">${esc(d2.path || '-')}</td><td>${fmtBytes(d2.totalBytes)}</td><td>${esc((d2.runs || []).length)}</td></tr>`,
-    `<tr><td>ICON-EU</td><td class="mono">${esc(eu.path || '-')}</td><td>${fmtBytes(eu.totalBytes)}</td><td>${esc((eu.runs || []).length)}</td></tr>`,
-  ], 'compact');
+  const models = storage.models || {};
+  const parts = [
+    ['ICON-D2 forecast', num(models.icon_d2?.totalBytes)],
+    ['ICON-EU forecast', num(models.icon_eu?.totalBytes)],
+    ['Observations', num(overview.observations?.totalBytes)],
+    ['Point-query cache', num(storage.cache?.totalBytes)],
+  ];
+  const known = parts.reduce((sum, [, v]) => sum + (v || 0), 0);
+  const used = num(disk.usedBytes);
+  const total = (used || 0) + (num(disk.freeBytes) || 0);
+  if (used != null) parts.push(['Everything else (system, logs, software)', Math.max(0, used - known)]);
+  parts.push(['Free', num(disk.freeBytes)]);
+  const growth = num(capacity.diskGrowthBytesPerDay);
+  $('diskBreakdown').innerHTML = table(['What', ['Size', 'num'], ['Share of disk', 'num']],
+    parts.map(([label, v]) => `<tr><td>${esc(label)}</td><td class="num">${fmtBytes(v)}</td><td class="num">${total && v != null ? `${(v / total * 100).toFixed(1)}%` : '-'}</td></tr>`), 'compact')
+    + `<p class="note" style="margin:10px 0 0">Forecast data ${growth == null ? 'trend: not enough samples yet' : `changed by ${esc(fmtBytes(growth))} per day`} (measured ${esc(sinceStart())}; it swings as old runs are replaced).</p>`;
 
   const cacheRows = [];
-  for (const kind of cache.kinds || []) {
+  for (const kind of storage.cache?.kinds || []) {
     for (const model of kind.models || []) {
       const runs = model.runs || [];
       const files = runs.reduce((sum, r) => sum + (Number(r.files) || 0), 0);
-      cacheRows.push(`<tr><td>${esc(kind.kind)}</td><td>${esc(model.model)}</td><td>${fmtBytes(model.bytes)}</td><td>${esc(runs.length)}</td><td>${esc(files)}</td></tr>`);
+      cacheRows.push(`<tr><td>${esc(kind.kind)}</td><td>${esc(model.model)}</td><td class="num">${fmtBytes(model.bytes)}</td><td class="num">${esc(runs.length)}</td><td class="num">${fmtInt(files)}</td></tr>`);
     }
   }
-  document.getElementById('diskCacheStorage').innerHTML = cacheRows.length
-    ? table(['Kind', 'Model', 'Size', 'Runs', 'Files'], cacheRows, 'compact')
-    : empty('No disk cache directory found.');
-
-  const tmp = storage.tmp || {};
-  document.getElementById('storageDetails').innerHTML = `
-    <div class="split">
-      <div>${renderRunTables()}</div>
-      <div>
-        <h3>Static grid</h3>
-        ${table(['Metric', 'Value'], Object.entries(storage.staticGrid || {}).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(typeof v === 'object' ? JSON.stringify(v) : v ?? '-')}</td></tr>`), 'compact')}
-        <h3>Legacy tmp artifacts</h3>
-        ${(tmp.entries || []).length ? table(['Name', 'Type', 'Size'], tmp.entries.map(e => `<tr><td>${esc(e.name)}</td><td>${esc(e.isDir ? 'dir' : 'file')}</td><td>${fmtBytes(e.bytes)}</td></tr>`), 'compact') : empty('No tmp artifacts.')}
-      </div>
-    </div>
+  const tmp = storage.tmp?.entries || [];
+  $('storageDetails').innerHTML = `
+    <details style="border-top:0;margin-top:0;padding-top:0"><summary>Forecast runs on disk</summary>${runTables()}</details>
+    <details><summary>Point-query cache</summary>${cacheRows.length ? table(['Kind', 'Model', ['Size', 'num'], ['Runs', 'num'], ['Files', 'num']], cacheRows, 'compact') : empty('Cache is empty.')}</details>
+    <details><summary>Leftover temporary files (${tmp.length})</summary>${tmp.length ? table(['Name', 'Type', ['Size', 'num']], tmp.map(e => `<tr><td>${esc(e.name)}</td><td>${esc(e.isDir ? 'folder' : 'file')}</td><td class="num">${fmtBytes(e.bytes)}</td></tr>`), 'compact') : empty('None.')}</details>
   `;
 }
 
-function renderSymbolDiagnostics() {
-  const d = data.overview?.engineering?.symbolDiagnostics || {};
+/* ---------- Tools ---------- */
+function renderTools() {
+  const overview = data.overview || {};
+  const errors = overview.reliability?.recentErrors || [];
+  const errorRows = errors.slice(0, 10).map(r => `<tr>
+    <td>${badge(r.status === 'active' ? 'warn' : 'info')}</td>
+    <td class="num">${esc(r.count10m ?? 0)} / ${esc(r.count1h ?? 0)} / ${esc(r.count24h ?? 0)}</td>
+    <td>${esc(fmtUtc(r.latestSeen))}</td>
+    <td class="mono">${esc((r.sample || r.fingerprint || '-').slice(0, 220))}<div class="muted">${esc((r.sources || []).join(', '))}</div></td>
+  </tr>`);
+  $('logErrors').innerHTML = errorRows.length
+    ? table(['State', ['10 min / 1 h / 24 h', 'num'], 'Last seen', 'Example'], errorRows, 'compact')
+    : empty('No error lines in the last 1,200 lines of each log.');
+
+  const d = overview.engineering?.symbolDiagnostics || {};
   const sy = d.cache?.symbols || {};
   const lz = d.cache?.lowZoom || {};
-  const preRows = (d.precomputeByZoom || []).map(r => `<tr><td>${esc(r.zoom)}</td><td>${esc(r.files)}</td><td>${esc(r.stepCount)}</td><td>${esc(r.bins)}</td><td>${esc(r.sampleCount ?? '-')}</td><td>${cleanTime(r.latestUpdatedAt)}</td></tr>`);
-  const classRows = (d.topSymbolClasses || []).map(r => `<tr><td>${esc(r.symbolClass)}</td><td>${esc(r.count)}</td></tr>`);
-  document.getElementById('symbolDiagnostics').innerHTML = `
-    ${table(['Metric', 'Value'], [
-      `<tr><td>Latest model</td><td>${esc(d.latestModel || '-')}</td></tr>`,
-      `<tr><td>Latest run</td><td class="mono">${esc(d.latestRun || '-')}</td></tr>`,
-      `<tr><td>Symbol cache hit</td><td>${fmtPct(sy.hitRate)}</td></tr>`,
-      `<tr><td>Low zoom hit</td><td>${fmtPct(lz.hitRate)}</td></tr>`,
-      `<tr><td>Blended responses</td><td>${esc(d.blendCounters?.blended ?? 0)}</td></tr>`,
-    ], 'compact')}
-    <h3>Precompute by zoom</h3>${table(['Zoom', 'Files', 'Steps', 'Bins', 'Sample', 'Updated'], preRows, 'compact')}
-    <h3>Top symbol classes</h3>${classRows.length ? table(['Class', 'Count'], classRows, 'compact') : empty('No sampled symbol classes.')}
+  const preRows = (d.precomputeByZoom || []).map(r => `<tr><td class="num">${esc(r.zoom)}</td><td class="num">${fmtInt(r.files)}</td><td class="num">${esc(r.stepCount)}</td><td class="num">${esc(r.bins)}</td><td>${esc(fmtUtc(r.latestUpdatedAt))}</td></tr>`);
+  const classRows = (d.topSymbolClasses || []).map(r => `<tr><td>${esc(r.symbolClass)}</td><td class="num">${fmtInt(r.count)}</td></tr>`);
+  $('symbolDiagnostics').innerHTML = `
+    ${kv([
+      ['Model and run', `${esc(d.latestModel || '-')} <span class="mono">${esc(d.latestRun || '-')}</span>`],
+      ['Symbol cache hit rate', esc(fmtPct(sy.hitRate))],
+      ['Low-zoom cache hit rate', esc(fmtPct(lz.hitRate))],
+      ['Responses blending both models', esc(fmtInt(d.blendCounters?.blended))],
+    ])}
+    <h3>Precomputed symbols by zoom</h3>${preRows.length ? table([['Zoom', 'num'], ['Files', 'num'], ['Steps', 'num'], ['Bins', 'num'], 'Last written'], preRows, 'compact') : empty('None on disk for this run.')}
+    <h3>Most common symbols (sample)</h3>${classRows.length ? table(['Symbol', ['Count', 'num']], classRows, 'compact') : empty('No sample.')}
   `;
-}
 
-function renderServerHealth() {
-  const sh = data.overview?.serverHealth || {};
-  document.getElementById('serverHealth').innerHTML = table(['Metric', 'Value'], [
-    `<tr><td>CPU</td><td>${num(sh.cpuPercent) == null ? '-' : `${num(sh.cpuPercent).toFixed(1)}%`}</td></tr>`,
-    `<tr><td>Memory</td><td>${num(sh.memoryPercent) == null ? '-' : `${num(sh.memoryPercent).toFixed(1)}%`}</td></tr>`,
-    `<tr><td>Memory used</td><td>${fmtBytes(sh.memoryUsedBytes)}</td></tr>`,
-    `<tr><td>Memory total</td><td>${fmtBytes(sh.memoryTotalBytes)}</td></tr>`,
-    `<tr><td>Load 1m</td><td>${esc(sh.loadAvg1m ?? '-')}</td></tr>`,
-    `<tr><td>Uptime</td><td>${esc(sh.uptimeSeconds ?? '-')}s</td></tr>`,
-  ], 'compact');
+  const grids = overview.storage?.staticGrid?.models || {};
+  const gridRows = Object.entries(grids).map(([key, g]) => `<tr>
+    <td>${esc(modelName(key))}</td>
+    <td>${g.exists ? 'yes' : 'no'}</td>
+    <td class="mono">${esc(g.shape ? g.shape.join(' x ') : '-')}</td>
+    <td>${esc((g.fields || []).join(', ') || '-')}</td>
+    <td class="num">${g.exists ? fmtBytes(g.bytes) : '-'}</td>
+    <td>${esc(fmtUtc(g.updatedAt))}</td>
+    <td class="mono">${esc(g.sourceRun || '-')}</td>
+  </tr>`);
+  $('staticGrid').innerHTML = table(['Model', 'Present', 'Shape', 'Fields', ['Size', 'num'], 'Written', 'From run'], gridRows, 'compact');
 }
 
 function renderAll() {
-  renderAttention();
-  renderOverview();
-  renderIngest();
-  renderReliability();
+  renderBanner();
+  renderStatus();
+  renderData();
+  renderUsers();
   renderPerformance();
-  renderStorage();
-  renderSymbolDiagnostics();
-  renderServerHealth();
+  renderSystem();
+  renderTools();
 }
 
-async function loadCore() {
-  const [status, storage, overview] = await Promise.all([
-    j('/api/status'),
-    j('/api/admin/storage'),
-    j('/api/admin/overview_metrics'),
-  ]);
-  data.status = status;
-  data.storage = storage;
-  data.overview = overview;
-}
 async function loadFeedback() {
   const params = new URLSearchParams({limit: '200'});
   if (state.fbStatus) params.set('status', state.fbStatus);
@@ -773,45 +982,43 @@ async function loadFeedback() {
   data.feedback = response.feedback || [];
 }
 async function loadAll() {
-  await Promise.all([loadCore(), loadFeedback()]);
+  const [overview] = await Promise.all([j('/api/admin/overview_metrics'), loadFeedback()]);
+  data.overview = overview;
   renderAll();
-  document.getElementById('lastUpdated').textContent = new Date().toLocaleString();
+  lastLoaded = Date.now();
+  $('lastUpdated').textContent = new Date().toLocaleTimeString();
   refreshLeft = refreshEvery;
+}
+function showLoadError(error) {
+  $('attentionBanner').className = 'attention crit';
+  $('attentionBanner').innerHTML = `<strong>Could not load admin data</strong><div class="muted">${esc(error.message)}</div>`;
 }
 
 function renderLogsSummary(logs) {
   let errors = 0;
   let warnings = 0;
-  const repeated = {};
   for (const line of (logs || []).flatMap(l => l.tail || [])) {
-    const lower = line.toLowerCase();
-    if (/error|exception|traceback|critical/.test(lower)) {
-      errors += 1;
-      repeated[line] = (repeated[line] || 0) + 1;
-    } else if (/warn|warning/.test(lower)) {
-      warnings += 1;
-    }
+    if (/\b(ERROR|CRITICAL)\b|Traceback/.test(line)) errors += 1;
+    else if (/\bWARN(ING)?\b/.test(line)) warnings += 1;
   }
-  const top = Object.entries(repeated).sort((a, b) => b[1] - a[1])[0];
-  document.getElementById('logsSummary').innerHTML = `${badge(errors ? 'Warning' : 'OK')} <span class="muted">errors ${errors}</span> <span class="muted">warnings ${warnings}</span> <span class="muted">top repeat ${esc(top ? `${top[0].slice(0, 100)} (${top[1]}x)` : '-')}</span>`;
+  $('logsSummary').innerHTML = `<span class="muted">${errors} error lines, ${warnings} warnings in what is loaded</span>`;
 }
 function renderLogs() {
   const needle = (state.logFilter || '').toLowerCase();
   const rows = data.logs.filter(log => state.logFile === 'all' || log.file === state.logFile);
   if (!rows.length) {
-    document.getElementById('logs').innerHTML = empty('No logs for the selected filter.');
+    $('logs').className = '';
+    $('logs').innerHTML = empty('No logs for the selected filter.');
     return;
   }
+  const titles = {backend: 'Backend', ingest: 'Forecast ingest', observations: 'Observation ingest', stdout: 'Stdout'};
   const grouped = {};
-  for (const log of rows) {
-    const source = log.source || 'backend';
-    (grouped[source] ||= []).push(log);
-  }
+  for (const log of rows) (grouped[log.source || 'backend'] ||= []).push(log);
   let html = '';
-  for (const source of ['backend', 'ingest', 'stdout']) {
+  for (const source of ['backend', 'ingest', 'observations', 'stdout']) {
     const group = grouped[source] || [];
     if (!group.length) continue;
-    html += `<h3>${esc(source)}</h3>`;
+    html += `<h3>${esc(titles[source])}</h3>`;
     for (const log of group) {
       let lines = [...(log.tail || [])];
       if (state.logNewest) lines.reverse();
@@ -820,23 +1027,21 @@ function renderLogs() {
       html += `<details open><summary>${esc(log.file)} <span class="muted">${fmtBytes(log.sizeBytes)} | ${lines.length}${needle ? ` of ${total}` : ''} lines</span></summary><pre>${esc(lines.join('\n') || '(empty)')}</pre></details>`;
     }
   }
-  document.getElementById('logs').innerHTML = html || empty('No logs for the selected source.');
+  $('logs').className = '';
+  $('logs').innerHTML = html || empty('No logs for the selected source.');
 }
 async function loadLogs() {
-  document.getElementById('logs').innerHTML = '<div class="muted">Loading logs...</div>';
+  $('logs').className = '';
+  $('logs').innerHTML = '<div class="muted">Loading logs...</div>';
   const params = new URLSearchParams({limit: '5000', level: state.logLevel, source: state.logSource});
   const response = await j(`/api/admin/logs?${params.toString()}`);
   data.logs = response.logs || [];
   data.logsLoaded = true;
-  const selector = document.getElementById('logFile');
+  const selector = $('logFile');
   const previous = state.logFile || selector.value;
   selector.innerHTML = '<option value="all">all files</option>' + data.logs.map(log => `<option value="${esc(log.file)}">${esc(log.file)}</option>`).join('');
   state.logFile = data.logs.some(log => log.file === previous) ? previous : 'all';
   selector.value = state.logFile;
-  const artifacts = response.artifacts?.ingest || [];
-  document.getElementById('logsArtifacts').innerHTML = artifacts.length
-    ? `<div class="muted">Ingest artifacts: ${artifacts.map(x => `${esc(x.name)} (${fmtBytes(x.sizeBytes)})`).join(', ')}</div>`
-    : '<div class="muted">Ingest artifacts: none</div>';
   renderLogsSummary(data.logs);
   renderLogs();
 }
@@ -848,38 +1053,38 @@ async function setStatus(id, status) {
     body: JSON.stringify({status}),
   });
   await loadFeedback();
-  renderReliability();
-  renderAttention();
-  renderOverview();
+  renderFeedback();
+  renderBanner();
+  renderStatus();
 }
 function copyText(text) {
   return navigator.clipboard?.writeText(text).then(() => true).catch(() => false);
 }
 function debugShell(title, url, payload) {
   const pretty = JSON.stringify(payload, null, 2);
-  return `<div class="toolbar"><button class="secondary" onclick="copyDebug(${JSON.stringify(url)})">Copy URL</button><button class="secondary" onclick="copyDebug(${JSON.stringify(pretty)})">Copy JSON</button></div><details open><summary>${esc(title)}</summary><div class="muted mono" style="margin:8px 0">${esc(url)}</div><pre>${esc(pretty)}</pre></details>`;
+  return `<div class="toolbar"><button class="secondary" onclick="copyDebug(${esc(JSON.stringify(url))})">Copy URL</button><button class="secondary" onclick="copyDebug(${esc(JSON.stringify(pretty))})">Copy JSON</button></div><details><summary>${esc(title)}</summary><div class="muted mono" style="margin:8px 0">${esc(url)}</div><pre>${esc(pretty)}</pre></details>`;
 }
 async function queryEmagram() {
-  const lat = document.getElementById('emLat').value;
-  const lon = document.getElementById('emLon').value;
-  const time = document.getElementById('emTime').value.trim() || 'latest';
-  const model = document.getElementById('emModel').value;
-  const out = document.getElementById('emResult');
+  const lat = $('emLat').value;
+  const lon = $('emLon').value;
+  const time = $('emTime').value.trim() || 'latest';
+  const model = $('emModel').value;
+  const out = $('emResult');
   out.innerHTML = '<div class="muted">Loading...</div>';
   try {
     const params = new URLSearchParams({lat, lon, time, model});
     const url = `/api/emagram_point?${params.toString()}`;
     const payload = await j(url);
     const point = payload.point || {};
-    const rows = (payload.levels || []).slice(0, 20).map(l => `<tr><td>${esc(l.pressureHpa)}</td><td>${esc(l.altitudeM ?? '-')}</td><td>${esc(l.temperatureC ?? '-')}</td><td>${esc(l.dewpointC ?? '-')}</td><td>${esc(l.relativeHumidityPct ?? '-')}</td><td>${esc(l.windSpeedKt ?? '-')}</td><td>${esc(l.windDirDeg ?? '-')}</td></tr>`);
+    const rows = (payload.levels || []).slice(0, 20).map(l => `<tr><td class="num">${esc(l.pressureHpa)}</td><td class="num">${esc(l.altitudeM ?? '-')}</td><td class="num">${esc(l.temperatureC ?? '-')}</td><td class="num">${esc(l.dewpointC ?? '-')}</td><td class="num">${esc(l.relativeHumidityPct ?? '-')}</td><td class="num">${esc(l.windSpeedKt ?? '-')}</td><td class="num">${esc(l.windDirDeg ?? '-')}</td></tr>`);
     out.innerHTML = `
-      ${table(['Metric', 'Value'], [
-        `<tr><td>Run</td><td class="mono">${esc(payload.run || '-')}</td></tr>`,
-        `<tr><td>Step</td><td>${esc(payload.step ?? '-')}</td></tr>`,
-        `<tr><td>Valid</td><td>${cleanTime(payload.validTime)}</td></tr>`,
-        `<tr><td>Nearest point</td><td>${esc(point.gridLat)}, ${esc(point.gridLon)} (i=${esc(point.i)}, j=${esc(point.j)})</td></tr>`,
-      ], 'compact')}
-      <h3>Levels</h3>${rows.length ? table(['hPa', 'Alt m', 'Temp C', 'Dew C', 'RH %', 'Wind kt', 'Dir'], rows, 'compact') : empty('No profile levels returned.')}
+      ${kv([
+        ['Run', `<span class="mono">${esc(payload.run || '-')}</span>`],
+        ['Step', esc(payload.step ?? '-')],
+        ['Valid', esc(fmtUtc(payload.validTime))],
+        ['Nearest grid point', `${esc(point.gridLat)}, ${esc(point.gridLon)} (i=${esc(point.i)}, j=${esc(point.j)})`],
+      ])}
+      <h3>Levels</h3>${rows.length ? table([['hPa', 'num'], ['Alt m', 'num'], ['Temp C', 'num'], ['Dew C', 'num'], ['RH %', 'num'], ['Wind kt', 'num'], ['Dir', 'num']], rows, 'compact') : empty('No profile levels returned.')}
       ${debugShell('Raw response', url, payload)}
     `;
   } catch (error) {
@@ -887,10 +1092,10 @@ async function queryEmagram() {
   }
 }
 async function queryMeteogram() {
-  const lat = document.getElementById('mgLat').value;
-  const lon = document.getElementById('mgLon').value;
-  const model = document.getElementById('mgModel').value;
-  const out = document.getElementById('mgResult');
+  const lat = $('mgLat').value;
+  const lon = $('mgLon').value;
+  const model = $('mgModel').value;
+  const out = $('mgResult');
   out.innerHTML = '<div class="muted">Loading...</div>';
   try {
     const params = new URLSearchParams({lat, lon, model});
@@ -898,15 +1103,15 @@ async function queryMeteogram() {
     const payload = await j(url);
     const series = payload.series || [];
     const point = payload.point || {};
-    const sample = series.slice(0, 12).map(r => `<tr><td>${cleanTime(r.validTime)}</td><td>${esc(r.model)}</td><td>${esc(r.wind10mKt ?? '-')}</td><td>${esc(r.gust10mKt ?? '-')}</td><td>${esc(r.cloudTotalPct ?? '-')}</td><td>${esc(r.precipTotal ?? '-')}</td><td>${esc(r.capeMl ?? '-')}</td></tr>`);
+    const sample = series.slice(0, 12).map(r => `<tr><td>${esc(fmtUtc(r.validTime))}</td><td>${esc(r.model)}</td><td class="num">${esc(r.wind10mKt ?? '-')}</td><td class="num">${esc(r.gust10mKt ?? '-')}</td><td class="num">${esc(r.cloudTotalPct ?? '-')}</td><td class="num">${esc(r.precipTotal ?? '-')}</td><td class="num">${esc(r.capeMl ?? '-')}</td></tr>`);
     out.innerHTML = `
-      ${table(['Metric', 'Value'], [
-        `<tr><td>Nearest point</td><td>${esc(point.gridLat)}, ${esc(point.gridLon)} (i=${esc(point.i)}, j=${esc(point.j)})</td></tr>`,
-        `<tr><td>Rows</td><td>${esc(payload.count ?? 0)}</td></tr>`,
-        `<tr><td>From</td><td>${cleanTime(series[0]?.validTime)}</td></tr>`,
-        `<tr><td>To</td><td>${cleanTime(series[series.length - 1]?.validTime)}</td></tr>`,
-      ], 'compact')}
-      <h3>Series sample</h3>${sample.length ? table(['Valid', 'Model', 'Wind kt', 'Gust kt', 'Cloud %', 'Precip', 'CAPE'], sample, 'compact') : empty('No meteogram rows returned.')}
+      ${kv([
+        ['Nearest grid point', `${esc(point.gridLat)}, ${esc(point.gridLon)} (i=${esc(point.i)}, j=${esc(point.j)})`],
+        ['Rows', esc(payload.count ?? 0)],
+        ['From', esc(fmtUtc(series[0]?.validTime))],
+        ['To', esc(fmtUtc(series[series.length - 1]?.validTime))],
+      ])}
+      <h3>First rows</h3>${sample.length ? table(['Valid', 'Model', ['Wind kt', 'num'], ['Gust kt', 'num'], ['Cloud %', 'num'], ['Precip', 'num'], ['CAPE', 'num']], sample, 'compact') : empty('No meteogram rows returned.')}
       ${debugShell('Raw response', url, payload)}
     `;
   } catch (error) {
@@ -920,81 +1125,99 @@ function applyUrlState() {
     if (params.has(key)) state[key] = params.get(key) || state[key];
   }
   if (params.has('logNewest')) state.logNewest = params.get('logNewest') === '1';
-  document.getElementById('fbStatus').value = state.fbStatus;
-  document.getElementById('fbSearch').value = state.fbSearch;
-  document.getElementById('logLevel').value = state.logLevel;
-  document.getElementById('logSource').value = state.logSource;
-  document.getElementById('logFilter').value = state.logFilter;
-  document.getElementById('logNewest').checked = state.logNewest;
+  $('fbStatus').value = state.fbStatus;
+  $('fbSearch').value = state.fbSearch;
+  $('logLevel').value = state.logLevel;
+  $('logSource').value = state.logSource;
+  $('logFilter').value = state.logFilter;
+  $('logNewest').checked = state.logNewest;
 }
 function persistUrlState() {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(state)) {
-    if (value !== '' && value !== 'all' && !(key === 'logNewest' && value === true)) params.set(key, String(value));
+    if (key === 'tab' && value === 'status') continue;
+    if (key === 'logNewest') {
+      if (value === false) params.set(key, '0');
+      continue;
+    }
+    if (value !== '' && value !== 'all') params.set(key, String(value));
   }
   history.replaceState({}, '', `${location.pathname}${params.toString() ? `?${params.toString()}` : ''}`);
 }
 function activateTab(tab) {
-  if (!document.getElementById(`tab-${tab}`)) tab = 'overview';
+  tab = TAB_ALIASES[tab] || tab;
+  if (!$(`tab-${tab}`)) tab = 'status';
   state.tab = tab;
-  document.querySelectorAll('.tab').forEach(button => button.classList.toggle('active', button.dataset.tab === tab));
+  document.querySelectorAll('.tab').forEach(button => {
+    const active = button.dataset.tab === tab;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-current', active ? 'page' : 'false');
+  });
   document.querySelectorAll('.panel').forEach(panel => panel.classList.toggle('active', panel.id === `tab-${tab}`));
   persistUrlState();
+  // Charts size themselves to their container, which has no width while hidden.
+  if (tab === 'users' && data.overview) renderUsageCharts();
 }
 
 window.setStatus = (id, status) => setStatus(id, status).catch(error => alert(error.message));
 window.copyDebug = text => copyText(text).then(ok => alert(ok ? 'Copied.' : 'Clipboard copy failed.'));
-document.getElementById('refresh').addEventListener('click', () => loadAll().catch(error => alert(error.message)));
-document.getElementById('fbApply').addEventListener('click', () => {
-  state.fbStatus = document.getElementById('fbStatus').value;
-  state.fbSearch = document.getElementById('fbSearch').value.trim();
+$('refresh').addEventListener('click', () => loadAll().catch(showLoadError));
+$('fbApply').addEventListener('click', () => {
+  state.fbStatus = $('fbStatus').value;
+  state.fbSearch = $('fbSearch').value.trim();
   persistUrlState();
-  loadFeedback().then(() => { renderReliability(); renderAttention(); renderOverview(); }).catch(error => alert(error.message));
+  loadFeedback().then(() => { renderFeedback(); renderBanner(); renderStatus(); }).catch(error => alert(error.message));
 });
-document.getElementById('logApply').addEventListener('click', () => {
-  state.logLevel = document.getElementById('logLevel').value;
-  state.logSource = document.getElementById('logSource').value;
-  state.logFilter = document.getElementById('logFilter').value.trim();
-  state.logFile = document.getElementById('logFile').value;
-  state.logNewest = document.getElementById('logNewest').checked;
+$('logApply').addEventListener('click', () => {
+  state.logLevel = $('logLevel').value;
+  state.logSource = $('logSource').value;
+  state.logFilter = $('logFilter').value.trim();
+  state.logFile = $('logFile').value;
+  state.logNewest = $('logNewest').checked;
   persistUrlState();
   loadLogs().catch(error => alert(error.message));
 });
-document.getElementById('logFilter').addEventListener('input', () => {
-  state.logFilter = document.getElementById('logFilter').value.trim();
+$('logFilter').addEventListener('input', () => {
+  state.logFilter = $('logFilter').value.trim();
   persistUrlState();
   if (data.logsLoaded) renderLogs();
 });
-document.getElementById('logFile').addEventListener('change', () => {
-  state.logFile = document.getElementById('logFile').value;
+$('logFile').addEventListener('change', () => {
+  state.logFile = $('logFile').value;
   persistUrlState();
   if (data.logsLoaded) renderLogs();
 });
-document.getElementById('logNewest').addEventListener('change', () => {
-  state.logNewest = document.getElementById('logNewest').checked;
+$('logNewest').addEventListener('change', () => {
+  state.logNewest = $('logNewest').checked;
   persistUrlState();
   if (data.logsLoaded) renderLogs();
 });
 document.querySelectorAll('.tab').forEach(button => button.addEventListener('click', () => activateTab(button.dataset.tab)));
-document.getElementById('loadLogs').addEventListener('click', () => loadLogs().catch(error => alert(error.message)));
-document.getElementById('loadLogsTop').addEventListener('click', () => {
-  activateTab('diagnostics');
-  loadLogs().catch(error => alert(error.message));
+$('loadLogs').addEventListener('click', () => loadLogs().catch(error => alert(error.message)));
+$('emQuery').addEventListener('click', () => queryEmagram());
+$('mgQuery').addEventListener('click', () => queryMeteogram());
+let resizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { if (state.tab === 'users' && data.overview) renderUsageCharts(); }, 150);
 });
-document.getElementById('emQuery').addEventListener('click', () => queryEmagram());
-document.getElementById('mgQuery').addEventListener('click', () => queryMeteogram());
 
 applyUrlState();
 activateTab(state.tab);
-loadAll().catch(error => {
-  document.getElementById('attentionBanner').className = 'attention crit';
-  document.getElementById('attentionBanner').innerHTML = `<strong>Admin load failed</strong><div class="muted">${esc(error.message)}</div>`;
-});
+loadAll().catch(showLoadError);
+// Refresh only while someone is looking: each refresh walks the data directory.
 setInterval(() => {
+  if (document.hidden) return;
   refreshLeft = Math.max(0, refreshLeft - 1);
-  document.getElementById('refreshCountdown').textContent = String(refreshLeft);
+  $('refreshCountdown').textContent = String(refreshLeft);
+  if (refreshLeft === 0) {
+    refreshLeft = refreshEvery;
+    loadAll().catch(() => {});
+  }
 }, 1000);
-setInterval(() => loadAll().catch(() => {}), refreshEvery * 1000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && Date.now() - lastLoaded > refreshEvery * 1000) loadAll().catch(() => {});
+});
 </script>
 </body>
 </html>
