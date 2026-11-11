@@ -2135,17 +2135,41 @@ def _tail_lines(path: str, limit: int = 300) -> list[str]:
 
 
 def _dir_size_bytes(path: str) -> int:
+    """Total size of the files below ``path`` (scandir: one stat per file, no path joins)."""
     total = 0
-    if not os.path.isdir(path):
-        return 0
-    for root, _, files in os.walk(path):
-        for fn in files:
-            fp = os.path.join(root, fn)
-            try:
-                total += os.path.getsize(fp)
-            except Exception:
-                pass
+    stack = [path]
+    while stack:
+        try:
+            with os.scandir(stack.pop()) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        else:
+                            total += entry.stat().st_size
+                    except OSError:
+                        pass
+        except OSError:
+            pass
     return int(total)
+
+
+def _model_dir_sizes(base: str, runs: list[str]) -> tuple[int, dict[str, int]]:
+    """(total, per-run) sizes of a model directory, reading every file once."""
+    run_bytes = {run: _dir_size_bytes(os.path.join(base, run)) for run in runs}
+    rest = 0
+    try:
+        with os.scandir(base) as entries:
+            for entry in entries:
+                if entry.name in run_bytes:
+                    continue
+                try:
+                    rest += _dir_size_bytes(entry.path) if entry.is_dir(follow_symlinks=False) else entry.stat().st_size
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return int(sum(run_bytes.values()) + rest), run_bytes
 
 
 def _cache_storage_info() -> dict[str, Any]:
@@ -2338,8 +2362,14 @@ def _ingest_model_timings() -> dict[str, dict[str, Any]]:
 
 async def api_admin_storage():
     """Storage + ingest/admin overview (runs, timings, tmp state, markers, usage)."""
+    # Sizing the data directory reads ~200k files. On the event loop that froze
+    # every other request for seconds whenever the admin page refreshed.
+    return await asyncio.to_thread(_collect_admin_storage)
+
+
+def _collect_admin_storage() -> dict[str, Any]:
     expected_steps = {"icon_d2": 48, "icon_eu": 92}
-    model_timings = await asyncio.to_thread(_ingest_model_timings)
+    model_timings = _ingest_model_timings()
 
     out: dict[str, Any] = {
         "models": {},
@@ -2354,8 +2384,8 @@ async def api_admin_storage():
 
     for model_dir, model_key in (("icon-d2", "icon_d2"), ("icon-eu", "icon_eu")):
         base = os.path.join(DATA_DIR, model_dir)
-        model_total = _dir_size_bytes(base)
         runs = sorted([d for d in os.listdir(base) if d.isdigit()], reverse=True) if os.path.isdir(base) else []
+        model_total, run_sizes = _model_dir_sizes(base, runs)
         run_items: list[dict[str, Any]] = []
         latest_full_ingested_at = None
         latest_full_ingested_step_count = None
@@ -2365,7 +2395,7 @@ async def api_admin_storage():
             zarr_dirs = sorted(glob.glob(os.path.join(rp, "*.zarr")))
             storage_paths = zarr_dirs
             step_count = len(step_numbers_from_dir(rp))
-            run_bytes = _dir_size_bytes(rp)
+            run_bytes = run_sizes.get(run, 0)
             latest_storage_mtime = None
             if storage_paths:
                 latest_storage_mtime = datetime.fromtimestamp(max(os.path.getmtime(p) for p in storage_paths), tz=timezone.utc)
@@ -2422,7 +2452,7 @@ async def api_admin_storage():
         except Exception:
             pass
 
-    pipelines = await asyncio.to_thread(admin_ops.read_pipelines)
+    pipelines = admin_ops.read_pipelines()
     forecast_pipeline = pipelines.get("forecast", {})
     running = [p["command"] for p in forecast_pipeline.get("processes", [])]
 
@@ -2768,7 +2798,12 @@ def _summarize_symbol_diagnostics(storage: dict[str, Any], status: dict[str, Any
     return diag
 
 
-def _summarize_data_integrity(storage: dict[str, Any], status: dict[str, Any], recent_errors: list[dict[str, Any]]) -> dict[str, Any]:
+def _summarize_data_integrity(
+    storage: dict[str, Any],
+    status: dict[str, Any],
+    recent_errors: list[dict[str, Any]],
+    symbol_diag: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     expected = {'icon_d2': 48, 'icon_eu': 92}
     models = []
     issues = []
@@ -2794,7 +2829,8 @@ def _summarize_data_integrity(storage: dict[str, Any], status: dict[str, Any], r
         if not m.get('latestRun'):
             issues.append(f"{mk} has no detected run")
     hbas_related = sum(1 for r in recent_errors if 'hbas' in (r.get('fingerprint') or '').lower() or 'hbas' in (r.get('sample') or '').lower())
-    symbol_diag = _summarize_symbol_diagnostics(storage, status)
+    if symbol_diag is None:
+        symbol_diag = _summarize_symbol_diagnostics(storage, status)
     return {
         'models': models,
         'issues': issues,
@@ -2944,7 +2980,7 @@ async def api_admin_overview_metrics():
         return _pct([float(r.get(field, 0.0)) for r in phase_recent], pct)
 
     recent_errors = await asyncio.to_thread(_collect_recent_error_groups)
-    symbol_diag = _summarize_symbol_diagnostics(storage, status)
+    symbol_diag = await asyncio.to_thread(_summarize_symbol_diagnostics, storage, status)
 
     # Health verdict: the monitor's freshness check plus host and app state.
     observations = await asyncio.to_thread(_observations_admin)
@@ -2971,7 +3007,7 @@ async def api_admin_overview_metrics():
         active_log_error_groups=sum(1 for r in recent_errors if r.get("status") == "active"),
     )
     now_utc = datetime.now(timezone.utc)
-    integrity = _summarize_data_integrity(storage, status, recent_errors)
+    integrity = _summarize_data_integrity(storage, status, recent_errors, symbol_diag)
 
     phase_totals = [r.get('totalMs') for r in overlay_phase_series if r.get('totalMs') is not None]
     visit_series = [r.get('visits') for r in usage_series]

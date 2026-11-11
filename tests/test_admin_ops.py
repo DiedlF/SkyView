@@ -259,3 +259,24 @@ def test_log_sources_and_tail(tmp_path):
     small.write_text("a\nb\n")
     assert skyview_app._tail_lines(str(small), limit=100) == ["a", "b"]
     assert skyview_app._tail_lines(str(tmp_path / "missing.log")) == []
+
+
+def test_directory_sizes_read_each_file_once(tmp_path):
+    import app as skyview_app
+
+    base = tmp_path / "icon-d2"
+    for run, sizes in (("2026111106", (10, 20)), ("2026111103", (5,))):
+        step = base / run / "001.zarr" / "t"
+        step.mkdir(parents=True)
+        for i, size in enumerate(sizes):
+            (step / f"{i}.0").write_bytes(b"x" * size)
+    (base / "grid").mkdir()
+    (base / "grid" / "static").write_bytes(b"x" * 7)
+    (base / "note.txt").write_bytes(b"x" * 3)
+
+    assert skyview_app._dir_size_bytes(str(base)) == 45
+    assert skyview_app._dir_size_bytes(str(tmp_path / "missing")) == 0
+    total, runs = skyview_app._model_dir_sizes(str(base), ["2026111106", "2026111103"])
+    assert runs == {"2026111106": 30, "2026111103": 5}
+    assert total == 45
+    assert skyview_app._model_dir_sizes(str(tmp_path / "missing"), []) == (0, {})
