@@ -46,6 +46,17 @@ def is_error_line(line: str) -> bool:
     return bool(_ERROR_LINE.search(line or ""))
 
 
+# Endpoints whose 5xx is an answer, not a failure: /api/health/data returns 503
+# to tell the external monitor that a data stream is stale. Counting those as
+# server errors turned one stale source into a second critical row (the monitor
+# polls every few minutes from several locations).
+_DELIBERATE_STATUS = {("/api/health/data", 503)}
+
+
+def is_deliberate_status(path: str, status_code: int) -> bool:
+    return (path, status_code) in _DELIBERATE_STATUS
+
+
 # --- request metrics --------------------------------------------------------
 def metric_key(route_path: Optional[str], request_path: str, status_code: int) -> str:
     """Group a request under its route template instead of its literal URL.

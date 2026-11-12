@@ -523,7 +523,7 @@ async def log_requests(request: Request, call_next):
     
     if 400 <= response.status_code < 500:
         api_error_counters["4xx"] += 1
-    elif response.status_code >= 500:
+    elif response.status_code >= 500 and not admin_ops.is_deliberate_status(request.url.path, response.status_code):
         api_error_counters["5xx"] += 1
         recent_server_errors.append(time.time())
 

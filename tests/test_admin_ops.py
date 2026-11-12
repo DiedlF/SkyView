@@ -280,3 +280,37 @@ def test_directory_sizes_read_each_file_once(tmp_path):
     assert runs == {"2026111106": 30, "2026111103": 5}
     assert total == 45
     assert skyview_app._model_dir_sizes(str(tmp_path / "missing"), []) == (0, {})
+
+
+def test_stale_data_503_is_not_a_server_error():
+    assert admin_ops.is_deliberate_status("/api/health/data", 503)
+    assert not admin_ops.is_deliberate_status("/api/health/data", 500)
+    assert not admin_ops.is_deliberate_status("/api/overlay_tile/{z}/{x}/{y}.png", 503)
+
+
+def test_health_endpoint_503_does_not_raise_the_server_error_row(monkeypatch):
+    import asyncio
+
+    import app as skyview_app
+    from starlette.requests import Request
+    from starlette.responses import Response
+
+    before_total = skyview_app.api_error_counters["5xx"]
+    before_recent = len(skyview_app.recent_server_errors)
+
+    def make_request(path):
+        return Request({"type": "http", "method": "GET", "path": path, "headers": [], "query_string": b"", "scheme": "http", "server": ("t", 80), "client": ("1.2.3.4", 1)})
+
+    async def stale(_request):
+        return Response(status_code=503)
+
+    async def broken(_request):
+        return Response(status_code=500)
+
+    asyncio.run(skyview_app.log_requests(make_request("/api/health/data"), stale))
+    assert skyview_app.api_error_counters["5xx"] == before_total
+    assert len(skyview_app.recent_server_errors) == before_recent
+
+    asyncio.run(skyview_app.log_requests(make_request("/api/symbols"), broken))
+    assert skyview_app.api_error_counters["5xx"] == before_total + 1
+    assert len(skyview_app.recent_server_errors) == before_recent + 1
